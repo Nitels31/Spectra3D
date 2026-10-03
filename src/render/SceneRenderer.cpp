@@ -14,6 +14,10 @@ constexpr float kGridExtent = 100.0f;
 constexpr float kMajorStep = 10.0f;
 constexpr float kMinorStep = 1.0f;
 
+// Viewport background. Anything the grid and the bodies do not cover ends up in
+// this colour.
+constexpr float kSkyRed = 0.18f, kSkyGreen = 0.22f, kSkyBlue = 0.28f;
+
 // x, y, z, r, g, b, a per grid vertex in the colour stream.
 constexpr int kFloatsPerVertex = 4;
 
@@ -102,6 +106,13 @@ void SceneRenderer::setViewMatrix(const Camera& camera) {
     std::copy(m, m + 16, view_);
 }
 
+void SceneRenderer::beginFrame(int framebufferWidth, int framebufferHeight) {
+    glViewport(0, 0, framebufferWidth, framebufferHeight);
+    glDisable(GL_SCISSOR_TEST);
+    glClearColor(kSkyRed, kSkyGreen, kSkyBlue, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+}
+
 void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& meshes,
                                 const Camera& camera, const Viewport& viewport,
                                 bool showGrid, bool showVectors) {
@@ -111,7 +122,7 @@ void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& m
     glScissor(viewport.glX, viewport.glY, viewport.width, viewport.height);
     setProjection(camera, viewport);
 
-    glClearColor(0.18f, 0.22f, 0.28f, 1.0f);
+    glClearColor(kSkyRed, kSkyGreen, kSkyBlue, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     setViewMatrix(camera);
@@ -194,11 +205,14 @@ void SceneRenderer::buildArenaGrid() {
         emit(kGridExtent, 0.0f, v);
     }
 
-    // World X axis, then world Z axis - same vertex order as before.
+    // World axes: X red, Y green, Z blue. Same vertex order as before, with the
+    // Y axis appended so the blend order of X and Z is untouched.
     emit(-kGridExtent, 0.0f, 0.0f);
     emit(kGridExtent, 0.0f, 0.0f);
     emit(0.0f, 0.0f, -kGridExtent);
     emit(0.0f, 0.0f, kGridExtent);
+    emit(0.0f, -kGridExtent, 0.0f);
+    emit(0.0f, kGridExtent, 0.0f);
 
     arenaColors_.assign(arenaPositions_.size() / 3 * 4, 0.0f);
 }
@@ -273,6 +287,12 @@ void SceneRenderer::drawArena(const Camera& camera) {
     axes[9] = axes[13] = 0.45f;
     axes[10] = axes[14] = 0.75f;
     axes[11] = axes[15] = alphaZ;
+    // Y axis (green). It is vertical, so there is no distance to fade by - it
+    // gets the same alpha as the other axes.
+    axes[16] = axes[20] = 0.35f;
+    axes[17] = axes[21] = 0.85f;
+    axes[18] = axes[22] = 0.40f;
+    axes[19] = axes[23] = axisAlpha;
 
     // One draw call for the whole grid. Lighting is disabled here, so the
     // per-vertex colour array is used directly, exactly as glColor4f +

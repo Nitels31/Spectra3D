@@ -27,6 +27,12 @@ public:
     // Enables fixed-function lighting and builds the primitive cache.
     void initialize(const Vec3& arenaMin, const Vec3& arenaMax);
 
+    // Clears the whole framebuffer before the viewport pass. Without this a
+    // window that was just resized (or a frame captured mid-resize) can show
+    // whatever the back buffer happened to contain - usually black - in the
+    // strip the layout has not caught up with yet.
+    void beginFrame(int framebufferWidth, int framebufferHeight);
+
     void renderWorld(const PhysicsWorld& world, const MeshRegistry& meshes,
                      const Camera& camera, const Viewport& viewport, bool showGrid,
                      bool showVectors);
@@ -41,12 +47,14 @@ private:
     // The arena grid geometry is fixed: 201 candidate lines from -100..100 on
     // both X and Z, with v == 0 skipped because the world axes are drawn as
     // their own pair of coloured segments. Each surviving line contributes two
-    // segments (4 vertices), and the two axes add 4 more vertices.
+    // segments (4 vertices), and the three world axes add 6 more vertices
+    // (X red, Y green, Z blue - the same colours the gizmo and the navigation
+    // balls use, so the world axes and the handles agree).
     struct ArenaGrid {
         static constexpr int kSteps = 201;         // -100, -99, ... 100
         static constexpr int kLines = kSteps - 1;  // v == 0 is skipped
         static constexpr int kGridVertices = kLines * 4;
-        static constexpr int kAxisVertices = 4;
+        static constexpr int kAxisVertices = 6;
         static constexpr int kVertexCount = kGridVertices + kAxisVertices;
         static constexpr int kLineStride = 5;      // v, r, g, b, major
     };

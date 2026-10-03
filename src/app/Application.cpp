@@ -149,6 +149,7 @@ void Application::render() {
     glViewport.width = (int)viewport.width;
     glViewport.height = (int)viewport.height;
 
+    sceneRenderer_.beginFrame(window_.framebufferWidth(), window_.framebufferHeight());
     sceneRenderer_.renderWorld(world_, meshes_, camera_, glViewport, editor_->showGrid(),
                                editor_->showVectors());
     editor_->renderOverlay(sceneRenderer_, world_);
