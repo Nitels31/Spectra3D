@@ -50,6 +50,9 @@ void appendPrimitive(cgltf_primitive* prim, const float* world, MeshAsset& asset
     part.vertices.resize(vertexCount * 6);
     const bool hasNormal = normal && normal->buffer_view;
 
+    // Bounds reduce into a local box and fold into the asset once per part.
+    meshutil::BoundsBox box;
+
     float scratch[3];
     for (size_t i = 0; i < vertexCount; ++i) {
         cgltf_accessor_read_float(position, i, scratch, 3);
@@ -57,8 +60,9 @@ void appendPrimitive(cgltf_primitive* prim, const float* world, MeshAsset& asset
         part.vertices[i * 6 + 0] = worldPos.x;
         part.vertices[i * 6 + 1] = worldPos.y;
         part.vertices[i * 6 + 2] = worldPos.z;
-        meshutil::include(asset, worldPos);
+        box.add(worldPos);
     }
+    meshutil::includeBounds(asset, box);
     if (hasNormal) {
         for (size_t i = 0; i < vertexCount; ++i) {
             cgltf_accessor_read_float(normal, i, scratch, 3);

@@ -88,44 +88,67 @@ void appendMesh(ufbx_node* node, MeshAsset& asset) {
     const bool hasNormals =
         mesh->vertex_normal.values.data && mesh->vertex_normal.indices.data;
 
-    // FBX meshes index per face corner, so geometry is duplicated per triangle
-    // and the result stays a flat, unindexed part.
+    // Exact triangle count before writing anything. FBX meshes index per face
+    // corner, so geometry is duplicated per triangle and the result stays a
+    // flat, unindexed part; a fan face with n corners contributes n - 2
+    // triangles. Sizing the buffers up front (Box.fbx is 98304 triangles, i.e.
+    // ~7 MB of duplicated vertex data) removes the repeated reallocation and
+    // 1.8M capacity-checked push_backs that dominated the import.
+    size_t triangles = 0;
+    for (size_t f = 0; f < mesh->num_faces; ++f) {
+        const uint32_t corners = mesh->faces.data[f].num_indices;
+        if (corners >= 3) triangles += corners - 2u;
+    }
+    if (!triangles) return;
+
+    part.vertices.resize(triangles * 18);
+    part.indices.resize(triangles * 3);
+    float* const verts = part.vertices.data();
+    float* v = verts;
+    unsigned* idx = part.indices.data();
+
+    // Bounds reduce into a local box and fold into the asset once at the end.
+    meshutil::BoundsBox box;
+    // Same predicate as generateFlatNormalsIfMissing(), evaluated while writing
+    // so the extra scan over 1.8M floats is not needed.
+    bool zeroNormalVertex = false;
+
     for (size_t f = 0; f < mesh->num_faces; ++f) {
         const ufbx_face face = mesh->faces.data[f];
         if (face.num_indices < 3) continue;
         for (size_t k = 1; k + 1 < face.num_indices; ++k) {
+            const unsigned base = (unsigned)((v - verts) / 6);
+            idx[0] = base;
+            idx[1] = base + 1;
+            idx[2] = base + 2;
+            idx += 3;
+
             const size_t corners[3] = {face.index_begin, face.index_begin + k,
                                        face.index_begin + k + 1};
-            const unsigned base = (unsigned)(part.vertices.size() / 6);
             for (int c = 0; c < 3; ++c) {
                 const ufbx_vec3 p = ufbx_get_vertex_vec3(&mesh->vertex_position, corners[c]);
                 float worldPos[3];
                 transformPoint(world, p.x, p.y, p.z, worldPos);
-                part.vertices.push_back(worldPos[0]);
-                part.vertices.push_back(worldPos[1]);
-                part.vertices.push_back(worldPos[2]);
+                v[0] = worldPos[0];
+                v[1] = worldPos[1];
+                v[2] = worldPos[2];
+                box.add(Vec3{worldPos[0], worldPos[1], worldPos[2]});
                 if (hasNormals) {
                     const ufbx_vec3 n = ufbx_get_vertex_vec3(&mesh->vertex_normal, corners[c]);
-                    float worldNormal[3];
-                    transformDirection(&normalMatrix, n.x, n.y, n.z, worldNormal);
-                    part.vertices.push_back(worldNormal[0]);
-                    part.vertices.push_back(worldNormal[1]);
-                    part.vertices.push_back(worldNormal[2]);
+                    transformDirection(&normalMatrix, n.x, n.y, n.z, v + 3);
+                    zeroNormalVertex |= v[3] == 0.0f && v[4] == 0.0f && v[5] == 0.0f;
                 } else {
-                    part.vertices.push_back(0.0f);
-                    part.vertices.push_back(0.0f);
-                    part.vertices.push_back(0.0f);
+                    v[3] = 0.0f;
+                    v[4] = 0.0f;
+                    v[5] = 0.0f;
                 }
-                meshutil::include(asset, Vec3{worldPos[0], worldPos[1], worldPos[2]});
+                v += 6;
             }
-            part.indices.push_back(base);
-            part.indices.push_back(base + 1);
-            part.indices.push_back(base + 2);
         }
     }
 
-    if (part.vertices.empty()) return;
-    meshutil::generateFlatNormalsIfMissing(part);
+    meshutil::includeBounds(asset, box);
+    if (!hasNormals || zeroNormalVertex) meshutil::generateFlatNormals(part);
     asset.parts.push_back(std::move(part));
 }
 

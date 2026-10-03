@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
-#include <string>
 
 namespace s3d {
 namespace {
@@ -180,13 +179,16 @@ bool UiContext::propertyNumeric(UiRenderer& ui, int id, float x, float y, float 
         const bool closed = closeValueEditorIfDone(fieldHovered);
         if (!closed) return false;
 
-        const std::string committed = valueEditor_.text();
-        const bool hadText = !committed.empty() && valueEditor_.editing;
-        valueEditor_.clear();
-        if (!hadText) return false;
-
+        // Parsed straight out of the editor buffer, before the clear() below
+        // overwrites it: the committed text used to be copied into a std::string
+        // for exactly this reason.
+        const bool hadText = valueEditor_.text()[0] != '\0' && valueEditor_.editing;
         T parsed{};
-        if (std::sscanf(committed.c_str(), Traits::kScanFormat, &parsed) != 1) return false;
+        const bool parsedOk =
+            hadText && std::sscanf(valueEditor_.text(), Traits::kScanFormat, &parsed) == 1;
+        valueEditor_.clear();
+        if (!parsedOk) return false;
+
         parsed = Traits::clampValue(parsed, lo, hi);
         if (parsed == value) return false;
         value = parsed;
@@ -212,10 +214,12 @@ bool UiContext::propertyNumeric(UiRenderer& ui, int id, float x, float y, float 
     }
     if (pointerReleased_ && activeId_ == id) {
         if (std::fabs(pointerX_ - dragStartX_) < 3.0f) {
-            char buffer[64];
-            std::snprintf(buffer, sizeof(buffer), Traits::kFormat, value);
+            // Formatted straight into the editor buffer: the intermediate copy
+            // plus TextField::set() was a second snprintf of the same string.
+            std::snprintf(valueEditor_.buffer, sizeof(valueEditor_.buffer),
+                          Traits::kFormat, value);
+            valueEditor_.length = (int)std::strlen(valueEditor_.buffer);
             valueEditor_.id = id;
-            valueEditor_.set(buffer);
             valueEditor_.editing = true;
         }
         activeId_ = 0;
@@ -223,9 +227,7 @@ bool UiContext::propertyNumeric(UiRenderer& ui, int id, float x, float y, float 
 
     ui.fillRect(fieldX, y, fieldW, theme::fieldHeight,
                 activeId_ == id ? theme::accent.scaled(0.5f) : theme::field);
-    char shown[48];
-    std::snprintf(shown, sizeof(shown), Traits::kFormat, value);
-    ui.text(fieldX + 6.0f, y + 2.0f, shown, theme::text);
+    ui.text(fieldX + 6.0f, y + 2.0f, cachedShownText(Traits::kFormat, value, id), theme::text);
     return changed;
 }
 

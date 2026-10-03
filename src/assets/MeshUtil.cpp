@@ -13,20 +13,6 @@ constexpr float kTargetLarge = 100.0f;
 
 } // namespace
 
-void resetBounds(MeshAsset& asset) {
-    asset.boundsMin = Vec3{1e30f, 1e30f, 1e30f};
-    asset.boundsMax = Vec3{-1e30f, -1e30f, -1e30f};
-}
-
-void include(MeshAsset& asset, const Vec3& p) {
-    asset.boundsMin.x = std::fmin(asset.boundsMin.x, p.x);
-    asset.boundsMin.y = std::fmin(asset.boundsMin.y, p.y);
-    asset.boundsMin.z = std::fmin(asset.boundsMin.z, p.z);
-    asset.boundsMax.x = std::fmax(asset.boundsMax.x, p.x);
-    asset.boundsMax.y = std::fmax(asset.boundsMax.y, p.y);
-    asset.boundsMax.z = std::fmax(asset.boundsMax.z, p.z);
-}
-
 bool finalize(MeshAsset& asset) {
     asset.center = (asset.boundsMin + asset.boundsMax) * 0.5f;
     asset.half = (asset.boundsMax - asset.boundsMin) * 0.5f;

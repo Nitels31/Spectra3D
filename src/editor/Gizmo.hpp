@@ -16,9 +16,12 @@ float handleLength(const RigidBody& body);
 
 // Returns the axis index (0..2) whose handle sits under the pointer, or -1.
 // Handles are resolved by screen-space distance so the thin cones stay easy to
-// grab. `pointerX`/`pointerY` are viewport-local pixels.
+// grab. `pointerX`/`pointerY` are viewport-local pixels; the projection basis,
+// tangents and eye position are the caller's cached per-frame values, so
+// picking costs nothing beyond the three ray/axis tests.
 int pickAxis(float pointerX, float pointerY, const Vec3& rayOrigin, const Vec3& rayDir,
-             const Camera& camera, const Rect& viewport, const RigidBody& body, Mode mode);
+             const Vec3& cameraPos, const Vec3& forward, const Vec3& right, const Vec3& up,
+             float tanX, float tanY, const Rect& viewport, const RigidBody& body, Mode mode);
 
 } // namespace gizmo
 } // namespace s3d

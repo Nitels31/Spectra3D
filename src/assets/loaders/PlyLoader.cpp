@@ -82,6 +82,7 @@ bool readPlyGeometry(const std::string& path, MeshAsset& asset) {
     if (!vertexCount || faceIndices.empty()) return false;
 
     part.vertices.resize((size_t)vertexCount * 6);
+    meshutil::BoundsBox box;
     for (uint32_t v = 0; v < vertexCount; ++v) {
         const Vec3 p{positions[v * 3 + 0], positions[v * 3 + 1], positions[v * 3 + 2]};
         part.vertices[v * 6 + 0] = p.x;
@@ -92,8 +93,9 @@ bool readPlyGeometry(const std::string& path, MeshAsset& asset) {
             part.vertices[v * 6 + 4] = normals[v * 3 + 1];
             part.vertices[v * 6 + 5] = normals[v * 3 + 2];
         }
-        meshutil::include(asset, p);
+        box.add(p);
     }
+    meshutil::includeBounds(asset, box);
 
     part.indices.resize(faceIndices.size());
     for (size_t i = 0; i < faceIndices.size(); ++i)

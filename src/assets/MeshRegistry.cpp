@@ -11,18 +11,20 @@ const std::string kNoName = "-";
 
 } // namespace
 
-int MeshRegistry::importFile(const std::string& path) {
+int MeshRegistry::importFile(const std::string& path, bool quiet) {
+    // One allocation instead of two: fileStem() is now a single copy of a view
+    // rather than a fileName() temporary plus a substring of it.
     const std::string name = str::fileStem(path);
     const int existing = find(name);
     if (existing >= 0) return existing;
 
     MeshAsset asset;
     if (!loadMeshFile(path, asset)) {
-        Log::error("Mesh import failed: %s", path.c_str());
+        if (!quiet) Log::error("Mesh import failed: %s", path.c_str());
         return -1;
     }
     if (asset.parts.empty() || asset.radius < 1e-4f) {
-        Log::error("Mesh has no usable geometry: %s", path.c_str());
+        if (!quiet) Log::error("Mesh has no usable geometry: %s", path.c_str());
         return -1;
     }
 

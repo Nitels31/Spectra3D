@@ -62,6 +62,7 @@ private:
     void applyWarmStart();
     bool solveIteration();
     void storeWarmStart();
+    void clearWarmStartCache();
     void resolvePenetrations();
     void updateSleep(float dt);
     void refreshDerived(RigidBody& body) const;
@@ -72,6 +73,12 @@ private:
 
     // Steps since the world was created; used to invalidate warm-start caches.
     uint16_t stepStamp_ = 0;
+
+    uint16_t previousStepStamp_ = 0;
+
+    // Reused by resolvePenetrations so the step allocates nothing.
+    std::vector<float> deepestPenetration_;
+    std::vector<Vec3> pushDirection_;
     float currentStepDt_ = 1.0f / 60.0f;
 };
 

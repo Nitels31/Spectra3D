@@ -2,23 +2,40 @@
 
 namespace s3d {
 
-Vec3 Camera::forward() const {
+void Camera::refreshBasis() const {
+    if (basisValid_ && basisYaw_ == yaw && basisPitch_ == pitch) return;
+
     const float cp = std::cos(pitch), sp = std::sin(pitch);
     const float cy = std::cos(yaw), sy = std::sin(yaw);
-    return {sy * cp, sp, -cy * cp};
+    basisForward_ = Vec3{sy * cp, sp, -cy * cp};
+    basisRight_ = Vec3{cy, 0.0f, sy};
+    basisUp_ = cross(basisRight_, basisForward_);
+
+    basisYaw_ = yaw;
+    basisPitch_ = pitch;
+    basisValid_ = true;
+}
+
+Vec3 Camera::forward() const {
+    refreshBasis();
+    return basisForward_;
 }
 
 Vec3 Camera::right() const {
-    const float cy = std::cos(yaw), sy = std::sin(yaw);
-    return {cy, 0.0f, sy};
+    refreshBasis();
+    return basisRight_;
 }
 
-Vec3 Camera::up() const { return cross(right(), forward()); }
+Vec3 Camera::up() const {
+    refreshBasis();
+    return basisUp_;
+}
 
 void Camera::basis(Vec3& forwardOut, Vec3& rightOut, Vec3& upOut) const {
-    forwardOut = forward();
-    rightOut = right();
-    upOut = cross(rightOut, forwardOut);
+    refreshBasis();
+    forwardOut = basisForward_;
+    rightOut = basisRight_;
+    upOut = basisUp_;
 }
 
 void Camera::rotate(float dYaw, float dPitch) {

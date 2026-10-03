@@ -1,5 +1,7 @@
 #pragma once
+#include <cstddef>
 #include <string>
+#include <string_view>
 
 namespace s3d {
 
@@ -49,24 +51,57 @@ inline std::string trim(const std::string& s) {
     return s.substr(b, e - b + 1);
 }
 
+// --- Non-owning path views -------------------------------------------------
+// The `*View` twins below hand back a slice of the caller's buffer instead of a
+// heap copy. They are what the asset layer should use: probing a directory for
+// extensions or stems happens once per candidate file and used to allocate two
+// std::strings per probe. The `std::string` wrappers further down are defined in
+// terms of these, so the two can never disagree.
+
+inline std::string_view fileNameView(std::string_view path) {
+    const size_t slash = path.find_last_of("/\\");
+    return slash == std::string_view::npos ? path : path.substr(slash + 1);
+}
+
+inline std::string_view fileStemView(std::string_view path) {
+    const std::string_view name = fileNameView(path);
+    const size_t dot = name.find_last_of('.');
+    return dot == std::string_view::npos ? name : name.substr(0, dot);
+}
+
+// Extension including the dot, empty when there is none. Case is preserved so no
+// copy is needed; compare it with equalsIgnoreAscii() below.
+inline std::string_view extensionView(std::string_view path) {
+    const std::string_view name = fileNameView(path);
+    const size_t dot = name.find_last_of('.');
+    return dot == std::string_view::npos ? std::string_view() : name.substr(dot);
+}
+
+// ASCII case-insensitive equality, used in place of "lowercase into a temporary
+// then compare". Only `a` is folded, matching the old "lowercase the file side,
+// compare against the (lowercase) reference list" behaviour exactly.
+inline bool equalsIgnoreAscii(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (lowerAscii(a[i]) != b[i]) return false;
+    return true;
+}
+
 // Last path component, both separators accepted.
 inline std::string fileName(const std::string& path) {
-    const size_t slash = path.find_last_of("/\\");
-    return slash == std::string::npos ? path : path.substr(slash + 1);
+    return std::string(fileNameView(path));
 }
 
 // File name without directory or extension.
 inline std::string fileStem(const std::string& path) {
-    std::string name = fileName(path);
-    const size_t dot = name.find_last_of('.');
-    return dot == std::string::npos ? name : name.substr(0, dot);
+    return std::string(fileStemView(path));
 }
 
 // Lowercase extension including the dot, or "" when there is none.
 inline std::string extension(const std::string& path) {
-    const std::string name = fileName(path);
-    const size_t dot = name.find_last_of('.');
-    return dot == std::string::npos ? std::string() : toLowerAscii(name.substr(dot));
+    std::string ext(extensionView(path));
+    for (char& c : ext) c = lowerAscii(c);
+    return ext;
 }
 
 inline std::string join(const std::string& a, const std::string& b) {

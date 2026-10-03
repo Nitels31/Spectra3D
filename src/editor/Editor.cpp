@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 
 namespace s3d {
 namespace {
@@ -87,18 +89,79 @@ void Editor::deleteSelection(PhysicsWorld& world) {
     activeBody_ = -1;
 }
 
-Vec3 Editor::viewportRay(const Camera& camera, const Rect& viewport) const {
-    Vec3 forward, right, up;
-    camera.basis(forward, right, up);
+void Editor::updateViewRay(const Camera& camera) {
+    if (viewRay_.valid) return;
+    camera.basis(viewRay_.forward, viewRay_.right, viewRay_.up);
     const float tanY = std::tan(camera.fovDeg * kPi / 360.0f);
-    const float tanX = tanY * viewport.width / viewport.height;
-    return picking::rayFromViewport(ui_.pointerX(), ui_.pointerY(), viewport, forward, right,
-                                    up, tanX, tanY);
+    viewRay_.tanY = tanY;
+    viewRay_.tanX = tanY * layout_.viewport.width / layout_.viewport.height;
+    viewRay_.valid = true;
+}
+
+Vec3 Editor::viewportRay(const Camera& camera) {
+    updateViewRay(camera);
+    return picking::rayFromViewport(ui_.pointerX(), ui_.pointerY(), layout_.viewport,
+                                    viewRay_.forward, viewRay_.right, viewRay_.up,
+                                    viewRay_.tanX, viewRay_.tanY);
+}
+
+void Editor::appendDecimal(char* out, int& at, unsigned long long value, int minDigits) {
+    char digits[24];
+    int count = 0;
+    do {
+        digits[count++] = (char)('0' + (int)(value % 10ull));
+        value /= 10ull;
+    } while (value != 0);
+
+    char padded[24];
+    const int pad = minDigits > count ? minDigits - count : 0;
+    for (int i = 0; i < pad; ++i) padded[i] = '0';
+    for (int i = 0; i < count; ++i) padded[pad + i] = digits[count - 1 - i];
+    for (int i = 0; i < pad + count; ++i) out[at++] = padded[i];
+}
+
+void Editor::formatIndexed(char* out, size_t size, const char* name, char separator,
+                           int index) {
+    const size_t nameLength = std::strlen(name);
+    // Longest possible output is name + separator + sign + 10 digits + NUL.
+    if (size < nameLength + 13u) {
+        if (separator)
+            std::snprintf(out, size, "%s%c%02d", name, separator, index);
+        else
+            std::snprintf(out, size, "%s%02d", name, index);
+        return;
+    }
+
+    std::memcpy(out, name, nameLength);
+    int at = (int)nameLength;
+    if (separator) out[at++] = separator;
+    // The '0' flag pads between the sign and the digits, so a negative value
+    // never reaches the two digit minimum.
+    if (index < 0) {
+        out[at++] = '-';
+        appendDecimal(out, at, (unsigned long long)(-(long long)index), 1);
+    } else {
+        appendDecimal(out, at, (unsigned long long)index, 2);
+    }
+    out[at] = '\0';
+}
+
+void Editor::formatPrefixed(char* out, size_t size, const char* prefix, const char* value) {
+    const size_t prefixLength = std::strlen(prefix);
+    const size_t valueLength = std::strlen(value);
+    if (size < prefixLength + valueLength + 1u) {
+        std::snprintf(out, size, "%s%s", prefix, value);
+        return;
+    }
+    std::memcpy(out, prefix, prefixLength);
+    std::memcpy(out + prefixLength, value, valueLength);
+    out[prefixLength + valueLength] = '\0';
 }
 
 void Editor::handleInput(PhysicsWorld& world, Camera& camera, Window& window, int fbWidth,
                          int fbHeight) {
     ui_.beginInput(window);
+    viewRay_.valid = false;
     recomputeLayout(fbWidth, fbHeight);
     handleHotkeys(world, window);
     handleViewport(world, camera, window);
@@ -127,6 +190,7 @@ bool Editor::tryNavigationGizmo(Camera& camera) {
         if (dx * dx + dy * dy >= 144.0f) continue;
         camera.yaw = ball.yaw;
         camera.pitch = ball.pitch;
+        viewRay_.valid = false;
         return true;
     }
     return false;
@@ -138,16 +202,19 @@ bool Editor::tryGizmoGrip(PhysicsWorld& world, Camera& camera) {
     if (!body) return false;
 
     const Rect viewport = layout_.viewport;
-    const Vec3 rayDir = viewportRay(camera, viewport);
+    const Vec3 rayOrigin = camera.position;
+    const Vec3 rayDir = viewportRay(camera);
     dragAxis_ = gizmo::pickAxis(ui_.pointerX() - viewport.x, ui_.pointerY() - viewport.y,
-                                camera.position, rayDir, camera, viewport, *body, gizmoMode_);
+                                rayOrigin, rayDir, camera.position, viewRay_.forward,
+                                viewRay_.right, viewRay_.up, viewRay_.tanX, viewRay_.tanY,
+                                viewport, *body, gizmoMode_);
     if (dragAxis_ < 0) return false;
 
     dragOrigin_ = body->position;
     Vec3 axes[3];
     gizmo::axesFor(*body, gizmoMode_, axes);
     float rayT = 0.0f;
-    picking::closestOnAxis(camera.position, rayDir, dragOrigin_, axes[dragAxis_],
+    picking::closestOnAxis(rayOrigin, rayDir, dragOrigin_, axes[dragAxis_],
                            dragStartAxisT_, rayT);
     return true;
 }
@@ -156,9 +223,8 @@ void Editor::applyGizmoDrag(PhysicsWorld& world, Camera& camera) {
     RigidBody* body = world.find(activeBody_);
     if (!body) return;
 
-    const Rect viewport = layout_.viewport;
     const Vec3 rayOrigin = camera.position;
-    const Vec3 rayDir = viewportRay(camera, viewport);
+    const Vec3 rayDir = viewportRay(camera);
 
     Vec3 axes[3];
     gizmo::axesFor(*body, gizmoMode_, axes);
@@ -235,7 +301,7 @@ void Editor::handleViewport(PhysicsWorld& world, Camera& camera, Window& window)
         return;
     }
     if (ui_.pointerPressed())
-        handleSelectionClick(world, camera.position, viewportRay(camera, viewport));
+        handleSelectionClick(world, camera.position, viewportRay(camera));
 }
 
 void Editor::handleSelectionClick(PhysicsWorld& world, const Vec3& rayOrigin,

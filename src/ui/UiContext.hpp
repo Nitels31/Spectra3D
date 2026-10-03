@@ -81,6 +81,34 @@ private:
                          const char* label, T& value, float pixelsPerStep, T lo, T hi);
     bool closeValueEditorIfDone(bool fieldHovered);
 
+    // "%.2f" runs through the full printf float machinery and costs an order of
+    // magnitude more than the memcpy it produces, so the formatted display text
+    // is memoised against the exact bits it was formatted from. A property sits
+    // at rest for almost every frame, so the common answer is a pointer chase.
+    // Keyed by widget id, format string and value bits, so a reused id with a
+    // different format (ids are shared between sections) can never alias.
+    struct ShownText {
+        const char* format = nullptr;
+        unsigned int bits = 0;
+        int id = -1;
+        char text[48] = {};
+    };
+    static constexpr int kShownTextSlots = 16;
+
+    template <typename T>
+    const char* cachedShownText(const char* format, T value, int id) {
+        static_assert(sizeof(T) == sizeof(unsigned int), "shown text packs value bits");
+        unsigned int bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        ShownText& slot = shownText_[(unsigned int)id & (kShownTextSlots - 1)];
+        if (slot.id == id && slot.bits == bits && slot.format == format) return slot.text;
+        std::snprintf(slot.text, sizeof(slot.text), format, value);
+        slot.id = id;
+        slot.bits = bits;
+        slot.format = format;
+        return slot.text;
+    }
+
     float pointerX_ = 0.0f, pointerY_ = 0.0f;
     bool pointerDown_ = false, pointerPressed_ = false, pointerReleased_ = false;
     bool ctrlHeld_ = false, cameraCaptured_ = false;
@@ -92,7 +120,8 @@ private:
     float dragStartX_ = 0.0f;
     float dragStartValue_ = 0.0f;
 
-    TextField valueEditor_;
+TextField valueEditor_;
+    ShownText shownText_[kShownTextSlots] = {};
 };
 
 } // namespace s3d

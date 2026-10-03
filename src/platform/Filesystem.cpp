@@ -4,6 +4,7 @@
 #include "../core/Str.hpp"
 
 #include <algorithm>
+#include <string_view>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -136,7 +137,7 @@ bool isDirectory(const std::string& path) {
 #endif
 }
 
-bool listDirectory(const std::string& dir, std::vector<std::string>& out) {
+bool listDirectoryEx(const std::string& dir, std::vector<DirEntry>& out) {
     out.clear();
 #if defined(_WIN32)
     WIN32_FIND_DATAA fd;
@@ -146,7 +147,9 @@ bool listDirectory(const std::string& dir, std::vector<std::string>& out) {
     do {
         const std::string name = fd.cFileName;
         if (name == "." || name == "..") continue;
-        out.push_back(name);
+        // dwFileAttributes is part of the listing, so no GetFileAttributesA per
+        // entry is needed.
+        out.push_back(DirEntry{name, (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0});
     } while (FindNextFileA(h, &fd));
     FindClose(h);
 #else
@@ -155,26 +158,68 @@ bool listDirectory(const std::string& dir, std::vector<std::string>& out) {
     while (struct dirent* e = readdir(d)) {
         const std::string name = e->d_name;
         if (name == "." || name == "..") continue;
-        out.push_back(name);
+        bool isDir = false;
+        // d_type is free on Linux/macOS; DT_LNK is deliberately treated as
+        // unknown because the old stat()-based check followed symlinks.
+#if defined(DT_DIR)
+        if (e->d_type == DT_DIR) {
+            isDir = true;
+        } else if (e->d_type == DT_REG) {
+            isDir = false;
+        } else {
+            struct stat st;
+            const std::string full =
+                dir.empty() ? name : (dir.back() == '/' ? dir + name : dir + "/" + name);
+            isDir = stat(full.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+        }
+#else
+        struct stat st;
+        const std::string full =
+            dir.empty() ? name : (dir.back() == '/' ? dir + name : dir + "/" + name);
+        isDir = stat(full.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+#endif
+        out.push_back(DirEntry{name, isDir});
     }
     closedir(d);
 #endif
-    std::sort(out.begin(), out.end());
+    std::sort(out.begin(), out.end(),
+              [](const DirEntry& a, const DirEntry& b) { return a.name < b.name; });
+    return true;
+}
+
+bool listDirectory(const std::string& dir, std::vector<std::string>& out) {
+    std::vector<DirEntry> entries;
+    if (!listDirectoryEx(dir, entries)) {
+        out.clear();
+        return false;
+    }
+    out.clear();
+    out.reserve(entries.size());
+    for (const DirEntry& entry : entries) out.push_back(entry.name);
     return true;
 }
 
 std::vector<std::string> listFilesByExtension(
     const std::string& dir, const std::vector<std::string>& extensions) {
-    std::vector<std::string> names;
-    listDirectory(dir, names);
+    // The listing already knows which entries are directories, and the extension
+    // can be tested as a view, so this loop makes no syscalls and no allocations
+    // beyond the returned paths.
+    std::vector<DirEntry> entries;
+    listDirectoryEx(dir, entries);
 
     std::vector<std::string> found;
-    for (const std::string& name : names) {
-        const std::string ext = str::extension(name);
+    for (const DirEntry& entry : entries) {
+        const std::string_view ext = str::extensionView(entry.name);
         if (ext.empty()) continue;
-        if (std::find(extensions.begin(), extensions.end(), ext) == extensions.end()) continue;
-        if (isDirectory(str::join(dir, name))) continue;
-        found.push_back(str::join(dir, name));
+        bool listed = false;
+        for (const std::string& candidate : extensions) {
+            if (!str::equalsIgnoreAscii(ext, candidate)) continue;
+            listed = true;
+            break;
+        }
+        if (!listed) continue;
+        if (entry.isDir) continue;
+        found.push_back(str::join(dir, entry.name));
     }
     return found;
 }

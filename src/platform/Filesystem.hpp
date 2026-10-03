@@ -22,6 +22,17 @@ const std::string& assetRoot();
 
 bool isDirectory(const std::string& path);
 
+// One entry as reported by the OS listing, including whether it is a directory.
+struct DirEntry {
+    std::string name;
+    bool isDir = false;
+};
+
+// Entries of `dir` (no "." / ".."), sorted by name. Returns false when
+// unreadable. The directory flag comes from the listing itself, so callers that
+// need it do not have to stat every candidate.
+bool listDirectoryEx(const std::string& dir, std::vector<DirEntry>& out);
+
 // Entries of `dir` (no "." / ".."), sorted. Returns false when unreadable.
 bool listDirectory(const std::string& dir, std::vector<std::string>& out);
 
@@ -29,6 +40,7 @@ bool listDirectory(const std::string& dir, std::vector<std::string>& out);
 // Names are prefixed with the relative `dir` so they can be opened directly.
 std::vector<std::string> listFilesByExtension(const std::string& dir,
                                              const std::vector<std::string>& extensions);
+
 
 
 } // namespace fs

@@ -1,24 +1,29 @@
 #include "../Editor.hpp"
 
 #include "../../core/Log.hpp"
+#include "../../core/Str.hpp"
 #include "../../ui/Theme.hpp"
 
-#include <cctype>
+#include <cstdio>
 
 namespace s3d {
 namespace {
 
 // Filter matching is case insensitive and substring based, matching how editors
-// of this kind usually behave.
+// of this kind usually behave. The needle is folded once here instead of once
+// per (label offset, needle offset) comparison; str::lowerAscii is an inline
+// range test where std::tolower was an out of line, locale aware call.
 bool matchesFilter(const char* label, const TextField& filter) {
     if (filter.empty()) return true;
     const char* needle = filter.text();
     const size_t needleLength = (size_t)filter.length;
+    char lowered[64];
+    for (size_t i = 0; i < needleLength; ++i) lowered[i] = str::lowerAscii(needle[i]);
+
     for (const char* p = label; *p; ++p) {
         size_t matched = 0;
         while (matched < needleLength && p[matched] &&
-               std::tolower((unsigned char)p[matched]) ==
-                   std::tolower((unsigned char)needle[matched]))
+               str::lowerAscii(p[matched]) == lowered[matched])
             ++matched;
         if (matched == needleLength) return true;
     }
@@ -64,8 +69,8 @@ void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
 
     if (inspectorTab_ == 1) {
         if (body) {
-            char label[48];
-            std::snprintf(label, sizeof(label), "Body_%02d", activeBody_);
+char label[48];
+            formatIndexed(label, sizeof(label), "Body_", '\0', activeBody_);
             ui.text(dock.x + 10.0f, dock.y + 38.0f, label, theme::text);
             ui.text(dock.x + 10.0f, dock.y + 60.0f, text("node.signals"), theme::textDim);
             ui.text(dock.x + 20.0f, dock.y + 78.0f, text("node.onBodyEntered"),
@@ -112,8 +117,8 @@ void Editor::drawEmptyInspectorCard(UiRenderer& ui, const Rect& dock, float y) {
 
 void Editor::drawTransformSection(UiRenderer& ui, RigidBody& body, const Rect& dock,
                                   float& y) {
-    char label[64];
-    std::snprintf(label, sizeof(label), "%s_%02d", shapeName(body.shape), activeBody_);
+char label[64];
+    formatIndexed(label, sizeof(label), shapeName(body.shape), '_', activeBody_);
     ui.text(dock.x + 8.0f, y + 2.0f, label, theme::accent);
     y += 22.0f;
 
@@ -137,9 +142,9 @@ void Editor::drawShapeSection(UiRenderer& ui, RigidBody& body, const Rect& dock,
 
     bool changed = false;
     if (body.hasMesh()) {
-        char meshLabel[96];
-        std::snprintf(meshLabel, sizeof(meshLabel), "MESH: %s",
-                      meshes_.nameOf(body.mesh).c_str());
+char meshLabel[96];
+        formatPrefixed(meshLabel, sizeof(meshLabel), "MESH: ",
+                       meshes_.nameOf(body.mesh).c_str());
         ui.text(dock.x + 8.0f, y + 2.0f, meshLabel, theme::textDim);
         y += 22.0f;
         if (matchesFilter("SCALE", filter_)) {

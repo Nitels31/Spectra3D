@@ -6,6 +6,32 @@ namespace s3d {
 namespace {
 
 constexpr int kCircleSegments = 20;
+constexpr int kCircleTableSize = kCircleSegments + 1; // entry 20 closes the loop
+
+// Unit-circle trigonometry is constant, so it is evaluated once instead of four
+// times per circle segment. a1 of segment i is bit-identical to a0 of segment
+// i + 1, so entries 1..20 hold both roles and the table reproduces exactly the
+// values the old per-segment expressions produced.
+struct CircleTable {
+    float cos[kCircleTableSize];
+    float sin[kCircleTableSize];
+};
+
+const CircleTable& unitCircle() {
+    static const CircleTable table = [] {
+        CircleTable t{};
+        for (int i = 0; i < kCircleSegments; ++i) {
+            const float a0 = (float)i / kCircleSegments * 2.0f * kPi;
+            const float a1 = (float)(i + 1) / kCircleSegments * 2.0f * kPi;
+            t.cos[i] = std::cos(a0);
+            t.sin[i] = std::sin(a0);
+            t.cos[i + 1] = std::cos(a1);
+            t.sin[i + 1] = std::sin(a1);
+        }
+        return t;
+    }();
+    return table;
+}
 
 } // namespace
 
@@ -71,26 +97,45 @@ void UiRenderer::end() {
 }
 
 void UiRenderer::fillRect(float x, float y, float w, float h, const Color& color) {
-    const float quad[6][6] = {{x, y, color.r, color.g, color.b, color.a},
-                              {x + w, y, color.r, color.g, color.b, color.a},
-                              {x + w, y + h, color.r, color.g, color.b, color.a},
-                              {x, y, color.r, color.g, color.b, color.a},
-                              {x + w, y + h, color.r, color.g, color.b, color.a},
-                              {x, y + h, color.r, color.g, color.b, color.a}};
-    for (const auto& vertex : quad)
-        colorBatch_.insert(colorBatch_.end(), vertex, vertex + 6);
+    // Same six vertices in the same order as before, written straight into the
+    // batch: one grow instead of six vector::insert calls per rectangle.
+    const size_t base = colorBatch_.size();
+    colorBatch_.resize(base + 36);
+    float* out = colorBatch_.data() + base;
+
+    const float x0 = x, y0 = y, x1 = x + w, y1 = y + h;
+    const float vx[6] = {x0, x1, x1, x0, x1, x0};
+    const float vy[6] = {y0, y0, y1, y0, y1, y1};
+    for (int i = 0; i < 6; ++i) {
+        *out++ = vx[i];
+        *out++ = vy[i];
+        *out++ = color.r;
+        *out++ = color.g;
+        *out++ = color.b;
+        *out++ = color.a;
+    }
 }
 
 void UiRenderer::fillCircle(float cx, float cy, float radius, const Color& color) {
+    const CircleTable& circle = unitCircle();
+    const float r = color.r, g = color.g, b = color.b, a = color.a;
+
+    const size_t base = colorBatch_.size();
+    colorBatch_.resize(base + (size_t)kCircleSegments * 18);
+    float* out = colorBatch_.data() + base;
     for (int i = 0; i < kCircleSegments; ++i) {
-        const float a0 = (float)i / kCircleSegments * 2.0f * kPi;
-        const float a1 = (float)(i + 1) / kCircleSegments * 2.0f * kPi;
-        const float triangle[3][6] = {
-            {cx, cy, color.r, color.g, color.b, color.a},
-            {cx + std::cos(a0) * radius, cy + std::sin(a0) * radius, color.r, color.g, color.b, color.a},
-            {cx + std::cos(a1) * radius, cy + std::sin(a1) * radius, color.r, color.g, color.b, color.a}};
-        for (const auto& vertex : triangle)
-            colorBatch_.insert(colorBatch_.end(), vertex, vertex + 6);
+        const float px[3] = {cx, cx + circle.cos[i] * radius,
+                             cx + circle.cos[i + 1] * radius};
+        const float py[3] = {cy, cy + circle.sin[i] * radius,
+                             cy + circle.sin[i + 1] * radius};
+        for (int k = 0; k < 3; ++k) {
+            *out++ = px[k];
+            *out++ = py[k];
+            *out++ = r;
+            *out++ = g;
+            *out++ = b;
+            *out++ = a;
+        }
     }
 }
 

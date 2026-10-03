@@ -1,4 +1,6 @@
 #pragma once
+#include <vector>
+
 #include <GL/gl.h>
 
 #include "../assets/MeshRegistry.hpp"
@@ -36,8 +38,22 @@ public:
     const PrimitiveCache& primitives() const { return primitives_; }
 
 private:
+    // The arena grid geometry is fixed: 201 candidate lines from -100..100 on
+    // both X and Z, with v == 0 skipped because the world axes are drawn as
+    // their own pair of coloured segments. Each surviving line contributes two
+    // segments (4 vertices), and the two axes add 4 more vertices.
+    struct ArenaGrid {
+        static constexpr int kSteps = 201;         // -100, -99, ... 100
+        static constexpr int kLines = kSteps - 1;  // v == 0 is skipped
+        static constexpr int kGridVertices = kLines * 4;
+        static constexpr int kAxisVertices = 4;
+        static constexpr int kVertexCount = kGridVertices + kAxisVertices;
+        static constexpr int kLineStride = 5;      // v, r, g, b, major
+    };
+
     void setProjection(const Camera& camera, const Viewport& viewport);
     void setViewMatrix(const Camera& camera);
+    void buildArenaGrid();
     void drawArena(const Camera& camera);
     void drawBodies(const PhysicsWorld& world, const MeshRegistry& meshes);
     void drawDebugVectors(const PhysicsWorld& world);
@@ -50,6 +66,13 @@ private:
     float projection_[16] = {};
     float view_[16] = {};
     float frustum_[6][4] = {};
+
+    // Static grid positions plus the per-frame colour stream. Built once, then
+    // drawn with a single glDrawArrays instead of ~1000 immediate-mode calls.
+    bool arenaGridReady_ = false;
+    std::vector<float> arenaPositions_;
+    std::vector<float> arenaColors_;
+    std::vector<float> arenaLines_;
 };
 
 } // namespace s3d

@@ -10,25 +10,34 @@ namespace {
 constexpr double kNearPlane = 0.1;
 constexpr double kFarPlane = 900.0;
 
+constexpr float kGridExtent = 100.0f;
+constexpr float kMajorStep = 10.0f;
+constexpr float kMinorStep = 1.0f;
+
+// x, y, z, r, g, b, a per grid vertex in the colour stream.
+constexpr int kFloatsPerVertex = 4;
+
 // Fallback colors for bodies without an explicit material color.
 const Color kBodyPalette[8] = {{0.86f, 0.36f, 0.33f}, {0.36f, 0.62f, 0.90f},
                                {0.95f, 0.76f, 0.31f}, {0.46f, 0.79f, 0.45f},
                                {0.72f, 0.49f, 0.86f}, {0.91f, 0.53f, 0.26f},
                                {0.35f, 0.75f, 0.73f}, {0.83f, 0.83f, 0.87f}};
 
-void toColumnMajor(const Quat& q, float* m) {
-    const Mat3 r = Mat3::fromQuat(q);
-    for (int c = 0; c < 3; ++c)
-        for (int row = 0; row < 3; ++row)
-            m[c * 4 + row] = r.m[row * 3 + c];
-    m[3] = m[7] = m[11] = 0.0f;
-    m[12] = m[13] = m[14] = 0.0f;
-    m[15] = 1.0f;
-}
-
+// Writes the quaternion rotation straight into the column-major 4x4 GL layout.
+// This is the transpose of Mat3::fromQuat() with the same expressions in the
+// same order, so it produces bit-identical floats without materialising and
+// transposing an intermediate Mat3 (which also default-initialised 9 floats it
+// immediately overwrote).
 void applyRotation(const Quat& q) {
-    float m[16];
-    toColumnMajor(q, m);
+    const float xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z;
+    const float xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z;
+    const float wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
+    const float r0 = 1 - 2 * (yy + zz), r1 = 2 * (xy - wz), r2 = 2 * (xz + wy);
+    const float r3 = 2 * (xy + wz), r4 = 1 - 2 * (xx + zz), r5 = 2 * (yz - wx);
+    const float r6 = 2 * (xz - wy), r7 = 2 * (yz + wx), r8 = 1 - 2 * (xx + yy);
+
+    const float m[16] = {r0, r3, r6, 0.0f, r1, r4, r7, 0.0f,
+                         r2, r5, r8, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
     glMultMatrixf(m);
 }
 
@@ -53,6 +62,7 @@ void SceneRenderer::initialize(const Vec3& arenaMin, const Vec3& arenaMax) {
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
 
     primitives_.build(arenaMin, arenaMax);
+    buildArenaGrid();
 }
 
 void SceneRenderer::setProjection(const Camera& camera, const Viewport& viewport) {
@@ -151,10 +161,50 @@ bool SceneRenderer::sphereVisible(const Vec3& center, float radius) const {
     return true;
 }
 
+void SceneRenderer::buildArenaGrid() {
+    arenaGridReady_ = true;
+    arenaLines_.clear();
+    arenaPositions_.clear();
+    arenaPositions_.reserve((size_t)ArenaGrid::kVertexCount * 3);
+
+    auto emit = [&](float x, float y, float z) {
+        arenaPositions_.push_back(x);
+        arenaPositions_.push_back(y);
+        arenaPositions_.push_back(z);
+    };
+
+    // Both line directions and the per-line RGB are constant for the lifetime
+    // of the scene, so they are baked once here. Only alpha depends on the
+    // camera and is refreshed each frame.
+    for (int i = 0; i < ArenaGrid::kSteps; ++i) {
+        const float v = -kGridExtent + (float)i * kMinorStep;
+        if (std::fabs(v) < 0.01f) continue; // the world axes are drawn separately
+        const bool major = std::fmod(std::fabs(v), kMajorStep) < 0.01f;
+
+        const float base = major ? 0.38f : 0.28f;
+        arenaLines_.push_back(v);
+        arenaLines_.push_back(base);
+        arenaLines_.push_back(base + 0.04f);
+        arenaLines_.push_back(base + 0.02f);
+        arenaLines_.push_back(major ? 1.0f : 0.0f);
+
+        emit(v, 0.0f, -kGridExtent);
+        emit(v, 0.0f, kGridExtent);
+        emit(-kGridExtent, 0.0f, v);
+        emit(kGridExtent, 0.0f, v);
+    }
+
+    // World X axis, then world Z axis - same vertex order as before.
+    emit(-kGridExtent, 0.0f, 0.0f);
+    emit(kGridExtent, 0.0f, 0.0f);
+    emit(0.0f, 0.0f, -kGridExtent);
+    emit(0.0f, 0.0f, kGridExtent);
+
+    arenaColors_.assign(arenaPositions_.size() / 3 * 4, 0.0f);
+}
+
 void SceneRenderer::drawArena(const Camera& camera) {
-    constexpr float kGridExtent = 100.0f;
-    constexpr float kMajorStep = 10.0f;
-    constexpr float kMinorStep = 1.0f;
+    if (!arenaGridReady_) buildArenaGrid();
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -175,45 +225,66 @@ void SceneRenderer::drawArena(const Camera& camera) {
     const float majorAlpha = 0.35f * globalAlpha;
     const float axisAlpha = 0.6f * globalAlpha;
 
-    glBegin(GL_LINES);
-    for (float v = -kGridExtent; v <= kGridExtent; v += kMinorStep) {
-        if (std::fabs(v) < 0.01f) continue; // the world axes are drawn separately
-        const bool major = std::fmod(std::fabs(v), kMajorStep) < 0.01f;
+    // camera.position.z squared is loop invariant: it was recomputed 200 times
+    // per frame inside the old per-line loop.
+    const float cameraZ = camera.position.z;
+    const float cameraZSq = cameraZ * cameraZ;
+    const float cameraX = camera.position.x;
 
-        const float dx = camera.position.x - v;
-        const float distFromCamera = std::sqrt(dx * dx +
-                                                camera.position.z * camera.position.z);
+    // Bounds come from the built arrays, not from the constants, so the fill and
+    // the draw can never disagree.
+    const int lineCount = (int)(arenaLines_.size() / ArenaGrid::kLineStride);
+    const int gridVertices = lineCount * 4;
+
+    const float* lines = arenaLines_.data();
+    float* colors = arenaColors_.data();
+    for (int i = 0; i < lineCount; ++i, lines += ArenaGrid::kLineStride) {
+        const float dx = cameraX - lines[0];
+        const float distFromCamera = std::sqrt(dx * dx + cameraZSq);
         float lineAlpha = distFromCamera < fadeDistance
                               ? 1.0f
                               : std::fmax(0.0f, 1.0f - (distFromCamera - fadeDistance) / 20.0f);
         lineAlpha *= globalAlpha;
 
-        const float base = major ? 0.38f : 0.28f;
-        const float alpha = (major ? majorAlpha : minorAlpha) * lineAlpha;
-
-        glColor4f(base, base + 0.04f, base + 0.02f, alpha);
-        glVertex3f(v, 0.0f, -kGridExtent);
-        glVertex3f(v, 0.0f, kGridExtent);
-        glVertex3f(-kGridExtent, 0.0f, v);
-        glVertex3f(kGridExtent, 0.0f, v);
+        const float r = lines[1], g = lines[2], b = lines[3];
+        const float alpha = (lines[4] != 0.0f ? majorAlpha : minorAlpha) * lineAlpha;
+        float* c = colors + (size_t)i * 4 * kFloatsPerVertex;
+        for (int q = 0; q < 4; ++q) {
+            c[0] = r; c[1] = g; c[2] = b; c[3] = alpha;
+            c += kFloatsPerVertex;
+        }
     }
 
-    const float distX = std::fabs(camera.position.x);
+    const float distX = std::fabs(cameraX);
     const float alphaX = distX < fadeDistance
                              ? axisAlpha
                              : axisAlpha * std::fmax(0.0f, 1.0f - (distX - fadeDistance) / 20.0f);
-    const float distZ = std::fabs(camera.position.z);
+    const float distZ = std::fabs(cameraZ);
     const float alphaZ = distZ < fadeDistance
                              ? axisAlpha
                              : axisAlpha * std::fmax(0.0f, 1.0f - (distZ - fadeDistance) / 20.0f);
 
-    glColor4f(0.75f, 0.25f, 0.20f, alphaX);
-    glVertex3f(-kGridExtent, 0.0f, 0.0f);
-    glVertex3f(kGridExtent, 0.0f, 0.0f);
-    glColor4f(0.20f, 0.45f, 0.75f, alphaZ);
-    glVertex3f(0.0f, 0.0f, -kGridExtent);
-    glVertex3f(0.0f, 0.0f, kGridExtent);
-    glEnd();
+    float* axes = colors + (size_t)gridVertices * kFloatsPerVertex;
+    axes[0] = axes[4] = 0.75f;
+    axes[1] = axes[5] = 0.25f;
+    axes[2] = axes[6] = 0.20f;
+    axes[3] = axes[7] = alphaX;
+    axes[8] = axes[12] = 0.20f;
+    axes[9] = axes[13] = 0.45f;
+    axes[10] = axes[14] = 0.75f;
+    axes[11] = axes[15] = alphaZ;
+
+    // One draw call for the whole grid. Lighting is disabled here, so the
+    // per-vertex colour array is used directly, exactly as glColor4f +
+    // glVertex3f immediate mode used it - and the vertex/segment order is
+    // unchanged, which matters because the grid is alpha blended.
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_COLOR_ARRAY);
+    glVertexPointer(3, GL_FLOAT, 12, arenaPositions_.data());
+    glColorPointer(4, GL_FLOAT, 16, arenaColors_.data());
+    glDrawArrays(GL_LINES, 0, (GLsizei)(arenaPositions_.size() / 3));
+    glDisableClientState(GL_COLOR_ARRAY);
+    glDisableClientState(GL_VERTEX_ARRAY);
 
     glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
@@ -226,14 +297,15 @@ void SceneRenderer::drawDebugVectors(const PhysicsWorld& world) {
     glLineWidth(1.0f);
 }
 
+// Draws an imported mesh inside the body transform the caller already installed.
+// Returns false when the body has no usable mesh, so the caller can fall back to
+// its primitive.
 bool SceneRenderer::drawImportedMesh(const RigidBody& body, const MeshRegistry& meshes) {
     if (!body.hasMesh()) return false;
     const MeshAsset* mesh = meshes.at(body.mesh);
     if (!mesh) return false;
 
     const float scale = body.meshScale * mesh->scale;
-    glPushMatrix();
-    glTranslatef(body.position.x, body.position.y, body.position.z);
     applyRotation(body.orientation);
     glScalef(scale, scale, scale);
     glTranslatef(-mesh->center.x, -mesh->center.y, -mesh->center.z);
@@ -253,7 +325,6 @@ bool SceneRenderer::drawImportedMesh(const RigidBody& body, const MeshRegistry& 
     }
     glDisableClientState(GL_VERTEX_ARRAY);
     glDisableClientState(GL_NORMAL_ARRAY);
-    glPopMatrix();
     return true;
 }
 
@@ -272,14 +343,11 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
                                 : kBodyPalette[paletteIndex & 7];
         glColor3f(color.r, color.g, color.b);
 
+        // Exactly one push/pop per body, whichever path is taken below.
         glPushMatrix();
         glTranslatef(body.position.x, body.position.y, body.position.z);
-        if (drawImportedMesh(body, meshes)) {
-            ++paletteIndex;
-            continue;
-        }
-
-        switch (body.shape) {
+        if (!drawImportedMesh(body, meshes)) {
+            switch (body.shape) {
             case Shape::Sphere: {
                 const float r = body.halfExtents.x;
                 glScalef(r, r, r);
@@ -333,6 +401,7 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
                 glCallList(primitives_.cube());
                 break;
             }
+        }
         }
         glPopMatrix();
         ++paletteIndex;

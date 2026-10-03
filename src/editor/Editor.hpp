@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <string>
 #include <utility>
 #include <vector>
@@ -82,8 +83,26 @@ private:
     void pruneSelection(const PhysicsWorld& world);
     void deleteSelection(PhysicsWorld& world);
 
-    // Ray for the current pointer position inside the viewport.
-    Vec3 viewportRay(const Camera& camera, const Rect& viewport) const;
+    // Projection basis for the current pointer position inside the viewport.
+    // `camera.basis()` costs four transcendentals and the field of view one
+    // more, and both the picking ray and the gizmo projection want the same
+    // values, so they are derived at most once per input frame. Rebuilt lazily:
+    // a frame where the pointer never reaches the viewport never pays for it.
+    struct ViewRay {
+        Vec3 forward, right, up;
+        float tanX = 0.0f, tanY = 0.0f;
+        bool valid = false;
+    };
+    void updateViewRay(const Camera& camera);
+    Vec3 viewportRay(const Camera& camera);
+
+    // snprintf replacements for the small "%s" / "%02d" labels the panels build
+    // every frame. Each has a memcpy fast path and falls back to the original
+    // snprintf call whenever the text would not fit, so truncation is unchanged.
+    static void appendDecimal(char* out, int& at, unsigned long long value, int minDigits);
+    static void formatIndexed(char* out, size_t size, const char* name, char separator,
+                              int index);
+    static void formatPrefixed(char* out, size_t size, const char* prefix, const char* value);
 
     // --- panels (defined in panels/*.cpp) -----------------------------------
     void drawMenuBar(UiRenderer& ui, PhysicsWorld& world, int fbWidth);
@@ -140,6 +159,8 @@ private:
     Vec3 dragOrigin_;
     float dragStartAxisT_ = 0.0f;
     float dragStartScale_ = 1.0f;
+
+    ViewRay viewRay_;
 
     const char* text(const char* key) const { return loc_.get(key); }
 };

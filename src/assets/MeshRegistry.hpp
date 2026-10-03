@@ -13,8 +13,9 @@ namespace s3d {
 class MeshRegistry {
 public:
     // Imports `path` unless a model with the same file stem is already loaded.
-    // Returns the model index, or -1 on failure.
-    int importFile(const std::string& path);
+    // Returns the model index, or -1 on failure. `quiet` suppresses the failure
+    // log, which scene loading wants while it probes several extensions.
+    int importFile(const std::string& path, bool quiet = false);
     int importMesh(MeshAsset asset);
 
     int find(const std::string& name) const;

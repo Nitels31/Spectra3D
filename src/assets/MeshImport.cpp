@@ -6,11 +6,13 @@
 namespace s3d {
 
 bool loadMeshFile(const std::string& path, MeshAsset& out) {
-    const std::string ext = str::extension(path);
-    if (ext == ".obj") return loaders::loadObj(path, out);
-    if (ext == ".ply") return loaders::loadPly(path, out);
-    if (ext == ".fbx") return loaders::loadFbx(path, out);
-    if (ext == ".gltf") return loaders::loadGltf(path, out);
+    // View-based dispatch: no temporary std::string per call, and this runs for
+    // every candidate path resolveMesh() probes.
+    const std::string_view ext = str::extensionView(path);
+    if (str::equalsIgnoreAscii(ext, ".obj")) return loaders::loadObj(path, out);
+    if (str::equalsIgnoreAscii(ext, ".ply")) return loaders::loadPly(path, out);
+    if (str::equalsIgnoreAscii(ext, ".fbx")) return loaders::loadFbx(path, out);
+    if (str::equalsIgnoreAscii(ext, ".gltf")) return loaders::loadGltf(path, out);
     return loaders::loadGltf(path, out);
 }
 

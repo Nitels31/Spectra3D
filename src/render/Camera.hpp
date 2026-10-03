@@ -22,6 +22,17 @@ struct Camera {
     // `worldDirection` is expected in world space and gets normalised, so
     // callers compose it from basis() plus world axes.
     void translate(const Vec3& worldDirection, float speed, float dt);
+
+    // forward/right/up depend on yaw and pitch and on nothing else - not on
+    // `position`, not on `fovDeg`. Callers mutate `yaw`/`pitch` directly (orbit
+    // gizmo, viewport drag), so the basis cache is keyed on exactly those two
+    // floats and revalidated on every read, which makes staleness impossible.
+    void refreshBasis() const;
+
+    mutable Vec3 basisForward_{}, basisRight_{}, basisUp_{};
+    mutable float basisYaw_ = 0.0f;
+    mutable float basisPitch_ = 0.0f;
+    mutable bool basisValid_ = false;
 };
 
 // Axis aligned rectangle in pixels, origin top-left.

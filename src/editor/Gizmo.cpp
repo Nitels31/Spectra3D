@@ -24,11 +24,8 @@ void axesFor(const RigidBody& body, Mode mode, Vec3 out[3]) {
 float handleLength(const RigidBody& body) { return body.boundRadius * 1.6f + 0.5f; }
 
 int pickAxis(float pointerX, float pointerY, const Vec3& rayOrigin, const Vec3& rayDir,
-             const Camera& camera, const Rect& viewport, const RigidBody& body, Mode mode) {
-    Vec3 forward, right, up;
-    camera.basis(forward, right, up);
-    const float tanY = std::tan(camera.fovDeg * kPi / 360.0f);
-    const float tanX = tanY * viewport.width / viewport.height;
+             const Vec3& cameraPos, const Vec3& forward, const Vec3& right, const Vec3& up,
+             float tanX, float tanY, const Rect& viewport, const RigidBody& body, Mode mode) {
     const float length = handleLength(body);
 
     Vec3 axes[3];
@@ -49,9 +46,8 @@ int pickAxis(float pointerX, float pointerY, const Vec3& rayOrigin, const Vec3& 
 
         // ...then let the closest handle in screen space win.
         float pixelX = 0.0f, pixelY = 0.0f;
-        if (!picking::projectToViewport(onAxis, camera.position, forward, right, up, tanX,
-                                        tanY, viewport.width, viewport.height, pixelX,
-                                        pixelY))
+        if (!picking::projectToViewport(onAxis, cameraPos, forward, right, up, tanX, tanY,
+                                        viewport.width, viewport.height, pixelX, pixelY))
             continue;
 
         const float dx = pixelX - pointerX;

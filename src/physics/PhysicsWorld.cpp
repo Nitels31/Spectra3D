@@ -58,6 +58,16 @@ void PhysicsWorld::setGravity(GravityAxis axis) {
 
 void PhysicsWorld::clear() { bodies.clear(); }
 
+void PhysicsWorld::clearWarmStartCache() {
+    for (RigidBody& b : bodies)
+        for (int wall = 0; wall < 6; ++wall)
+            for (int slot = 0; slot < 8; ++slot) {
+                b.warmNormal[wall][slot] = 0.0f;
+                b.warmTangent[wall][slot] = 0.0f;
+                b.warmStamp[wall][slot] = 0;
+            }
+}
+
 void PhysicsWorld::wakeAll() {
     for (RigidBody& b : bodies) {
         b.wake();
@@ -116,7 +126,12 @@ void PhysicsWorld::refreshDerived(RigidBody& body) const {
 }
 
 void PhysicsWorld::step(float dt) {
-    if (++stepStamp_ == 0) stepStamp_ = 1; // 0 marks "never written"
+    previousStepStamp_ = stepStamp_;
+    if (++stepStamp_ == 0) { // 0 marks "never written" - clear on wrap
+        stepStamp_ = 1;
+        previousStepStamp_ = 0;
+        clearWarmStartCache();
+    }
 
     integrateForces(dt);
 
@@ -266,7 +281,11 @@ void PhysicsWorld::collectPairContacts() {
                             return e.first < k;
                         });
                     for (; it != cellEntries_.end() && it->first == key; ++it) {
-                        if (it->second == bi) continue;
+                        // Two bodies that share a cell are visited by both
+                        // queries, so only the lower index reports the pair.
+                        // This halves the number of keys to sort while
+                        // producing the exact same sorted, unique pair list.
+                        if (it->second <= bi) continue;
                         pairKeys_.push_back(pairKey(bi, it->second));
                     }
                 }
@@ -362,13 +381,20 @@ void PhysicsWorld::collectPairContacts() {
             continue;
         }
 
-        // Box vs box: sample each corner of A against B, then B against A.
+// Box vs box: sample each corner of A against B, then B against A.
+        //
+        // The quaternion conjugates and the half extents are loop invariant -
+        // hoisting them out saves 14 redundant conversions per pair.
+        const Quat bInverse = B.orientation.conjugate();
+        const Quat aInverse = A.orientation.conjugate();
+        const Vec3& halfB = B.halfExtents;
+        const Vec3& halfA = A.halfExtents;
+
         for (int k = 0; k < 8; ++k) {
-            const Vec3 local = rotate(B.orientation.conjugate(), A.corners[k] - B.position);
-            const Vec3& he = B.halfExtents;
-            const float dx = he.x - std::fabs(local.x);
-            const float dy = he.y - std::fabs(local.y);
-            const float dz = he.z - std::fabs(local.z);
+            const Vec3 local = rotate(bInverse, A.corners[k] - B.position);
+            const float dx = halfB.x - std::fabs(local.x);
+            const float dy = halfB.y - std::fabs(local.y);
+            const float dz = halfB.z - std::fabs(local.z);
             if (dx <= 0.0f || dy <= 0.0f || dz <= 0.0f) continue;
             float shallowest = dx;
             int axis = 0;
@@ -394,11 +420,10 @@ void PhysicsWorld::collectPairContacts() {
                                  Contact::kNoWall, k, 0.0f, 0.0f, 0.0f, 0.0f});
         }
         for (int k = 0; k < 8; ++k) {
-            const Vec3 local = rotate(A.orientation.conjugate(), B.corners[k] - A.position);
-            const Vec3& he = A.halfExtents;
-            const float dx = he.x - std::fabs(local.x);
-            const float dy = he.y - std::fabs(local.y);
-            const float dz = he.z - std::fabs(local.z);
+            const Vec3 local = rotate(aInverse, B.corners[k] - A.position);
+            const float dx = halfA.x - std::fabs(local.x);
+            const float dy = halfA.y - std::fabs(local.y);
+            const float dz = halfA.z - std::fabs(local.z);
             if (dx <= 0.0f || dy <= 0.0f || dz <= 0.0f) continue;
             float shallowest = dx;
             int axis = 0;
@@ -439,6 +464,11 @@ void PhysicsWorld::applyWarmStart() {
         } else {
             RigidBody& b = bodies[c.bodyA];
             if (b.material.isStatic) continue;
+            // Only an impulse written by the previous step is still valid. This
+            // replaces sweeping the whole 6x8 cache of every body each step, and
+            // it also stops a body that flew away from being kicked by an
+            // impulse left over from its previous landing.
+            if (b.warmStamp[c.wall][c.slot] != previousStepStamp_) continue;
             jn = b.warmNormal[c.wall][c.slot];
             jt = b.warmTangent[c.wall][c.slot];
         }
@@ -565,16 +595,9 @@ void PhysicsWorld::storeWarmStart() {
         }
     }
 
-    // Drop cached impulses for surfaces that are no longer in contact. Without
-    // this a body that flies away and lands again is kicked by an impulse from
-    // its previous landing, which shows up as ever-growing bounces.
-    for (RigidBody& b : bodies)
-        for (int wall = 0; wall < 6; ++wall)
-            for (int slot = 0; slot < 8; ++slot)
-                if (b.warmStamp[wall][slot] != stepStamp_) {
-                    b.warmNormal[wall][slot] = 0.0f;
-                    b.warmTangent[wall][slot] = 0.0f;
-                }
+    // No cache sweep is needed: applyWarmStart only accepts an impulse whose
+    // stamp is from the immediately preceding step, so anything older is inert
+    // and costs nothing to skip.
 }
 
 void PhysicsWorld::resolvePenetrations() {
@@ -582,21 +605,27 @@ void PhysicsWorld::resolvePenetrations() {
     if (n == 0 || contacts_.empty()) return;
 
     // Arena walls: push each body out along its deepest contact only.
-    std::vector<float> deepest(n, 0.0f);
-    std::vector<Vec3> direction(n);
+    // Scratch buffers are reused between steps - this runs 60 times a second and
+    // two heap allocations per step is pure overhead.
+    if (deepestPenetration_.size() < n) {
+        deepestPenetration_.resize(n);
+        pushDirection_.resize(n);
+    }
+    std::fill(deepestPenetration_.begin(), deepestPenetration_.begin() + n, 0.0f);
+
     for (const Contact& c : contacts_) {
         if (c.bodyB != Contact::kNoBody) continue;
         const uint32_t idx = c.bodyA;
         if (idx >= n || bodies[idx].asleep || bodies[idx].material.isStatic) continue;
-        if (c.penetration > deepest[idx]) {
-            deepest[idx] = c.penetration;
-            direction[idx] = c.normal;
+        if (c.penetration > deepestPenetration_[idx]) {
+            deepestPenetration_[idx] = c.penetration;
+            pushDirection_[idx] = c.normal;
         }
     }
     for (std::size_t i = 0; i < n; ++i)
-        if (deepest[i] > kPenetrationSlop)
-            bodies[i].position +=
-                direction[i] * ((deepest[i] - kPenetrationSlop) * kWallCorrection);
+        if (deepestPenetration_[i] > kPenetrationSlop)
+            bodies[i].position += pushDirection_[i] *
+                                  ((deepestPenetration_[i] - kPenetrationSlop) * kWallCorrection);
 
     // Body pairs: split the correction by inverse mass.
     for (const Contact& c : contacts_) {

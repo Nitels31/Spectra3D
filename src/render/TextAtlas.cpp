@@ -176,12 +176,29 @@ void TextAtlas::appendQuads(std::vector<float>& batch, float x, float topY,
         const float y0 = baselineY - glyph.offsetY;
         const float x1 = x0 + glyph.width;
         const float y1 = y0 + glyph.height;
-        const float quad[6][7] = {
-            {x0, y0, glyph.u0, glyph.v0, r, g, b}, {x1, y0, glyph.u1, glyph.v0, r, g, b},
-            {x1, y1, glyph.u1, glyph.v1, r, g, b}, {x0, y0, glyph.u0, glyph.v0, r, g, b},
-            {x1, y1, glyph.u1, glyph.v1, r, g, b}, {x0, y1, glyph.u0, glyph.v1, r, g, b}};
-        for (const auto& vertex : quad)
-            batch.insert(batch.end(), vertex, vertex + 7);
+
+        // One grow + one straight-line fill instead of six
+        // vector::insert(end, ptr, ptr + 7) calls per glyph, each of which
+        // re-checked capacity and ran a generic 7-element copy. Same 42 floats
+        // in the same order.
+        const size_t base = batch.size();
+        batch.resize(base + 42);
+        float* out = batch.data() + base;
+        const auto put = [&out, r, g, b](float vx, float vy, float vu, float vv) {
+            *out++ = vx;
+            *out++ = vy;
+            *out++ = vu;
+            *out++ = vv;
+            *out++ = r;
+            *out++ = g;
+            *out++ = b;
+        };
+        put(x0, y0, glyph.u0, glyph.v0);
+        put(x1, y0, glyph.u1, glyph.v0);
+        put(x1, y1, glyph.u1, glyph.v1);
+        put(x0, y0, glyph.u0, glyph.v0);
+        put(x1, y1, glyph.u1, glyph.v1);
+        put(x0, y1, glyph.u0, glyph.v1);
         penX += glyph.advance;
     }
 }

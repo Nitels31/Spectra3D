@@ -21,8 +21,10 @@ const Bundle kBundles[] = {{Language::English, "en.lang"}, {Language::Ukrainian,
 
 void Localizer::loadBundles() {
     const std::string root = str::join(fs::assetRoot(), "lang");
+    // Drop the pointer first: the tables it refers to are about to be replaced.
+    active_ = nullptr;
     for (const Bundle& bundle : kBundles) {
-        std::unordered_map<std::string, std::string> table;
+        TextTable table;
         const std::string path = str::join(root, bundle.fileName);
 
         std::ifstream file(path);
@@ -47,18 +49,21 @@ void Localizer::loadBundles() {
 }
 
 void Localizer::applyLanguage(Language language) {
+    language_ = language;
     const auto it = tables_.find(language);
-    active_ = it == tables_.end() ? std::unordered_map<std::string, std::string>() : it->second;
+    // A missing bundle leaves nothing active, which is what the empty table the
+    // old copy-based version installed used to mean.
+    active_ = it == tables_.end() ? nullptr : &it->second;
 }
 
 void Localizer::setLanguage(Language language) {
-    language_ = language;
     applyLanguage(language);
 }
 
 const char* Localizer::get(const char* key) const {
-    const auto it = active_.find(key);
-    return it == active_.end() ? key : it->second.c_str();
+    if (!active_) return key;
+    const auto it = active_->find(key);
+    return it == active_->end() ? key : it->second.c_str();
 }
 
 const std::string& Localizer::languageName() const {

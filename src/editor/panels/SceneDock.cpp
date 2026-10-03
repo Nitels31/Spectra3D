@@ -1,10 +1,12 @@
 #include "../Editor.hpp"
 
-#include "../../core/Str.hpp"
 #include "../../scene/BodyFactory.hpp"
 #include "../../ui/Theme.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdio>
+#include <string>
 
 namespace s3d {
 namespace {
@@ -24,6 +26,14 @@ const SpawnButton kSpawnButtons[7] = {
 Color rowTint(int index) {
     return Color{0.55f + 0.05f * (index & 3), 0.55f + 0.04f * ((index >> 1) & 3),
                  0.55f + 0.06f * ((index >> 2) & 3)};
+}
+
+// Last path component of `path` as a borrowed pointer. Same text as
+// str::fileName(), but the asset dock redraws every frame and the returned
+// std::string was a heap allocation per visible row per frame.
+const char* fileNameTail(const std::string& path) {
+    const size_t slash = path.find_last_of("/\\");
+    return slash == std::string::npos ? path.c_str() : path.c_str() + slash + 1;
 }
 
 } // namespace
@@ -96,7 +106,7 @@ void Editor::drawHierarchy(UiRenderer& ui, PhysicsWorld& world, Camera& camera,
         const char* kind = body.hasMesh() ? meshes_.nameOf(body.mesh).c_str()
                                           : shapeName(body.shape);
         char label[64];
-        std::snprintf(label, sizeof(label), "%s %02d", kind, index);
+        formatIndexed(label, sizeof(label), kind, ' ', index);
 
         const Color tint = rowTint(index);
         if (body.shape == Shape::Sphere)
@@ -168,7 +178,7 @@ void Editor::drawAssetDock(UiRenderer& ui, PhysicsWorld& world, Camera& camera,
     const std::vector<std::string>& files = assets_.files();
     for (size_t i = 0; i < files.size() && i < 10; ++i) {
         if (ui_.button(ui, kImportRow + i, x + 6.0f, y, dock.width - 12.0f, 24.0f,
-                       str::fileName(files[i]).c_str()))
+                       fileNameTail(files[i])))
             assets_.import(files[i], world, camera, meshes_, activeBody_);
         y += 28.0f;
     }
