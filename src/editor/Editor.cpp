@@ -1,0 +1,322 @@
+#include "Editor.hpp"
+
+#include "../core/Log.hpp"
+#include "../scene/SceneSerializer.hpp"
+#include "../ui/Theme.hpp"
+#include "Picking.hpp"
+
+#include <algorithm>
+#include <cmath>
+
+namespace s3d {
+namespace {
+
+constexpr float kMinViewportSize = 120.0f;
+constexpr float kViewportTopInset = 28.0f;
+constexpr float kChromeHeight = 26.0f;
+constexpr const char* kSceneFile = "scene.txt";
+
+// Navigation balls: camera orientation presets, offsets from the widget centre.
+struct NavBall {
+    float dx, dy;
+    float yaw, pitch;
+};
+
+const NavBall kNavBalls[6] = {
+    {0.0f, -30.0f, 0.0f, -1.55f},      // look down +Y
+    {0.0f, 30.0f, 0.0f, 1.55f},       // look up -Y
+    {30.0f, 8.0f, -kPi * 0.5f, 0.0f}, // +X
+    {-30.0f, 8.0f, kPi * 0.5f, 0.0f}, // -X
+    {-26.0f, 26.0f, kPi, 0.0f},       // +Z
+    {26.0f, -26.0f, 0.0f, 0.0f},      // -Z
+};
+
+} // namespace
+
+Editor::Editor(MeshRegistry& meshes, i18n::Localizer& localizer)
+    : meshes_(meshes), loc_(localizer) {
+    filter_.id = kFilterField;
+}
+
+bool Editor::consumeSingleStep() {
+    const bool requested = singleStepRequested_;
+    singleStepRequested_ = false;
+    return requested;
+}
+
+void Editor::recomputeLayout(int fbWidth, int fbHeight) {
+    const float width = (float)fbWidth;
+    const float height = (float)fbHeight;
+
+    layout_.menuBar = Rect{0.0f, 0.0f, width, theme::menuBarHeight};
+    layout_.leftDock = Rect{0.0f, theme::menuBarHeight, theme::leftDockWidth,
+                            height - theme::menuBarHeight - theme::statusBarHeight};
+    layout_.rightDock = Rect{width - theme::rightDockWidth, theme::menuBarHeight,
+                             theme::rightDockWidth,
+                             height - theme::menuBarHeight - theme::statusBarHeight};
+
+    const float viewY = theme::menuBarHeight + kViewportTopInset;
+    layout_.viewport = Rect{theme::leftDockWidth, viewY,
+                            std::fmax(kMinViewportSize, width - theme::leftDockWidth -
+                                                              theme::rightDockWidth),
+                            std::fmax(kMinViewportSize, height - viewY -
+                                                              theme::statusBarHeight)};
+    layout_.viewportChrome =
+        Rect{layout_.viewport.x, layout_.viewport.y, layout_.viewport.width, kChromeHeight};
+    layout_.statusBar = Rect{0.0f, height - theme::statusBarHeight, width,
+                             theme::statusBarHeight};
+}
+
+void Editor::pruneSelection(const PhysicsWorld& world) {
+    const int count = (int)world.bodies.size();
+    if (activeBody_ >= count) activeBody_ = -1;
+    selectedBodies_.erase(
+        std::remove_if(selectedBodies_.begin(), selectedBodies_.end(),
+                       [&](int index) { return index < 0 || index >= count; }),
+        selectedBodies_.end());
+}
+
+void Editor::deleteSelection(PhysicsWorld& world) {
+    std::sort(selectedBodies_.rbegin(), selectedBodies_.rend());
+    for (int index : selectedBodies_) {
+        if (index < 0 || index >= (int)world.bodies.size()) continue;
+        Log::info("Deleted body %d", index);
+        world.remove(index);
+    }
+    selectedBodies_.clear();
+    activeBody_ = -1;
+}
+
+Vec3 Editor::viewportRay(const Camera& camera, const Rect& viewport) const {
+    Vec3 forward, right, up;
+    camera.basis(forward, right, up);
+    const float tanY = std::tan(camera.fovDeg * kPi / 360.0f);
+    const float tanX = tanY * viewport.width / viewport.height;
+    return picking::rayFromViewport(ui_.pointerX(), ui_.pointerY(), viewport, forward, right,
+                                    up, tanX, tanY);
+}
+
+void Editor::handleInput(PhysicsWorld& world, Camera& camera, Window& window, int fbWidth,
+                         int fbHeight) {
+    ui_.beginInput(window);
+    recomputeLayout(fbWidth, fbHeight);
+    handleHotkeys(world, window);
+    handleViewport(world, camera, window);
+}
+
+void Editor::handleHotkeys(PhysicsWorld& world, Window& window) {
+    if (window.takeKeyPress(GLFW_KEY_P)) {
+        if (!playMode_) enterPlayMode(world);
+        else exitPlayMode(world);
+    }
+    if (window.takeKeyPress(GLFW_KEY_O) && playMode_) singleStepRequested_ = true;
+    if (window.takeKeyPress(GLFW_KEY_F5)) saveScene(world);
+    if (window.takeKeyPress(GLFW_KEY_F9)) loadScene(world);
+    if (window.takeKeyPress(GLFW_KEY_V)) showVectors_ = !showVectors_;
+}
+
+bool Editor::tryNavigationGizmo(Camera& camera) {
+    const Rect viewport = layout_.viewport;
+    const float centerX = viewport.x + viewport.width - 52.0f;
+    const float centerY = viewport.y + 52.0f;
+    if (!ui_.pointerPressed()) return false;
+
+    for (const NavBall& ball : kNavBalls) {
+        const float dx = ui_.pointerX() - (centerX + ball.dx);
+        const float dy = ui_.pointerY() - (centerY + ball.dy);
+        if (dx * dx + dy * dy >= 144.0f) continue;
+        camera.yaw = ball.yaw;
+        camera.pitch = ball.pitch;
+        return true;
+    }
+    return false;
+}
+
+bool Editor::tryGizmoGrip(PhysicsWorld& world, Camera& camera) {
+    if (!gizmoEnabled_) return false;
+    const RigidBody* body = world.find(activeBody_);
+    if (!body) return false;
+
+    const Rect viewport = layout_.viewport;
+    const Vec3 rayDir = viewportRay(camera, viewport);
+    dragAxis_ = gizmo::pickAxis(ui_.pointerX() - viewport.x, ui_.pointerY() - viewport.y,
+                                camera.position, rayDir, camera, viewport, *body, gizmoMode_);
+    if (dragAxis_ < 0) return false;
+
+    dragOrigin_ = body->position;
+    Vec3 axes[3];
+    gizmo::axesFor(*body, gizmoMode_, axes);
+    float rayT = 0.0f;
+    picking::closestOnAxis(camera.position, rayDir, dragOrigin_, axes[dragAxis_],
+                           dragStartAxisT_, rayT);
+    return true;
+}
+
+void Editor::applyGizmoDrag(PhysicsWorld& world, Camera& camera) {
+    RigidBody* body = world.find(activeBody_);
+    if (!body) return;
+
+    const Rect viewport = layout_.viewport;
+    const Vec3 rayOrigin = camera.position;
+    const Vec3 rayDir = viewportRay(camera, viewport);
+
+    Vec3 axes[3];
+    gizmo::axesFor(*body, gizmoMode_, axes);
+    float axisT = 0.0f, rayT = 0.0f;
+    picking::closestOnAxis(rayOrigin, rayDir, dragOrigin_, axes[dragAxis_], axisT, rayT);
+
+    if (gizmoMode_ == gizmo::Mode::Move) {
+        body->position = dragOrigin_ + axes[dragAxis_] * (axisT - dragStartAxisT_);
+    } else {
+        float factor =
+            std::fabs(dragStartAxisT_) < 1e-3f ? 1.0f : axisT / dragStartAxisT_;
+        factor = clampf(factor, 0.05f, 20.0f);
+        const float scaled = dragStartScale_ * factor;
+
+        if (body->hasMesh()) {
+            body->meshScale = clampf(scaled, 0.05f, 10.0f);
+            const MeshAsset* mesh = meshes_.at(body->mesh);
+            if (mesh) body->halfExtents = mesh->half * body->meshScale;
+            body->configure(body->mass);
+        } else if (body->shape == Shape::Sphere) {
+            const float radius = clampf(scaled, 0.05f, 10.0f);
+            body->halfExtents = {radius, radius, radius};
+            body->configure(body->mass);
+        } else {
+            (&body->halfExtents.x)[dragAxis_] = clampf(scaled, 0.05f, 10.0f);
+            body->configure(body->mass);
+        }
+    }
+    body->wake();
+}
+
+void Editor::handleViewport(PhysicsWorld& world, Camera& camera, Window& window) {
+    if (window.takeKeyPress(GLFW_KEY_DELETE) && !selectedBodies_.empty()) {
+        deleteSelection(world);
+        return;
+    }
+
+    // While the right mouse button drives the camera the viewport ignores input.
+    if (ui_.cameraCaptured()) {
+        dragAxis_ = -1;
+        return;
+    }
+
+    const Rect viewport = layout_.viewport;
+    const bool onChrome = ui_.pointerY() >= layout_.viewportChrome.y &&
+                          ui_.pointerY() < layout_.viewportChrome.y +
+                                                 layout_.viewportChrome.height;
+    if (!ui_.hovered(viewport) || onChrome) {
+        if (ui_.pointerReleased()) dragAxis_ = -1;
+        return;
+    }
+
+    if (tryNavigationGizmo(camera)) return;
+
+    if (ui_.pointerPressed()) {
+        if (tryGizmoGrip(world, camera)) {
+            const RigidBody* body = world.find(activeBody_);
+            if (body && gizmoMode_ == gizmo::Mode::Scale) {
+                if (body->hasMesh()) dragStartScale_ = body->meshScale;
+                else if (body->shape == Shape::Sphere) dragStartScale_ = body->halfExtents.x;
+                else dragStartScale_ = (&body->halfExtents.x)[dragAxis_];
+            }
+            return;
+        }
+    }
+
+    if (ui_.pointerDown() && dragAxis_ >= 0 && world.find(activeBody_)) {
+        applyGizmoDrag(world, camera);
+        if (ui_.pointerReleased()) dragAxis_ = -1;
+        return;
+    }
+    if (ui_.pointerReleased() && dragAxis_ >= 0) {
+        dragAxis_ = -1;
+        return;
+    }
+    if (ui_.pointerPressed())
+        handleSelectionClick(world, camera.position, viewportRay(camera, viewport));
+}
+
+void Editor::handleSelectionClick(PhysicsWorld& world, const Vec3& rayOrigin,
+                                  const Vec3& rayDir) {
+    const int hit = picking::pickBody(rayOrigin, rayDir, world);
+
+    if (!ui_.ctrlHeld()) selectedBodies_.clear();
+    if (hit < 0) {
+        activeBody_ = -1;
+        return;
+    }
+
+    if (ui_.ctrlHeld()) {
+        const auto it = std::find(selectedBodies_.begin(), selectedBodies_.end(), hit);
+        if (it != selectedBodies_.end()) selectedBodies_.erase(it);
+        else selectedBodies_.push_back(hit);
+    } else {
+        selectedBodies_.assign(1, hit);
+    }
+    activeBody_ = hit;
+}
+
+void Editor::enterPlayMode(PhysicsWorld& world) {
+    editSnapshot_ = world.bodies;
+    snapshotGravity_ = world.gravityAxis;
+    playMode_ = true;
+    playing_ = true;
+    selectedBodies_.clear();
+    world.wakeAll();
+    Log::info(text("log.play"), (int)editSnapshot_.size());
+}
+
+void Editor::exitPlayMode(PhysicsWorld& world) {
+    world.bodies = editSnapshot_;
+    world.setGravity(snapshotGravity_);
+    playMode_ = false;
+    playing_ = false;
+    timeResetRequested_ = true;
+    dragAxis_ = -1;
+    Log::info(text("log.stop"));
+}
+
+void Editor::saveScene(const PhysicsWorld& world) {
+    if (scenes::save(world, meshes_, kSceneFile))
+        Log::info(text("log.saved"), (int)world.bodies.size());
+}
+
+void Editor::loadScene(PhysicsWorld& world) {
+    if (!scenes::load(world, meshes_, kSceneFile)) return;
+    activeBody_ = -1;
+    selectedBodies_.clear();
+    Log::info(text("log.loaded"), (int)world.bodies.size());
+}
+
+void Editor::renderOverlay(SceneRenderer& scene, PhysicsWorld& world) {
+    for (int index : selectedBodies_) {
+        const RigidBody* body = world.find(index);
+        if (body) scene.renderSelection(*body);
+    }
+    if (!gizmoEnabled_) return;
+    const RigidBody* body = world.find(activeBody_);
+    if (!body) return;
+
+    Vec3 axes[3];
+    gizmo::axesFor(*body, gizmoMode_, axes);
+    scene.renderGizmo(body->position, axes, gizmo::handleLength(*body), dragAxis_,
+                      gizmoMode_ == gizmo::Mode::Scale);
+}
+
+void Editor::renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
+                      int fbWidth, int fbHeight) {
+    ui.begin(fbWidth, fbHeight);
+
+    drawMenuBar(ui, world, fbWidth);
+    drawSceneDock(ui, world, camera, fbHeight);
+    drawInspectorDock(ui, world, window, fbWidth, fbHeight);
+    drawViewportChrome(ui, camera);
+    drawStatusBar(ui, world, fbWidth, fbHeight);
+
+    ui.end();
+    pruneSelection(world);
+}
+
+} // namespace s3d

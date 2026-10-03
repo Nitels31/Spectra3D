@@ -1,0 +1,90 @@
+# Spectra3D Ukrainian UI strings
+
+menu.file=Файл
+menu.edit=Редагувати
+menu.view=Вигляд
+menu.create=Створити
+menu.help=Довідка
+
+btn.play=Грати
+btn.pause=Пауза
+btn.stop=Стоп
+btn.refresh=Оновити
+btn.wake=Пробудити
+btn.delete_=Видалити
+btn.vec=Вектор
+btn.grid=Сітка
+
+tab.hierarchy=Ієрархія
+tab.assets=Ресурси
+tab.inspector=Інспектор
+tab.node=Вузол
+tab.console=Консоль
+
+hier.sceneRoot=Корінь сцени
+sec.create=Створити
+sec.transform=Трансформація
+sec.shape=Форма
+sec.material=Матеріал
+sec.flags=Прапорці
+sec.anchor=Якір
+sec.state=Стан
+
+assets.import=Імпорт моделей
+assets.noModels=Моделі не знайдені
+
+node.signals=Сигнали
+node.onBodyEntered=При вході тіла
+node.onSleepChanged=При зміні сну
+node.noNode=Вузол не вибрано
+
+filter.placeholder=Фільтр...
+
+inspector.nothing=Нічого не вибрано
+inspector.click=Натисніть на об'єкт
+
+prop.posX=Позиція X
+prop.posY=Позиція Y
+prop.posZ=Позиція Z
+prop.sx=Розмір X
+prop.sy=Розмір Y
+prop.sz=Розмір Z
+prop.radius=Радіус
+prop.height=Висота
+prop.baseRadius=Радіус основи
+prop.sides=Сторони
+prop.mass=Маса
+prop.friction=Тертя
+prop.bounce=Відскок
+prop.density=Щільність
+
+flag.static_=Статичний
+flag.visible=Видимий
+flag.locked=Заблокований
+
+anchor.pinPosition=Закріпити позицію
+anchor.pinRotation=Закріпити обертання
+anchor.spring=Пружина
+anchor.setAtBody=Встановити на тілі
+
+state.velocity=Швидкість
+state.sleeping=Спить
+state.active=Активний
+
+bar.playing=Грає
+bar.paused=Пауза
+bar.edit=Редагування
+bar.bodies=Тіла
+bar.gravity=Гравітація
+bar.consoleEmpty=Консоль порожня
+
+vp.perspective60=FOV 60
+vp.perspective70=FOV 70
+vp.perspective90=FOV 90
+
+log.play=Режим гри з %d тілами
+log.stop=Вихід з режиму гри
+log.saved=Сцену збережено з %d тілами
+log.loaded=Сцену завантажено з %d тілами
+log.resumed=Відновлено
+log.paused_=Пауза

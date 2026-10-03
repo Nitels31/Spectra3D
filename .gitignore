@@ -1,0 +1,12 @@
+# Build output
+build/
+build-*/
+
+# Editor / OS noise
+.vs/
+.vscode/
+*.user
+
+# Runtime output produced next to the binary
+scene.txt
+engine.log

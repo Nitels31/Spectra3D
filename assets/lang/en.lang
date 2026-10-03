@@ -1,0 +1,90 @@
+# Spectra3D English UI strings
+
+menu.file=File
+menu.edit=Edit
+menu.view=View
+menu.create=Create
+menu.help=Help
+
+btn.play=Play
+btn.pause=Pause
+btn.stop=Stop
+btn.refresh=Refresh
+btn.wake=Wake
+btn.delete_=Delete
+btn.vec=Vec
+btn.grid=Grid
+
+tab.hierarchy=Hierarchy
+tab.assets=Assets
+tab.inspector=Inspector
+tab.node=Node
+tab.console=Console
+
+hier.sceneRoot=Scene Root
+sec.create=Create
+sec.transform=Transform
+sec.shape=Shape
+sec.material=Material
+sec.flags=Flags
+sec.anchor=Anchor
+sec.state=State
+
+assets.import=Import Models
+assets.noModels=No models found
+
+node.signals=Signals
+node.onBodyEntered=On Body Entered
+node.onSleepChanged=On Sleep Changed
+node.noNode=No node selected
+
+filter.placeholder=Filter...
+
+inspector.nothing=Nothing selected
+inspector.click=Click an object to inspect
+
+prop.posX=Position X
+prop.posY=Position Y
+prop.posZ=Position Z
+prop.sx=Size X
+prop.sy=Size Y
+prop.sz=Size Z
+prop.radius=Radius
+prop.height=Height
+prop.baseRadius=Base Radius
+prop.sides=Sides
+prop.mass=Mass
+prop.friction=Friction
+prop.bounce=Bounce
+prop.density=Density
+
+flag.static_=Static
+flag.visible=Visible
+flag.locked=Locked
+
+anchor.pinPosition=Pin Position
+anchor.pinRotation=Pin Rotation
+anchor.spring=Spring
+anchor.setAtBody=Set At Body
+
+state.velocity=Velocity
+state.sleeping=Sleeping
+state.active=Active
+
+bar.playing=Playing
+bar.paused=Paused
+bar.edit=Edit
+bar.bodies=Bodies
+bar.gravity=Gravity
+bar.consoleEmpty=Console empty
+
+vp.perspective60=FOV 60
+vp.perspective70=FOV 70
+vp.perspective90=FOV 90
+
+log.play=Entering play mode with %d bodies
+log.stop=Exited play mode
+log.saved=Scene saved with %d bodies
+log.loaded=Scene loaded with %d bodies
+log.resumed=Resumed
+log.paused_=Paused

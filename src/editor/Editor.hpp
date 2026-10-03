@@ -1,0 +1,147 @@
+#pragma once
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "../assets/MeshRegistry.hpp"
+#include "../i18n/Localizer.hpp"
+#include "../physics/PhysicsWorld.hpp"
+#include "../render/Camera.hpp"
+#include "../render/SceneRenderer.hpp"
+#include "../render/UiRenderer.hpp"
+#include "../ui/UiContext.hpp"
+#include "AssetBrowser.hpp"
+#include "Gizmo.hpp"
+
+namespace s3d {
+
+// Panel geometry, recomputed once per frame from the framebuffer size. Panels
+// read these instead of recomputing offsets.
+struct EditorLayout {
+    Rect menuBar;
+    Rect leftDock;
+    Rect rightDock;
+    Rect viewport;
+    Rect viewportChrome; // toolbar strip inside the viewport
+    Rect statusBar;
+};
+
+// Godot-style editor shell. Owns selection, play mode and the UI context, and
+// delegates drawing to the panels in `panels/`.
+class Editor {
+public:
+    // Widget id ranges, kept disjoint so panels can never collide.
+    enum : int {
+        kMenuBar = 100,
+        kSceneDockTabs = 200,
+        kCreateButton = 210,
+        kAssetDock = 300,
+        kImportRow = 310,
+        kHierarchyRow = 400,
+        kInspectorDock = 500,
+        kInspectorProperty = 600,
+        kFilterField = 700,
+        kViewportChrome = 800,
+        kStatusBar = 900,
+    };
+
+    Editor(MeshRegistry& meshes, i18n::Localizer& localizer);
+
+    // --- per frame ----------------------------------------------------------
+    void handleInput(PhysicsWorld& world, Camera& camera, Window& window, int fbWidth,
+                     int fbHeight);
+    void renderOverlay(SceneRenderer& scene, PhysicsWorld& world);
+    void renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
+                  int fbWidth, int fbHeight);
+
+    // --- simulation control (read by the application) -----------------------
+    bool simulating() const { return playMode_ && playing_; }
+    bool consumeSingleStep();
+    bool consumeTimeReset() { return std::exchange(timeResetRequested_, false); }
+
+    bool showVectors() const { return showVectors_; }
+    bool showGrid() const { return showGrid_; }
+    const EditorLayout& layout() const { return layout_; }
+
+    void saveScene(const PhysicsWorld& world);
+    void loadScene(PhysicsWorld& world);
+
+private:
+    // --- input phases -------------------------------------------------------
+    void handleHotkeys(PhysicsWorld& world, Window& window);
+    void handleViewport(PhysicsWorld& world, Camera& camera, Window& window);
+    bool tryGizmoGrip(PhysicsWorld& world, Camera& camera);
+    void applyGizmoDrag(PhysicsWorld& world, Camera& camera);
+    bool tryNavigationGizmo(Camera& camera);
+    void handleSelectionClick(PhysicsWorld& world, const Vec3& rayOrigin,
+                              const Vec3& rayDir);
+    void enterPlayMode(PhysicsWorld& world);
+    void exitPlayMode(PhysicsWorld& world);
+
+    void recomputeLayout(int fbWidth, int fbHeight);
+    void pruneSelection(const PhysicsWorld& world);
+    void deleteSelection(PhysicsWorld& world);
+
+    // Ray for the current pointer position inside the viewport.
+    Vec3 viewportRay(const Camera& camera, const Rect& viewport) const;
+
+    // --- panels (defined in panels/*.cpp) -----------------------------------
+    void drawMenuBar(UiRenderer& ui, PhysicsWorld& world, int fbWidth);
+    void drawSceneDock(UiRenderer& ui, PhysicsWorld& world, Camera& camera, int fbHeight);
+    void drawHierarchy(UiRenderer& ui, PhysicsWorld& world, Camera& camera, const Rect& dock);
+    void drawAssetDock(UiRenderer& ui, PhysicsWorld& world, Camera& camera, const Rect& dock);
+    void drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& window, int fbWidth,
+                           int fbHeight);
+    void drawEmptyInspectorCard(UiRenderer& ui, const Rect& dock, float y);
+    void drawTransformSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
+    void drawShapeSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
+    void drawMaterialSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
+    void drawFlagsSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
+    void drawAnchorSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
+    void drawStateSection(UiRenderer& ui, PhysicsWorld& world, RigidBody& body,
+                          const Rect& dock, float& y);
+    void drawViewportChrome(UiRenderer& ui, Camera& camera);
+    void drawStatusBar(UiRenderer& ui, PhysicsWorld& world, int fbWidth, int fbHeight);
+    void drawConsolePanel(UiRenderer& ui, PhysicsWorld& world, int fbWidth);
+    void drawNavigationBalls(UiRenderer& ui) const;
+
+    MeshRegistry& meshes_;
+    i18n::Localizer& loc_;
+    UiContext ui_;
+    AssetBrowser assets_;
+
+    // --- selection ----------------------------------------------------------
+    int activeBody_ = -1;
+    std::vector<int> selectedBodies_;
+
+    // --- play mode ----------------------------------------------------------
+    bool playMode_ = false;
+    bool playing_ = true;
+    bool singleStepRequested_ = false;
+    bool timeResetRequested_ = false;
+    std::vector<RigidBody> editSnapshot_;
+    GravityAxis snapshotGravity_ = GravityAxis::NegY;
+
+    // --- viewport options ---------------------------------------------------
+    bool gizmoEnabled_ = true;
+    gizmo::Mode gizmoMode_ = gizmo::Mode::Move;
+    bool showGrid_ = true;
+    bool showVectors_ = true;
+    int perspectiveIndex_ = 1;
+    bool showConsole_ = false;
+    int sceneTab_ = 0;
+    int inspectorTab_ = 0;
+    float hierarchyScroll_ = 0.0f;
+    TextField filter_;
+    EditorLayout layout_;
+
+    // --- gizmo drag ---------------------------------------------------------
+    int dragAxis_ = -1;
+    Vec3 dragOrigin_;
+    float dragStartAxisT_ = 0.0f;
+    float dragStartScale_ = 1.0f;
+
+    const char* text(const char* key) const { return loc_.get(key); }
+};
+
+} // namespace s3d
