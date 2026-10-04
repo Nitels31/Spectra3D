@@ -42,7 +42,9 @@ const GravityAxis kGravityAxes[6] = {GravityAxis::NegY, GravityAxis::PosY, Gravi
 namespace {
 
 // Waits until `deadline` seconds have passed on the window clock, still pumping
-// events so the UI stays responsive.
+// events so the UI stays responsive. With `wakeOnActivity` it returns as soon as
+// the window reports activity instead, which is what makes a hover highlight
+// appear on the frame the pointer moves.
 //
 // Sleep() cannot do this job on Windows: it is quantised to ~15.6 ms, so a 60 fps
 // budget of 16.7 ms overshoots to two sleeps and the cap lands on 30. A
@@ -52,7 +54,7 @@ namespace {
 //
 // The wait lives here, in the frame loop, and not in Window: pacing a frame is the
 // loop's decision, and the window knows nothing about frame budgets.
-void waitForFrame(Window& window, double deadline) {
+bool waitForFrame(Window& window, double deadline, bool wakeOnActivity) {
 #if defined(_WIN32)
     static HANDLE timer = [] {
         HANDLE h = CreateWaitableTimerExW(nullptr, nullptr,
@@ -64,9 +66,14 @@ void waitForFrame(Window& window, double deadline) {
 #endif
 
     for (;;) {
-        if (!window.pumpEvents()) return;
+        if (!window.pumpEvents()) return false;
+        // Peek, not consume: latching the cursor position here would make the loop
+        // miss the very movement that woke this wait, and the highlight would then
+        // have to wait out the whole idle tick - which is exactly the second of
+        // lag it is supposed to end.
+        if (wakeOnActivity && window.peekActivity()) return true;
         const double left = deadline - window.time();
-        if (left <= 0.0) return;
+        if (left <= 0.0) return false;
 
 #if defined(_WIN32)
         if (timer) {
@@ -116,6 +123,8 @@ bool Application::initialize() {
         Log::error("Failed to create window");
         return false;
     }
+    // The mark in front of the title, before anything is drawn into the window.
+    window_.applyIcon();
     window_.setSizeLimits(kInitialWidth, kInitialHeight, 1920, 1080);
 
     localizer_.loadBundles();
@@ -162,22 +171,21 @@ int Application::run() {
         // Nothing to draw, so draw nothing. A window nobody touches still ran 60
         // frames a second for as long as it was open, which on a laptop is heat
         // with no picture to show for it. Two things force a frame: the user did
-        // something, or the physics is running. A third - once a second - keeps
-        // the clock honest and lets a missed invalidation heal itself.
+        // something, or the physics is running. A third - once a second - heals
+        // a missed invalidation.
         const bool busy = window_.consumeActivity() || isSimulating();
         const double tickDue = lastTickTime_ + kIdleTickSeconds;
         if (!busy && now < tickDue) {
-            idle_ = true;
-            // Wait for the tick rather than spinning. The wait still pumps events,
-            // so the next click is acted on at once, and previousTime_ moves with
-            // it so resuming does not hand the physics a huge dt.
-            waitForFrame(window_, tickDue);
+            // Sleep until the tick, not until the next frame: the wait wakes the
+            // instant something happens, so the cursor moving over a button is
+            // highlighted on the very next frame instead of a second later, and
+            // an untouched window still draws one frame per second and no more.
+            // previousTime_ moves with it, so resuming does not hand the physics
+            // a huge dt.
+            waitForFrame(window_, tickDue, true);
             previousTime_ = window_.time();
-            lastTickTime_ = previousTime_;
-            updateTitle();
             continue;
         }
-        idle_ = false;
         lastTickTime_ = now;
 
         // Frame cap as an ABSOLUTE schedule: the next frame is due at
@@ -189,7 +197,10 @@ int Application::run() {
         if (budget > 0.0) {
             if (nextFrameTime_ <= 0.0) nextFrameTime_ = now;
             if (now < nextFrameTime_) {
-                waitForFrame(window_, nextFrameTime_);
+                // No wake on activity here: the frame is coming anyway, so waiting
+                // out the cap keeps the frame rate at the number that was asked for
+                // instead of letting the mouse raise it.
+                waitForFrame(window_, nextFrameTime_, false);
                 now = window_.time();
             }
             nextFrameTime_ += budget;
@@ -202,50 +213,48 @@ int Application::run() {
         previousTime_ = now;
         if (dt > kMaxFrameTime) dt = kMaxFrameTime; // avoid huge catch-up steps
 
-        // FPS readout, refreshed once a second.
-        fpsAccumulator_ += dt;
-        ++fpsFrames_;
-        if (fpsAccumulator_ >= 1.0) {
-            fps_ = (double)fpsFrames_ / fpsAccumulator_;
-            fpsFrames_ = 0;
-            fpsAccumulator_ = 0.0;
-            updateTitle();
-        }
-
-        if (window_.takeKeyPress(GLFW_KEY_ESCAPE) && !inEditor_) {
+// Esc belongs to the launcher here. In the editor it is the panels' - the
+        // open menu, the search field, the numeric value editor - and this call
+        // would eat the edge before any of them got to read it.
+        if (!inEditor_ && window_.takeKeyPress(GLFW_KEY_ESCAPE)) {
             window_.requestClose();
             continue;
         }
 
-        if (inEditor_)
+if (inEditor_)
             runEditorFrame((float)dt);
         else
             runLauncherFrame();
 
         window_.present();
+
+        // Everything this frame did not read dies with it - here, at the end of
+        // the frame that had its chance to read it, and not at the top of the
+        // loop: an event that arrives while the loop waits belongs to the next
+        // frame, and dropping it before that frame is drawn loses the keystroke
+        // that opened the project in the first place. Levels are not touched - a
+        // key still held down keeps the window busy, which is the point - but an
+        // edge nobody consumed does not stay latched forever.
+        window_.dropUnreadInput();
     }
     return 0;
 }
+
 double Application::frameInterval() const {
     const int cap = launcher_.settings().frameRateCap;
     return cap > 0 ? 1.0 / (double)cap : 0.0;
 }
 
 void Application::updateTitle() {
+    // Icon, engine name, project name - exactly what the editor sketch has in the
+    // title bar. There is no frame counter and no "idle" marker: the sketch has
+    // neither, and a title that changes every second would also mean the one
+    // second tick below has to rewrite it once a second even when nothing happens.
     char title[128];
-    if (inEditor_) {
-        // An idle editor is not slow, it is not drawing at all; "FPS 1" would be
-        // technically true and completely misleading.
-        if (idle_)
-            std::snprintf(title, sizeof(title), "%s | idle", project_.name.c_str());
-        else
-            std::snprintf(title, sizeof(title), "%s | FPS %.0f", project_.name.c_str(), fps_);
-    } else if (idle_)
-        std::snprintf(title, sizeof(title), "Spectra3D | OpenGL %s | idle",
-                      gl::requestedVersion());
+    if (inEditor_ && !project_.name.empty())
+        std::snprintf(title, sizeof(title), "%s - %s", kEngineName, project_.name.c_str());
     else
-        std::snprintf(title, sizeof(title), "Spectra3D | OpenGL %s | FPS %.0f",
-                      gl::requestedVersion(), fps_);
+        std::snprintf(title, sizeof(title), "%s", kEngineName);
     window_.setTitle(title);
 }
 
@@ -284,10 +293,14 @@ void Application::openProject(const ProjectInfo& project) {
         scenes::load(world_, meshes_, scenePath);
     }
 
-editor_ = std::make_unique<Editor>(meshes_, localizer_);
+    editor_ = std::make_unique<Editor>(meshes_, localizer_);
     editor_->setScenePath(scenePath);
     editor_->setProjectName(project_.name);
+    // Captured after the manifest has been applied, so "reset camera" in the View
+    // menu goes back to the view the project was saved with.
+    editor_->setHomeCamera(camera_);
     inEditor_ = true;
+
     updateTitle();
     Log::info("Project '%s' opened: %s", project_.name.c_str(), scenePath.c_str());
     Log::info("Scene: %d bodies", (int)world_.bodies.size());

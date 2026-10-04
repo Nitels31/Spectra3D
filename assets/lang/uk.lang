@@ -6,17 +6,51 @@ menu.view=Вигляд
 menu.create=Створити
 menu.help=Довідка
 
-btn.play=Грати
-btn.pause=Пауза
-btn.stop=Стоп
-btn.refresh=Оновити
+file.save=Зберегти сцену
+file.load=Завантажити сцену
+file.reload=Перечитати з диска
+file.exit=Вийти
+
+edit.duplicate=Дублювати об'єкт
+edit.delete=Видалити об'єкт
+edit.clearSelection=Зняти вибір
+edit.wake=Пробудити об'єкт
+
+view.grid=Сітка
+view.vectors=Вектори
+view.frame=Кадрувати вибір
+view.resetCamera=Скинути камеру
+
+toolbar.search=Пошук команд...
+toolbar.layers=Шари
+toolbar.noMatches=Немає такої команди
+
+layers.empty=Сцена порожня
+
+help.controls=Клавіатура та миша
+help.about=Про програму
+help.close=Закрити
+help.sceneFile=Файл сцени
+help.language=Мова
+help.key.move=W A S D
+help.key.up=Пробіл / C
+help.key.boost=Shift
+help.key.look=ПКМ
+help.key.gravity=1 .. 6
+help.key.select=ЛКМ
+help.key.tools=Ліва колонка
+help.desc.move=Літ: уперед, ліворуч, праворуч, назад
+help.desc.up=Вгору та вниз
+help.desc.boost=Літ швидше
+help.desc.look=Утримувати, щоб оглядатися
+help.desc.gravity=Гравітація вздовж кожної осі
+help.desc.select=Вибрати об'єкт, Ctrl додає до вибору
+help.desc.tools=Вибір, переміщення, обертання, масштаб, панорама
+
 btn.wake=Пробудити
 btn.delete_=Видалити
-btn.vec=Вектор
-btn.grid=Сітка
 
 tab.hierarchy=Ієрархія
-tab.assets=Ресурси
 tab.inspector=Інспектор
 tab.node=Вузол
 tab.console=Консоль
@@ -74,11 +108,6 @@ state.velocity=Швидкість
 state.sleeping=Спить
 state.active=Активний
 
-bar.playing=Грає
-bar.paused=Пауза
-bar.edit=Редагування
-bar.bodies=Тіла
-bar.gravity=Гравітація
 bar.consoleEmpty=Консоль порожня
 console.warnings=Попередження
 console.errors=Помилки

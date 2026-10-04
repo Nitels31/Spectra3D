@@ -38,8 +38,14 @@ public:
                      bool showVectors);
 
     void renderSelection(const RigidBody& body);
-    void renderGizmo(const Vec3& position, const Vec3* axes, float length,
-                     int activeAxis, bool scaleMode);
+
+    // Which handles the gizmo draws. One enum instead of a bool because the tool
+    // now has three shapes, and a bool that encodes two of them is how the rotate
+    // tool ends up drawn as an arrow.
+    enum class GizmoShape { Arrows, Rings, Cubes };
+
+    void renderGizmo(const Vec3& position, const Vec3* axes, float length, float ringRadius,
+                     const Vec3* ringU, const Vec3* ringV, int activeAxis, GizmoShape shape);
 
     const PrimitiveCache& primitives() const { return primitives_; }
 

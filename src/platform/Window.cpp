@@ -3,7 +3,15 @@
 #include "../core/Log.hpp"
 
 #include <cstdio>
+#include <cstring>
 
+#if defined(_WIN32)
+// Ask for the native handle: glfw3native.h only declares glfwGetWin32Window - and
+// only pulls in windows.h - when this is defined before the include.
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#include <vector>
+#endif
 
 namespace s3d {
 namespace {
@@ -11,6 +19,103 @@ namespace {
 void glfwErrorCallback(int code, const char* desc) {
     std::fprintf(stderr, "GLFW error %d: %s\n", code, desc ? desc : "(null)");
 }
+
+#if defined(_WIN32)
+
+// --- the application mark ---------------------------------------------------
+//
+// The editor sketch draws a small prism in front of the window title: a triangle
+// with a lit core. It is rasterised here instead of loaded, because a 32x32 icon
+// in a file is one more thing a build can lose, and this costs eight lines of
+// arithmetic once per launch.
+
+struct Rgb {
+    float r, g, b;
+};
+
+// Signed area of the triangle (a, b, c) at p, doubled. Its sign tells which side
+// of the edge p is on, which is all a point-in-triangle test needs.
+float edge(const float ax, const float ay, const float bx, const float by, const float px,
+           const float py) {
+    return (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+}
+
+// Coverage of one pixel by the mark, 2x2 supersampled: a 16 pixel icon drawn
+// with a hard test looks like a staircase, and the title bar is the one place
+// the mark is always on screen.
+float markCoverage(float u, float v) {
+    // Outer triangle: apex up top, base across the bottom.
+    const float a1 = edge(0.50f, 0.10f, 0.90f, 0.86f, u, v);
+    const float a2 = edge(0.90f, 0.86f, 0.10f, 0.86f, u, v);
+    const float a3 = edge(0.10f, 0.86f, 0.50f, 0.10f, u, v);
+    const float outer = (a1 >= 0.0f && a2 >= 0.0f && a3 >= 0.0f) ? 1.0f : 0.0f;
+
+    // Inner triangle: the lit core, a third of the way in on every side.
+    const float b1 = edge(0.50f, 0.36f, 0.71f, 0.70f, u, v);
+    const float b2 = edge(0.71f, 0.70f, 0.29f, 0.70f, u, v);
+    const float b3 = edge(0.29f, 0.70f, 0.50f, 0.36f, u, v);
+    const float core = (b1 >= 0.0f && b2 >= 0.0f && b3 >= 0.0f) ? 1.0f : 0.0f;
+    return outer + core;  // 1 for the shell, 2 for the core
+}
+
+HICON makeMarkIcon(int size) {
+    std::vector<unsigned char> pixels((size_t)size * size * 4, 0);
+
+    const Rgb shell{0.30f, 0.55f, 0.97f};
+    const Rgb core{0.91f, 0.95f, 1.0f};
+
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            float coverage = 0.0f;
+            for (int sy = 0; sy < 2; ++sy)
+                for (int sx = 0; sx < 2; ++sx) {
+                    const float u = ((float)x + 0.25f + 0.5f * (float)sx) / (float)size;
+                    const float v = ((float)y + 0.25f + 0.5f * (float)sy) / (float)size;
+                    coverage += markCoverage(u, v) * 0.25f;
+                }
+
+            // coverage 0..2: 1 is the edge of the shell, 2 the middle of the core.
+            const float inCore = coverage > 1.5f ? 1.0f : 0.0f;
+            const float alpha = coverage < 1.5f ? coverage - inCore : 1.0f;
+            if (alpha <= 0.0f) continue;
+
+            const float mix = inCore > 0.5f ? 1.0f : (coverage - 1.0f) * 0.5f + 0.5f;
+            unsigned char* out = pixels.data() + ((size_t)y * size + x) * 4;
+            // 32bpp BI_RGB icons are read as BGRA.
+            out[0] = (unsigned char)(255.0f * (shell.b + (core.b - shell.b) * mix));
+            out[1] = (unsigned char)(255.0f * (shell.g + (core.g - shell.g) * mix));
+            out[2] = (unsigned char)(255.0f * (shell.r + (core.r - shell.r) * mix));
+            out[3] = (unsigned char)(255.0f * (alpha > 1.0f ? 1.0f : alpha));
+        }
+    }
+
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = size;
+    // Negative height: the rows are stored top-down, which is the order the loop
+    // above wrote them in.
+    info.bmiHeader.biHeight = -size;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+
+    HDC screen = GetDC(nullptr);
+    void* bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    ReleaseDC(nullptr, screen);
+    if (!bitmap || !bits) return nullptr;
+    std::memcpy(bits, pixels.data(), pixels.size());
+
+    ICONINFO iconInfo{};
+    iconInfo.fIcon = TRUE;
+    iconInfo.hbmMask = nullptr;  // a 32bpp icon carries its own mask in the alpha
+    iconInfo.hbmColor = bitmap;
+    HICON icon = CreateIconIndirect(&iconInfo);
+    // CreateIconIndirect copied what it needs; the source bitmap is ours to drop.
+    DeleteObject(bitmap);
+    return icon;
+}
+#endif  // _WIN32
 
 } // namespace
 
@@ -117,6 +222,29 @@ void Window::setSizeLimits(int minW, int minH, int maxW, int maxH) {
     if (window_) glfwSetWindowSizeLimits(window_, minW, minH, maxW, maxH);
 }
 
+void Window::applyIcon() {
+#if defined(_WIN32)
+    if (!window_) return;
+    HWND handle = glfwGetWin32Window(window_);
+    if (!handle) return;
+
+    // Both sizes: the title bar asks for 16, the task bar button and Alt-Tab for
+    // 32, and letting the shell stretch one bitmap into the other is what makes a
+    // mark look blurry at one size and blocky at the other.
+    HICON small = makeMarkIcon(GetSystemMetrics(SM_CXSMICON) > 0 ? GetSystemMetrics(SM_CXSMICON) : 16);
+    HICON big = makeMarkIcon(GetSystemMetrics(SM_CXICON) > 0 ? GetSystemMetrics(SM_CXICON) : 32);
+    if (small) {
+        SendMessageW(handle, WM_SETICON, ICON_SMALL, (LPARAM)small);
+        // Deliberately never destroyed: the shell keeps drawing these for the life
+        // of the window, and freeing one leaves a hole in the title bar rather than
+        // a memory leak anyone would notice - two icons for one process.
+    }
+    if (big) SendMessageW(handle, WM_SETICON, ICON_BIG, (LPARAM)big);
+#else
+    (void)0;
+#endif
+}
+
 bool Window::pumpEvents() {
     glfwPollEvents();
     return window_ && !glfwWindowShouldClose(window_);
@@ -124,7 +252,7 @@ bool Window::pumpEvents() {
 
 void Window::present() { glfwSwapBuffers(window_); }
 
-bool Window::consumeActivity() {
+bool Window::peekActivity() const {
     // A frame is worth drawing if something happened, if a control is being held
     // (camera flight, a gizmo drag) or if the pointer moved, because hover
     // highlights are part of the picture.
@@ -137,11 +265,31 @@ bool Window::consumeActivity() {
     double x = 0.0, y = 0.0;
     cursorPos(x, y);
     if (activityX_ >= 0.0 && (x != activityX_ || y != activityY_)) busy = true;
-    activityX_ = x;
-    activityY_ = y;
 
     if (fbW_ != framebufferWidth() || fbH_ != framebufferHeight()) busy = true;
     return busy;
+}
+
+bool Window::consumeActivity() {
+    const bool busy = peekActivity();
+    double x = 0.0, y = 0.0;
+    cursorPos(x, y);
+    activityX_ = x;
+    activityY_ = y;
+    return busy;
+}
+
+void Window::dropUnreadInput() {
+    for (int key = 0; key <= GLFW_KEY_LAST; ++key) keyEdges_[key] = false;
+    for (int button = 0; button < 8; ++button) {
+        mousePressed_[button] = false;
+        mouseReleased_[button] = false;
+    }
+    // Typed characters nobody asked for: a field that was not focused when they
+    // arrived. Left in the buffer they keep `peekActivity()` true just as a stray
+    // key press does.
+    textLen_ = 0;
+    scrollAcc_ = 0.0;
 }
 
 void Window::setMouseCaptured(bool capture) {

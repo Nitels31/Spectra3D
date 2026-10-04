@@ -73,16 +73,8 @@ private:
     ProjectInfo project_;
     bool inEditor_ = false;
 
-    // True while the window is untouched and nothing is simulating: the loop draws
-    // one frame a second to keep the clock alive and otherwise leaves the GPU
-    // alone.
-    bool idle_ = false;
-
     FixedClock clock_{60.0, 10};
     double simulationTime_ = 0.0;
-    double fpsAccumulator_ = 0.0;
-    int fpsFrames_ = 0;
-    double fps_ = 0.0;
     // Start of the current one-second window, on the window clock.
     double lastTickTime_ = 0.0;
     double previousTime_ = 0.0;

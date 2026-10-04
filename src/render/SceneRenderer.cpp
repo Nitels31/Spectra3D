@@ -472,12 +472,41 @@ void SceneRenderer::renderSelection(const RigidBody& body) {
 }
 
 void SceneRenderer::renderGizmo(const Vec3& position, const Vec3* axes, float length,
-                               int activeAxis, bool scaleMode) {
+                               float ringRadius, const Vec3* ringU, const Vec3* ringV,
+                               int activeAxis, GizmoShape shape) {
     static const Color kAxisColors[3] = {{1.0f, 0.30f, 0.30f}, {0.35f, 1.0f, 0.35f},
                                          {0.40f, 0.60f, 1.0f}};
+    // The rotate ring is sampled the same number of times the picker samples it,
+    // so the curve on screen is the curve that is grabbable.
+    constexpr int kRingSteps = 48;
 
     glDisable(GL_LIGHTING);
     glDepthFunc(GL_ALWAYS); // gizmo stays visible through geometry
+
+    if (shape == GizmoShape::Rings) {
+        // The ring basis comes from the caller, which builds it with the same
+        // gizmo::ringFrame() the picker uses. Recomputing it here is how the drawn
+        // ring and the grabbable ring drift apart.
+        for (int i = 0; i < 3; ++i) {
+            const float dim = activeAxis == i ? 1.0f : 0.62f;
+            const Color color = kAxisColors[i].scaled(dim);
+            glLineWidth(activeAxis == i ? 4.0f : 2.0f);
+            glColor3f(color.r, color.g, color.b);
+            glBegin(GL_LINE_LOOP);
+            for (int step = 0; step < kRingSteps; ++step) {
+                const float a = (float)step * (2.0f * kPi / (float)kRingSteps);
+                const Vec3 point =
+                    position + (ringU[i] * std::cos(a) + ringV[i] * std::sin(a)) * ringRadius;
+                glVertex3f(point.x, point.y, point.z);
+            }
+            glEnd();
+        }
+        glDepthFunc(GL_LEQUAL);
+        glLineWidth(1.0f);
+        glEnable(GL_LIGHTING);
+        return;
+    }
+
     for (int i = 0; i < 3; ++i) {
         const Vec3& axis = axes[i];
         Vec3 u = std::fabs(axis.y) < 0.9f ? cross(axis, Vec3{0.0f, 1.0f, 0.0f})
@@ -495,7 +524,7 @@ void SceneRenderer::renderGizmo(const Vec3& position, const Vec3* axes, float le
         glVertex3f(tip.x, tip.y, tip.z);
         glEnd();
 
-        if (scaleMode) {
+        if (shape == GizmoShape::Cubes) {
             // Cube handle for the scale mode.
             const float h = 0.05f * length + 0.035f;
             Vec3 c[8];

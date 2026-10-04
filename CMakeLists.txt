@@ -128,6 +128,7 @@ add_executable(spectra3d
     src/editor/Gizmo.cpp
     src/editor/AssetBrowser.cpp
     src/editor/panels/TopBar.cpp
+    src/editor/panels/TopBarOverlay.cpp
     src/editor/panels/LeftColumn.cpp
     src/editor/panels/ScenePanel.cpp
     src/editor/panels/InspectorDock.cpp

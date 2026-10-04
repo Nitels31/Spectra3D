@@ -25,6 +25,10 @@ public:
     Window& operator=(const Window&) = delete;
 
     bool create(const char* title, int width, int height);
+    // Paints the application icon into the title bar and the task bar. Drawn from
+    // code instead of shipped as a file: one mark, two sizes, no asset to go
+    // missing from a build. A no-op where the window system has no use for it.
+    void applyIcon();
     void setSizeLimits(int minW, int minH, int maxW, int maxH);
     bool pumpEvents();
     void present();
@@ -35,9 +39,24 @@ public:
     // laptop is the difference between a warm machine and a hot one.
     //
     // Peeks only. Every edge flag stays exactly as it was, so the widgets that
-    // consume them still see the event this frame.
+    // consume them still see the event this frame. The cursor position is what
+    // this call latches, which is why there are two of them: `peekActivity()`
+    // asks the same question without latching, so a wait that woke up on a mouse
+    // move does not eat the movement that woke it up.
     bool consumeActivity();
+    bool peekActivity() const;
 
+    // Drops every input edge nobody read during the frame that was just drawn.
+    //
+    // Edges live for exactly one frame; the end of that frame is the only place
+    // where "nobody wanted this" is knowable. Without it a single keypress in a
+    // window with no shortcut for that key - Enter opening a project, a letter
+    // typed with no text field focused - stays latched in `keyEdges_` forever,
+    // `consumeActivity()` answers "yes, something happened" on every frame from
+    // then on, and the editor redraws at the frame cap with nothing new to show.
+    // Measured on the editor: 0.9 s of CPU per 8 s of doing nothing, against
+    // 0.06 s once the frame that had its chance to read the press drops it.
+    void dropUnreadInput();
 
     void setMouseCaptured(bool capture);
     bool mouseCaptured() const { return captured_; }

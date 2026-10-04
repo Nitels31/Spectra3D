@@ -1,10 +1,10 @@
 #include "../Editor.hpp"
 
+#include "../../core/Str.hpp"
 #include "../../ui/Theme.hpp"
 
 #include <algorithm>
-#include <cmath>
-#include <string>
+#include <cstring>
 
 namespace s3d {
 namespace {
@@ -12,13 +12,19 @@ namespace {
 constexpr float kHeaderHeight = 24.0f;
 constexpr float kRowStep = theme::rowHeight;
 
-// Last path component of `path` as a borrowed pointer. Same text as
-// str::fileName(), but this list redraws every frame and returning a std::string
-// was a heap allocation per visible row per frame.
-const char* fileNameTail(const std::string& path) {
-    const size_t slash = path.find_last_of("/\\");
-    return slash == std::string::npos ? path.c_str() : path.c_str() + slash + 1;
+// Case-insensitive substring test, both sides already prepared: `needle` is folded
+// once by the caller, `haystack` is folded here as it is walked. An empty needle
+// never matches, so an empty filter takes its own path instead of this one.
+bool containsFolded(const char* haystack, const char* needle) {
+    if (!haystack || !needle || !*needle) return false;
+    for (const char* p = haystack; *p; ++p) {
+        size_t matched = 0;
+        while (needle[matched] && str::lowerAscii(p[matched]) == needle[matched]) ++matched;
+        if (!needle[matched]) return true;
+    }
+    return false;
 }
+
 
 // Per-shape body tint so the hierarchy reads as a scene rather than a list.
 Color rowTint(int index) {
@@ -38,48 +44,54 @@ void dockHeader(UiRenderer& ui, UiContext& ctx, const Rect& dock, const char* ti
 
 } // namespace
 
-// The label a hierarchy row shows, and the two helpers the filter needs. All
-// three build the label the same way, so the filter can never disagree with the
-// row about what a body is called.
-std::string Editor::bodyLabel(const PhysicsWorld& world, int index) const {
+// The kind of a body as its row shows it: a mesh name, or the primitive's name.
+// Borrowed, not copied - the caller formats it into a stack buffer.
+const char* Editor::bodyKind(const PhysicsWorld& world, int index) const {
     const RigidBody& body = world.bodies[(size_t)index];
-    const char* kind =
-        body.hasMesh() ? meshes_.nameOf(body.mesh).c_str() : shapeName(body.shape);
-    char label[64];
-    formatIndexed(label, sizeof(label), kind, ' ', index);
-    return label;
+    return body.hasMesh() ? meshes_.nameOf(body.mesh).c_str() : shapeName(body.shape);
 }
 
-bool Editor::bodyMatchesFilter(const PhysicsWorld& world, int index, const char* query) const {
-    if (!query || !*query) return true;
-    return bodyLabel(world, index).find(query) != std::string::npos;
-}
-
-// Index of the `n`-th body that passes the filter. Walks from the start every
-// time, which costs nothing for a panel showing a few dozen rows and avoids
-// allocating an index list per frame.
-int Editor::filteredBodyIndex(const PhysicsWorld& world, int n, const char* query) const {
-    if (n < 0) return -1;
-    int seen = 0;
+void Editor::rebuildFilter(const PhysicsWorld& world, const char* query) {
+    filterRows_.clear();
     const int count = (int)world.bodies.size();
-    for (int index = 0; index < count; ++index) {
-        if (!bodyMatchesFilter(world, index, query)) continue;
-        if (seen == n) return index;
-        ++seen;
+    const size_t queryLength = query ? std::char_traits<char>::length(query) : 0;
+    if (queryLength == 0) {
+        // No filter: every body, filled straight in without building a label.
+        filterRows_.resize((size_t)count);
+        for (int index = 0; index < count; ++index) filterRows_[(size_t)index] = index;
+        return;
     }
-    return -1;
+
+    char needle[64];
+    const size_t folded = std::min(queryLength, sizeof(needle) - 1);
+    for (size_t i = 0; i < folded; ++i) needle[i] = str::lowerAscii(query[i]);
+    needle[folded] = '\0';
+
+    // The label a row would show, formatted once per body into one reused buffer
+    // and matched in place. No allocation, one pass, and the filter still tests
+    // exactly the string on screen.
+    char label[64];
+    for (int index = 0; index < count; ++index) {
+        formatIndexed(label, sizeof(label), bodyKind(world, index), ' ', index);
+        if (containsFolded(label, needle)) filterRows_.push_back(index);
+    }
 }
 
 void Editor::drawLeftColumn(UiRenderer& ui, PhysicsWorld& world, Camera& camera,
                             Window& window, int fbWidth) {
-    drawHierarchyDock(ui, world, camera, window, layout_.hierarchyDock, fbWidth);
-    drawAssetDock(ui, world, camera, layout_.assetDock, fbWidth);
+    // One panel, full height. The sketch has the hierarchy and nothing else in
+    // this column; the model list that used to sit under it is gone, because a
+    // permanent list of files that never changes is a panel that costs a redraw on
+    // every frame to say nothing - the same files are one menu away, under Create.
+    drawHierarchyDock(ui, world, camera, window, fbWidth);
 }
 
 void Editor::drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Camera& camera,
-                               Window& window, const Rect& dock, int fbWidth) {
+                               Window& window, int fbWidth) {
+    const Rect dock = layout_.leftDock;
     ui.fillRect(dock.x, dock.y, dock.width, dock.height, theme::panel);
     dockHeader(ui, ui_, dock, text("tab.hierarchy"), fbWidth);
+
 
     // --- search ---
     const Rect search{dock.x + 6.0f, dock.y + kHeaderHeight + 4.0f, dock.width - 12.0f,
@@ -109,11 +121,17 @@ void Editor::drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Camera& came
     const float rowsBottom = dock.y + dock.height;
     const int capacity = std::max(1, (int)((rowsBottom - rowsTop) / kRowStep));
 
-    int matching = 0;
-    for (int index = 0; index < (int)world.bodies.size(); ++index)
-        if (bodyMatchesFilter(world, index, hierarchyFilter_.text())) ++matching;
+    // The filtered index list is built ONCE per frame into a member vector that
+    // keeps its capacity between frames.
+    //
+    // The obvious version - count the matches, then walk the bodies again for
+    // every visible row - is quadratic and builds a std::string per body per
+    // comparison. With 64 bodies and 20 visible rows that is over a thousand
+    // allocations every frame, and the hierarchy is the one panel that is on
+    // screen while nothing else happens.
+    rebuildFilter(world, hierarchyFilter_.text());
 
-    const int totalRows = matching + 1;  // the scene root plus what passed
+    const int totalRows = (int)filterRows_.size() + 1;  // the scene root plus what passed
     const int maxScroll = std::max(0, totalRows - capacity);
     hierarchyScroll_ = clampf(hierarchyScroll_ - (float)ui_.scrollDelta() * 2.0f, 0.0f,
                               (float)maxScroll);
@@ -135,8 +153,7 @@ void Editor::drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Camera& came
             continue;
         }
 
-        const int index = filteredBodyIndex(world, drawn - 1, hierarchyFilter_.text());
-        if (index < 0) continue;
+        const int index = filterRows_[(size_t)(drawn - 1)];
         const RigidBody& body = world.bodies[(size_t)index];
         const bool selected =
             index == activeBody_ ||
@@ -153,10 +170,11 @@ void Editor::drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Camera& came
         else
             ui.fillRect(dock.x + 26.0f, y + 5.0f, 10.0f, 10.0f, tint);
 
-        // Shrunk into the slot left of the flag strip, never clipped: the name is
-        // the only thing identifying a body.
-        ui.textFit(dock.x + 44.0f, y + 2.0f, dock.width - 74.0f, bodyLabel(world, index).c_str(),
-                   theme::text);
+        // Built into a stack buffer, not a std::string: this runs for every visible row
+        // every frame, and the heap traffic showed up as a stuttering hierarchy.
+        char label[64];
+        formatIndexed(label, sizeof(label), bodyKind(world, index), ' ', index);
+        ui.textFit(dock.x + 44.0f, y + 2.0f, dock.width - 74.0f, label, theme::text);
         // Right-hand flags, drawn over the reserved strip so the name can use the
         // rest without colliding with them.
         if (!body.visible) ui.text(dock.x + dock.width - 30.0f, y + 2.0f, "H", theme::textDim);
@@ -180,35 +198,10 @@ void Editor::drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Camera& came
 
     // "Nothing matches" instead of an empty box with no explanation. Below the
     // root row, which is always there - it is what a filter returns to.
-    if (matching == 0) {
+    if (filterRows_.empty()) {
         ui.textFit(dock.x + 10.0f, rowsTop + kRowStep + 4.0f, dock.width - 20.0f,
                    text("hierarchy.noMatches"), theme::textDim);
     }
-}
-
-void Editor::drawAssetDock(UiRenderer& ui, PhysicsWorld& world, Camera& camera,
-                           const Rect& dock, int fbWidth) {
-    ui.fillRect(dock.x, dock.y, dock.width, dock.height, theme::panel);
-    dockHeader(ui, ui_, dock, text("tab.assets"), fbWidth);
-    if (!assets_.scanned()) assets_.refresh();
-
-    const float buttonW = ui.textWidth(text("btn.refresh")) + 18.0f;
-    if (ui_.button(ui, kAssetDock, dock.x + dock.width - buttonW - 6.0f, dock.y + 2.0f, buttonW,
-                   kHeaderHeight - 4.0f, text("btn.refresh")))
-        assets_.refresh();
-
-    float y = dock.y + kHeaderHeight + 6.0f;
-    const std::vector<std::string>& files = assets_.files();
-    for (size_t i = 0; i < files.size(); ++i) {
-        const Rect row{dock.x + 6.0f, y, dock.width - 12.0f, 24.0f};
-        if (y + 24.0f > dock.y + dock.height) break;
-        if (ui_.button(ui, kImportRow + (int)i, row.x, row.y, row.width, row.height,
-                       fileNameTail(files[i])))
-            assets_.import(files[i], world, camera, meshes_, activeBody_);
-        y += 26.0f;
-    }
-    if (files.empty())
-        ui.text(dock.x + 10.0f, y, text("assets.noModels"), theme::textDim);
 }
 
 } // namespace s3d

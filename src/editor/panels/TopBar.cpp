@@ -2,164 +2,505 @@
 
 #include "../../core/Log.hpp"
 #include "../../core/Project.hpp"
-#include "../../render/GlInfo.hpp"
+#include "../../core/Str.hpp"
 #include "../../scene/BodyFactory.hpp"
 #include "../../ui/Theme.hpp"
 
-#include "../../i18n/Localizer.hpp"
-
 #include <algorithm>
 #include <cmath>
-#include <string>
+#include <cstdio>
 
 namespace s3d {
 namespace {
 
-constexpr float kBarHeight = 28.0f;
-constexpr float kMenuHeight = 22.0f;
-constexpr float kTransportWidth = 78.0f;
-constexpr float kTransportGap = 4.0f;
-constexpr float kDropdownRow = 22.0f;
+// Metrics of the bar itself. Everything that hangs off it - the dropdowns, the
+// layers panel, the search results - has its own metrics in TopBarOverlay.cpp.
+constexpr float kBarButtonHeight = 20.0f;
+constexpr float kBarGap = 4.0f;
+constexpr float kSearchWidth = 172.0f;
 
-struct MenuItem {
-    const char* key;
-};
+// How many rows the Create menu lists before it says how many more there are. The
+// model list is the one menu whose length changes from frame to frame.
+constexpr int kMaxModelRows = 10;
 
-// The top bar's own menus. "Create" is the only one that opens something: it is
-// where the shape palette went when the floating palette in the left column was
-// removed, which is also where a user looks for "add a box".
-const MenuItem kMenus[5] = {{"menu.file"}, {"menu.edit"}, {"menu.view"}, {"menu.create"},
-                            {"menu.help"}};
+// Shape names, in `Shape` order. A menu row carries the shape as its parameter,
+// so these two have to stay in step - hence the count check.
+const char* const kShapeLabels[] = {"Box",      "Sphere",   "Cylinder", "Capsule",
+                                    "Cone",     "Pyramid",  "Prism"};
+constexpr int kShapeCount = (int)(sizeof(kShapeLabels) / sizeof(kShapeLabels[0]));
+static_assert(kShapeCount == 7, "one label per primitive in Shape, before Mesh");
 
-// The only menu that opens anything.
-constexpr int kCreateMenu = 3;
+const float kPerspectiveValues[3] = {60.0f, 70.0f, 90.0f};
+const char* const kPerspectiveKeys[3] = {"vp.perspective60", "vp.perspective70",
+                                         "vp.perspective90"};
 
-struct ShapeItem {
-    Shape shape;
-    const char* label;
-};
+// Case-insensitive substring test, `needle` folded once by the caller and
+// `haystack` folded here as it walks. An empty needle never matches, so an empty
+// search takes its own path instead of this one.
+bool containsFolded(const char* haystack, const char* foldedNeedle) {
+    if (!haystack || !foldedNeedle || !*foldedNeedle) return false;
+    for (const char* p = haystack; *p; ++p) {
+        size_t matched = 0;
+        while (foldedNeedle[matched] && str::lowerAscii(p[matched]) == foldedNeedle[matched])
+            ++matched;
+        if (!foldedNeedle[matched]) return true;
+    }
+    return false;
+}
 
-const ShapeItem kShapes[7] = {
-    {Shape::Box, "Box"},         {Shape::Sphere, "Sphere"},   {Shape::Cylinder, "Cylinder"},
-    {Shape::Capsule, "Capsule"}, {Shape::Cone, "Cone"},       {Shape::Pyramid, "Pyramid"},
-    {Shape::Prism, "Prism"},
-};
+// Glyphs are drawn from rects and circles, like the viewport tool icons: the
+// atlas carries ASCII and Cyrillic and nothing else, so a button whose picture
+// is U+25B6 or U+27F3 is a button that comes out blank.
+enum class Glyph { Play, Pause, Stop, Reload, Search };
+
+// A triangle rasterised as stacked rows - the only shape the 2D batcher cannot
+// draw directly, and the play button wants one. `pointRight` mirrors it: false is
+// a triangle with its apex up.
+void triangle(UiRenderer& ui, float x, float y, float w, float h, bool pointRight,
+              const Color& color) {
+    constexpr int kRows = 9;
+    const float rowHeight = h / (float)kRows;
+    for (int i = 0; i < kRows; ++i) {
+        const float t = ((float)i + 0.5f) / (float)kRows;
+        const float width = w * (1.0f - std::fabs(t * 2.0f - 1.0f));
+        const float left = pointRight ? x : x + (w - width) * 0.5f;
+        ui.fillRect(left, y + (float)i * rowHeight, width, rowHeight + 0.5f, color);
+    }
+}
+
+void drawGlyph(UiRenderer& ui, const Rect& rect, Glyph glyph, const Color& tint) {
+    const float cx = rect.x + rect.width * 0.5f;
+    const float cy = rect.y + rect.height * 0.5f;
+    const float s = std::fmin(rect.width, rect.height);
+    auto bar = [&](float x, float y, float w, float h) { ui.fillRect(x, y, w, h, tint); };
+
+    switch (glyph) {
+    case Glyph::Play:
+        triangle(ui, cx - s * 0.30f, cy - s * 0.32f, s * 0.60f, s * 0.64f, true, tint);
+        break;
+    case Glyph::Pause: {
+        const float w = s * 0.15f, h = s * 0.62f;
+        bar(cx - w * 1.6f, cy - h * 0.5f, w, h);
+        bar(cx + w * 0.6f, cy - h * 0.5f, w, h);
+        break;
+    }
+    case Glyph::Stop: {
+        const float side = s * 0.54f;
+        bar(cx - side * 0.5f, cy - side * 0.5f, side, side);
+        break;
+    }
+    case Glyph::Reload: {
+        // A ring with a gap at the top and an arrow head in it. Drawn as dots
+        // because a partial ring is not a shape the batcher has either.
+        const float radius = s * 0.28f;
+        constexpr int kSteps = 12;
+        for (int i = 0; i < kSteps; ++i) {
+            const float a = (float)i / (float)kSteps * 2.0f * kPi + kPi * 0.15f;
+            ui.fillCircle(cx + std::cos(a) * radius, cy + std::sin(a) * radius, s * 0.055f,
+                          tint);
+        }
+        triangle(ui, cx - s * 0.16f, cy - radius - s * 0.24f, s * 0.32f, s * 0.26f, false, tint);
+        break;
+    }
+    case Glyph::Search: {
+        // Circle plus a handle, both hollow in the middle so it reads as a lens
+        // instead of a dot. The lens is punched back out in the field colour,
+        // which is what the field behind it is.
+        ui.fillCircle(cx, cy, s * 0.22f, tint);
+        ui.fillCircle(cx, cy, s * 0.12f, theme::field);
+        ui.fillRect(cx + s * 0.13f, cy + s * 0.13f, s * 0.22f, s * 0.09f, tint);
+        break;
+    }
+    }
+}
 
 } // namespace
 
-void Editor::drawTopBar(UiRenderer& ui, PhysicsWorld& world, Camera& camera, int fbWidth) {
+// Every row of every menu, rebuilt each frame.
+//
+// The toolbar is drawn on every frame that anything at all happens, so this is a
+// fixed-size member array filled in place - no vector, no per-frame allocation for
+// forty rows of text pointers. The model rows come from the asset browser, which
+// is why Create is the one menu whose length changes.
+void Editor::buildMenuRows() {
+    if (!assets_.scanned()) assets_.refresh();
+
+    int at = 0;
+    auto add = [&](Action action, int param, const char* label, bool checked = false,
+                   bool separator = false) {
+        if (at >= kMaxMenuRows) return;
+        MenuRow& row = menuRows_[at++];
+        row.action = action;
+        row.param = param;
+        row.text = label;
+        row.checked = checked;
+        row.separator = separator;
+    };
+    auto open = [&](int menu) { menuFirst_[menu] = at; };
+    auto close = [&](int menu) { menuFirst_[menu + 1] = at; };
+
+    open(kMenuFile);
+    add(Action::Save, 0, text("file.save"));
+    add(Action::Load, 0, text("file.load"));
+    add(Action::Reload, 0, text("file.reload"));
+    add(Action::None, 0, nullptr, false, true);
+    add(Action::Exit, 0, text("file.exit"));
+    close(kMenuFile);
+
+    open(kMenuEdit);
+    add(Action::Duplicate, 0, text("edit.duplicate"));
+    add(Action::Delete, 0, text("edit.delete"));
+    add(Action::None, 0, nullptr, false, true);
+    add(Action::ClearSelection, 0, text("edit.clearSelection"));
+    add(Action::Wake, 0, text("edit.wake"));
+    close(kMenuEdit);
+
+    open(kMenuView);
+    add(Action::Grid, 0, text("view.grid"), showGrid_);
+    add(Action::Vectors, 0, text("view.vectors"), showVectors_);
+    add(Action::None, 0, nullptr, false, true);
+    for (int i = 0; i < 3; ++i)
+        add(Action::Fov, i, text(kPerspectiveKeys[i]), perspectiveIndex_ == i);
+    add(Action::None, 0, nullptr, false, true);
+    add(Action::FrameSelection, 0, text("view.frame"));
+    add(Action::ResetCamera, 0, text("view.resetCamera"));
+    close(kMenuView);
+
+    open(kMenuCreate);
+    for (int i = 0; i < kShapeCount; ++i)
+        add(Action::Shape, i, kShapeLabels[i]);
+    const std::vector<std::string>& models = assets_.files();
+    add(Action::None, 0, nullptr, false, true);
+    if (models.empty()) {
+        add(Action::None, 0, text("assets.noModels"));
+    } else {
+        const int shown = std::min((int)models.size(), kMaxModelRows);
+        for (int i = 0; i < shown; ++i)
+            add(Action::Model, i, str::fileNameView(models[(size_t)i]).data());
+        // What did not fit says so. A menu that quietly shows ten of twenty
+        // models is indistinguishable from a folder that has ten.
+        if ((int)models.size() > shown) {
+            std::snprintf(modelOverflow_, sizeof(modelOverflow_), "+%d",
+                          (int)models.size() - shown);
+            add(Action::None, 0, modelOverflow_);
+        }
+    }
+    close(kMenuCreate);
+
+    open(kMenuHelp);
+    add(Action::Controls, 0, text("help.controls"));
+    add(Action::About, 0, text("help.about"));
+    close(kMenuHelp);
+
+    menuFirst_[kMenuCount] = at;
+}
+
+void Editor::closeOverlays() {
+    openMenu_ = -1;
+    layersOpen_ = false;
+    helpPage_ = 0;
+}
+
+const char* Editor::menuCaption(int menu) const {
+    static const char* const keys[kMenuCount] = {"menu.file", "menu.edit", "menu.view",
+                                                 "menu.create", "menu.help"};
+    return menu >= 0 && menu < kMenuCount ? text(keys[menu]) : "";
+}
+
+int Editor::findMenuRows(const char* query, MenuHit* out, int capacity) const {
+    if (!query || !*query || capacity <= 0) return 0;
+
+    // Folded once, into a buffer big enough for a menu caption plus slack: the
+    // needle is compared against a few dozen captions and folding it per caption
+    // is the same work done forty times.
+    char needle[64];
+    const size_t length = std::min(std::strlen(query), sizeof(needle) - 1);
+    for (size_t i = 0; i < length; ++i) needle[i] = str::lowerAscii(query[i]);
+    needle[length] = '\0';
+
+    int found = 0;
+    for (int menu = 0; menu < kMenuCount; ++menu) {
+        const int count = menuRowCount(menu);
+        for (int i = 0; i < count; ++i) {
+            const MenuRow& row = menuRow(menu, i);
+            if (row.separator || !row.text) continue;
+            if (!containsFolded(row.text, needle)) continue;
+            if (found < capacity) {
+                out[found].menu = menu;
+                out[found].index = i;
+            }
+            ++found;
+        }
+    }
+    return found;
+}
+
+// Moves the camera back along its own view direction until the selection fits in
+// the frame. Yaw and pitch are left alone: framing something is not the same
+// request as looking at it from a new angle, and the user still has the orbit
+// gizmo for that.
+void Editor::frameSelection(PhysicsWorld& world, Camera& camera) {
+    Vec3 centre{0.0f, 0.0f, 0.0f};
+    float radius = 0.0f;
+    int counted = 0;
+    for (int index : selectedBodies_) {
+        const RigidBody* body = world.find(index);
+        if (!body) continue;
+        centre += body->position;
+        radius = std::fmax(radius, body->boundRadius);
+        ++counted;
+    }
+    if (counted == 0) return;
+
+    centre = centre / (float)counted;
+    const float halfFov = camera.fovDeg * 0.5f * kPi / 180.0f;
+    // Half the frame's height has to cover the radius, plus a margin so the object
+    // does not sit against the edge.
+    const float distance = radius / std::fmax(0.05f, std::tan(halfFov)) * 1.6f + radius;
+    camera.position = centre - camera.forward() * distance;
+    viewRay_.valid = false;
+}
+
+void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& camera,
+                       Window& window) {
+    switch (action) {
+    case Action::None:
+        break;
+    case Action::Save:
+        saveScene(world);
+        break;
+    case Action::Load:
+        loadScene(world);
+        break;
+    case Action::Reload:
+        // Scene from disk and the model list from disk: both are "reload", and a
+        // model that was replaced underneath the editor is the case where a stale
+        // list is worse than a stale scene.
+        assets_.refresh();
+        loadScene(world);
+        break;
+    case Action::Exit:
+        window.requestClose();
+        break;
+    case Action::Duplicate: {
+        const RigidBody* source = world.find(activeBody_);
+        if (!source) break;
+        // Into a local first: push_back may reallocate the vector the source
+        // points into, and copying a reference out of the vector it reallocates is
+        // undefined even when it "usually" works.
+        RigidBody copy = *source;
+        copy.asleep = false;
+        copy.sleepTime = 0.0f;
+        copy.velocity = {};
+        copy.angularVelocity = {};
+        world.bodies.push_back(copy);
+        const int index = (int)world.bodies.size() - 1;
+        activeBody_ = index;
+        selectedBodies_.assign(1, index);
+        world.bodies.back().wake();
+        break;
+    }
+    case Action::Delete:
+        deleteSelection(world);
+        break;
+    case Action::ClearSelection:
+        selectedBodies_.clear();
+        activeBody_ = -1;
+        break;
+    case Action::Wake:
+        if (RigidBody* body = world.find(activeBody_)) body->wake();
+        break;
+    case Action::Grid:
+        showGrid_ = !showGrid_;
+        break;
+    case Action::Vectors:
+        showVectors_ = !showVectors_;
+        break;
+    case Action::Fov:
+        if (param >= 0 && param < 3) {
+            perspectiveIndex_ = param;
+            camera.fovDeg = kPerspectiveValues[param];
+        }
+        break;
+    case Action::FrameSelection:
+        frameSelection(world, camera);
+        break;
+    case Action::ResetCamera:
+        camera = homeCamera_;
+        viewRay_.valid = false;
+        break;
+    case Action::Shape:
+        BodyFactory::spawnInFrontOf(world, (Shape)param, camera, 1.0f);
+        break;
+    case Action::Model: {
+        const std::vector<std::string>& models = assets_.files();
+        if (param < 0 || param >= (int)models.size()) break;
+        if (assets_.import(models[(size_t)param], world, camera, meshes_, activeBody_) < 0)
+            Log::error("Import failed: %s", models[(size_t)param].c_str());
+        break;
+    }
+    case Action::Controls:
+        helpPage_ = 1;
+        break;
+    case Action::About:
+        helpPage_ = 2;
+        break;
+    case Action::CloseOverlay:
+        closeOverlays();
+        break;
+    case Action::LayerSelect:
+        activeBody_ = param;
+        selectedBodies_.assign(1, param);
+        break;
+    case Action::LayerVisible:
+    case Action::LayerLocked:
+        if (RigidBody* body = world.find(param)) {
+            if (action == Action::LayerVisible) body->visible = !body->visible;
+            else body->locked = !body->locked;
+        }
+        break;
+    }
+}
+
+// The top bar: menus on the left, the transport in the middle, and the search /
+// layers / help / reload cluster on the right, which is where the sketch has it.
+//
+// Only the parts that decide what is open are handled here. The dropdowns
+// themselves are drawn in drawTopBarOverlay at the end of the frame, because they
+// hang over the panels below; a press that opens one must not also close it, and
+// nothing may change after the frame has been drawn - with on-demand rendering a
+// change nobody redraws stays on screen until something else wakes the window.
+void Editor::drawTopBar(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
+                        int fbWidth) {
+    buildMenuRows();
+    overlayOpenedThisFrame_ = false;
+
     const Rect bar = layout_.menuBar;
     ui.fillRect(bar.x, bar.y, bar.width, bar.height, theme::background);
     ui.fillRect(bar.x, bar.y + bar.height - 1.0f, bar.width, 1.0f, theme::separator);
 
-    menuOpenedThisFrame_ = false;
+    const float buttonY = bar.y + (bar.height - kBarButtonHeight) * 0.5f;
 
     // --- left: the menus ---
-    float x = 6.0f;
-    for (int i = 0; i < 5; ++i) {
-        const char* label = text(kMenus[i].key);
-        const float width = ui.textWidth(label) + 16.0f;
-        const Rect hit{x, bar.y + 2.0f, width, kMenuHeight};
+    float menuX = 6.0f;
+    for (int i = 0; i < kMenuCount; ++i) {
+        const char* label = menuCaption(i);
+        const float width = ui.textWidth(label) + 18.0f;
+        const Rect hit{menuX, buttonY, width, kBarButtonHeight};
         const bool hovered = ui_.hovered(hit);
-        if (hovered) ui.fillRect(hit.x, hit.y, hit.width, hit.height, theme::buttonHover);
-        ui.text(hit.x + 8.0f, hit.y + 4.0f, label, theme::text);
 
-        // Only Create opens; the rest are labels until they have something to do, and
-        // a menu that swallows clicks without effect is worse than a label.
-        // Closing on an outside click belongs to the dropdown, which knows its
-        // own rectangle - doing it here closed the menu before the row under the
-        // pointer ever saw the press, so picking a shape did nothing.
-        if (i == kCreateMenu && ui_.pointerPressed() && hovered) {
-            openMenu_ = openMenu_ == kCreateMenu ? -1 : kCreateMenu;
-            // The press that opens a menu must not also be the press that closes
-            // it, and no state may change after this frame has been drawn - with
-            // on-demand rendering a change nobody redraws stays on screen forever.
-            menuOpenedThisFrame_ = true;
+        // The open one keeps its highlight: an open menu that only looks open
+        // while the pointer happens to be over it is not open, it is flickering.
+        const bool open = openMenu_ == i;
+        if (open)
+            ui.fillRect(hit.x, hit.y, hit.width, hit.height, theme::buttonPressed);
+        else if (hovered)
+            ui.fillRect(hit.x, hit.y, hit.width, hit.height, theme::buttonHover);
+        ui.text(hit.x + 9.0f,
+                hit.y + (hit.height - theme::textLineHeight) * 0.5f, label,
+                open ? theme::text : theme::textDim);
+
+        if (hovered && ui_.pointerPressed()) {
+            if (openMenu_ == i) {
+                closeOverlays();
+            } else {
+                // Opening one closes the others: they are all anchored to this
+                // bar, and two open at once is two overlapping dropdowns. The
+                // search text goes with it - a dropdown that stays open behind a
+                // menu is a list of matches for a query nobody is looking at.
+                closeOverlays();
+                toolbarSearch_.clear();
+                openMenu_ = i;
+                overlayOpenedThisFrame_ = true;
+            }
         }
-        x += width;
+        menuX += width;
     }
 
     // --- centre: transport, like a media player ---
-    const float groupWidth = kTransportWidth * 3.0f + kTransportGap * 2.0f;
+    const float groupWidth = kBarButtonHeight * 3.0f + kBarGap * 2.0f;
     float tx = (float)fbWidth * 0.5f - groupWidth * 0.5f;
-    auto transport = [&](int id, const char* label, bool on) {
-        const Rect rect{tx, bar.y + 3.0f, kTransportWidth, kMenuHeight};
-        const bool pressed = ui_.button(ui, id, rect.x, rect.y, rect.width, rect.height, label, on);
-        tx += kTransportWidth + kTransportGap;
+    auto transport = [&](int id, Glyph glyph, bool on) {
+        const Rect rect{tx, buttonY, kBarButtonHeight, kBarButtonHeight};
+        const bool pressed = ui_.button(ui, id, rect.x, rect.y, rect.width, rect.height, "", on);
+        drawGlyph(ui, rect, glyph, on ? theme::accent : theme::textDim);
+        tx += kBarButtonHeight + kBarGap;
         return pressed;
     };
-    if (transport(kTransportPlay, text("btn.play"), playMode_ && playing_)) {
+    if (transport(kTransportPlay, Glyph::Play, playMode_ && playing_)) {
         if (!playMode_) enterPlayMode(world);
         else playing_ = true;
     }
-    if (transport(kTransportPause, text("btn.pause"), playMode_ && !playing_)) {
+    if (transport(kTransportPause, Glyph::Pause, playMode_ && !playing_)) {
         if (playMode_) {
             playing_ = !playing_;
             Log::info(playing_ ? text("log.resumed") : text("log.paused_"));
         }
     }
-    if (transport(kTransportStop, text("btn.stop"), false)) {
+    if (transport(kTransportStop, Glyph::Stop, false)) {
         if (playMode_) exitPlayMode(world);
     }
 
-    // --- right: GL version, language, then engine and project ---
-    std::string glLabel = "GL ";
-    glLabel += gl::requestedVersion();
-    const float glWidth = ui.textWidth(glLabel.c_str());
-    const float right = (float)fbWidth - 14.0f;
-    ui.text(right - glWidth, bar.y + 7.0f, glLabel.c_str(), theme::textDim);
+    // --- right: counter, search, help, layers, reload ---
+    //
+    // Laid out from the right edge inwards, so the cluster can never grow into the
+    // transport on a narrow window.
+    float x = (float)fbWidth - 6.0f;
 
-    const bool ukrainian = loc_.language() == i18n::Language::Ukrainian;
-    const Rect language{right - glWidth - 44.0f, bar.y + 3.0f, 38.0f, kMenuHeight};
-    if (ui_.button(ui, kTransportLang, language.x, language.y, language.width, language.height,
-                   ukrainian ? "EN" : "UA"))
-        loc_.setLanguage(ukrainian ? i18n::Language::English : i18n::Language::Ukrainian);
+    const Rect reload{x - kBarButtonHeight, buttonY, kBarButtonHeight, kBarButtonHeight};
+    if (ui_.button(ui, kToolbarReload, reload.x, reload.y, reload.width, reload.height, ""))
+        runAction(Action::Reload, 0, world, camera, window);
+    drawGlyph(ui, reload, Glyph::Reload, theme::textDim);
+    x = reload.x - kBarGap;
 
-    if (!projectName_.empty()) {
-        std::string title = kEngineName;
-        title += " - ";
-        title += projectName_;
-        const float full = ui.textWidth(title.c_str());
-        const float room = language.x - x - 20.0f;
-        if (room > 40.0f) {
-            // Shrink rather than clip: which project this is, is the one thing in
-            // this bar that cannot be guessed.
-            const float scale = std::fmin(1.0f, room / full);
-            ui.textScaled(language.x - 12.0f - full * scale, bar.y + 7.0f, title.c_str(),
-                          theme::textDim, scale);
-        }
-    }
+    const char* layersLabel = text("toolbar.layers");
+    const float layersWidth = ui.textWidth(layersLabel) + 18.0f;
+    const Rect layers{x - layersWidth, buttonY, layersWidth, kBarButtonHeight};
+    layersButton_ = layers;
+    if (ui_.button(ui, kToolbarLayers, layers.x, layers.y, layers.width, layers.height, "",
+                   layersOpen_))
+        layersOpen_ = !layersOpen_;
+    ui.text(layers.x + 9.0f, layers.y + (layers.height - theme::textLineHeight) * 0.5f,
+            layersLabel, layersOpen_ ? theme::text : theme::textDim);
+    x = layers.x - kBarGap;
+
+    const Rect search{x - kSearchWidth, buttonY, kSearchWidth, kBarButtonHeight};
+    searchField_ = search;
+    const bool searchHovered = ui_.hovered(search);
+    // Pumped here, drawn here: the field belongs to the bar, and the results list
+    // under it is drawn with the other overlays at the end of the frame.
+    ui_.pumpTextField(window, toolbarSearch_, searchHovered);
+    ui.fillRect(search.x, search.y, search.width, search.height,
+                toolbarSearch_.editing ? theme::accent.scaled(0.35f) : theme::field);
+    const Rect searchGlyph{search.x + 3.0f, search.y, kBarButtonHeight - 4.0f, kBarButtonHeight};
+    drawGlyph(ui, searchGlyph, Glyph::Search, theme::textDim);
+    const char* searchText =
+        toolbarSearch_.empty() ? text("toolbar.search") : toolbarSearch_.text();
+    ui.text(search.x + kBarButtonHeight, search.y + (search.height - theme::textLineHeight) * 0.5f,
+            searchText, toolbarSearch_.empty() ? theme::textDim : theme::text);
+    if (toolbarSearch_.editing)
+        ui.fillRect(search.x + kBarButtonHeight + ui.textWidth(toolbarSearch_.text()) + 1.0f,
+                    search.y + 3.0f, 1.5f, search.height - 6.0f, theme::accent);
+    x = search.x - kBarGap;
+
+    const Rect help{x - kBarButtonHeight, buttonY, kBarButtonHeight, kBarButtonHeight};
+    if (ui_.button(ui, kToolbarHelp, help.x, help.y, help.width, help.height, ""))
+        runAction(helpPage_ == 1 ? Action::CloseOverlay : Action::Controls, 0, world, camera,
+                  window);
+    ui.text(help.x + (help.width - ui.textWidth("?")) * 0.5f,
+            help.y + (help.height - theme::textLineHeight) * 0.5f, "?",
+            helpPage_ == 1 ? theme::text : theme::textDim);
+    x = help.x - kBarGap;
+
+    // "3 / 12" - how much is selected out of how much there is. The two numbers
+    // that answer "did I select the thing I meant to".
+    char counter[32];
+    std::snprintf(counter, sizeof(counter), "%d / %d", (int)selectedBodies_.size(),
+                  (int)world.bodies.size());
+    const float counterWidth = ui.textWidth(counter);
+    if (x - counterWidth > menuX + 20.0f)
+        ui.text(x - counterWidth, buttonY + (kBarButtonHeight - theme::textLineHeight) * 0.5f,
+                counter, theme::textDim);
 }
 
-// The Create dropdown, drawn as an overlay at the very end of the frame. It hangs
-// over the scene header and the tool column, so anything drawn after the top bar
-// would paint over it.
-void Editor::drawCreateMenu(UiRenderer& ui, PhysicsWorld& world, Camera& camera) {
-    if (openMenu_ != kCreateMenu) return;
-
-    // Anchored under the Create label, which is the fourth one.
-    float createX = 6.0f;
-    for (int i = 0; i < 3; ++i) createX += ui.textWidth(text(kMenus[i].key)) + 16.0f;
-    const Rect panel{createX, layout_.menuBar.y + kBarHeight - 1.0f, 150.0f,
-                     kDropdownRow * (float)std::size(kShapes) + 6.0f};
-    ui.fillRect(panel.x, panel.y, panel.width, panel.height, theme::panel);
-    ui.fillRect(panel.x, panel.y, panel.width, 1.0f, theme::separator);
-
-    for (int i = 0; i < (int)std::size(kShapes); ++i) {
-        const Rect row{panel.x + 3.0f, panel.y + 3.0f + (float)i * kDropdownRow,
-                       panel.width - 6.0f, kDropdownRow};
-        const bool hovered = ui_.hovered(row);
-        if (hovered) ui.fillRect(row.x, row.y, row.width, row.height, theme::buttonHover);
-        ui.text(row.x + 8.0f, row.y + 4.0f, kShapes[i].label, theme::text);
-        if (hovered && ui_.pointerPressed()) {
-            BodyFactory::spawnInFrontOf(world, kShapes[i].shape, camera, 1.0f);
-            openMenu_ = -1;
-        }
-    }
-
-    // A press outside the panel closes the menu without picking - unless it is the
-    // press that opened it, or the row under the pointer, which is handled above.
-    const bool onRow = ui_.hovered(panel);
-    if (ui_.pointerPressed() && !onRow && !menuOpenedThisFrame_) openMenu_ = -1;
-}
 } // namespace s3d

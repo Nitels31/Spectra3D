@@ -48,7 +48,6 @@ extern Color error;
 inline constexpr float rowHeight = 22.0f;
 inline constexpr float fieldHeight = 20.0f;
 inline constexpr float menuBarHeight = 26.0f;
-inline constexpr float statusBarHeight = 28.0f;
 inline constexpr float leftDockWidth = 260.0f;
 inline constexpr float rightDockWidth = 280.0f;
 inline constexpr float textLineHeight = 15.0f;

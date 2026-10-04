@@ -42,6 +42,7 @@ const NavBall kNavBalls[6] = {
 Editor::Editor(MeshRegistry& meshes, i18n::Localizer& localizer)
     : meshes_(meshes), loc_(localizer) {
     filter_.id = kFilterField;
+    toolbarSearch_.id = kToolbarSearch;
 }
 
 bool Editor::consumeSingleStep() {
@@ -54,14 +55,15 @@ void Editor::recomputeLayout(int fbWidth, int fbHeight) {
     const float width = (float)fbWidth;
     const float height = (float)fbHeight;
 
-    const float consoleH = std::fmin(kConsoleHeight, height * 0.28f);
-    const float statusH = theme::statusBarHeight;
+    const float consoleH = std::fmin(kConsoleHeight, height * 0.34f);
 
     layout_.menuBar = Rect{0.0f, 0.0f, width, theme::menuBarHeight};
 
     // The console spans the viewport and the inspector, not the whole window: the
-    // left column keeps its full height, which is what the sketch shows.
-    const float consoleY = height - statusH - consoleH;
+    // left column keeps its full height, which is what the sketch shows, and the
+    // console reaches the bottom of the window because there is no status bar under
+    // it any more.
+    const float consoleY = height - consoleH;
     layout_.console = Rect{theme::leftDockWidth, consoleY,
                            std::fmax(0.0f, width - theme::leftDockWidth), consoleH};
 
@@ -69,13 +71,6 @@ void Editor::recomputeLayout(int fbWidth, int fbHeight) {
     const float columnH = std::fmax(0.0f, consoleY - columnTop);
 
     layout_.leftDock = Rect{0.0f, columnTop, theme::leftDockWidth, columnH};
-    // Two stacked docks, not two tabs: the sketch has both on screen at once, and
-    // a tab means one of them is always hidden.
-    const float splitY = columnTop + columnH * 0.58f;
-    layout_.hierarchyDock = Rect{layout_.leftDock.x, columnTop, layout_.leftDock.width,
-                                 splitY - columnTop};
-    layout_.assetDock = Rect{layout_.leftDock.x, splitY, layout_.leftDock.width,
-                             columnTop + columnH - splitY};
     layout_.rightDock = Rect{std::fmax(0.0f, width - theme::rightDockWidth), columnTop,
                              theme::rightDockWidth, columnH};
 
@@ -90,7 +85,6 @@ void Editor::recomputeLayout(int fbWidth, int fbHeight) {
     layout_.viewportTools = Rect{layout_.viewport.x + 4.0f, layout_.viewport.y + 4.0f,
                                  kToolStripWidth, 0.0f};
     layout_.viewportTools.height = std::max(0.0f, layout_.viewport.height - 8.0f);
-    layout_.statusBar = Rect{0.0f, height - statusH, width, statusH};
 }
 
 void Editor::pruneSelection(const PhysicsWorld& world) {
@@ -106,6 +100,13 @@ void Editor::deleteSelection(PhysicsWorld& world) {
     std::sort(selectedBodies_.rbegin(), selectedBodies_.rend());
     for (int index : selectedBodies_) {
         if (index < 0 || index >= (int)world.bodies.size()) continue;
+        // A locked body stays. "Locked" has to mean something the editor enforces,
+        // and the one thing a lock is for is that a stray Delete cannot throw work
+        // away.
+        if (world.bodies[(size_t)index].locked) {
+            Log::info("Body %d is locked", index);
+            continue;
+        }
         Log::info("Deleted body %d", index);
         world.remove(index);
     }
@@ -221,42 +222,113 @@ bool Editor::tryNavigationGizmo(Camera& camera) {
     return false;
 }
 
+bool Editor::gizmoModeFor(Tool tool, gizmo::Mode& modeOut) const {
+    switch (tool) {
+    case Tool::Move: modeOut = gizmo::Mode::Move; return true;
+    case Tool::Rotate: modeOut = gizmo::Mode::Rotate; return true;
+    case Tool::Scale: modeOut = gizmo::Mode::Scale; return true;
+    // Select picks bodies and Pan moves the camera; neither has handles.
+    case Tool::Select:
+    case Tool::Pan: return false;
+    }
+    return false;
+}
+
 bool Editor::tryGizmoGrip(PhysicsWorld& world, Camera& camera) {
-    if (!gizmoEnabled_) return false;
+    gizmo::Mode mode = gizmo::Mode::Move;
+    if (!gizmoModeFor(tool_, mode)) return false;
     const RigidBody* body = world.find(activeBody_);
     if (!body) return false;
+    // Same rule as Delete: a locked body shows no handles to grab, so the lock
+    // cannot be argued with by dragging.
+    if (body->locked) return false;
 
     const Rect viewport = layout_.viewport;
     const Vec3 rayOrigin = camera.position;
     const Vec3 rayDir = viewportRay(camera);
-    dragAxis_ = gizmo::pickAxis(ui_.pointerX() - viewport.x, ui_.pointerY() - viewport.y,
-                                rayOrigin, rayDir, camera.position, viewRay_.forward,
-                                viewRay_.right, viewRay_.up, viewRay_.tanX, viewRay_.tanY,
-                                viewport, *body, gizmoMode_);
+    const float pointerX = ui_.pointerX() - viewport.x;
+    const float pointerY = ui_.pointerY() - viewport.y;
+
+    dragAxis_ = mode == gizmo::Mode::Rotate
+                    ? gizmo::pickRing(pointerX, pointerY, rayOrigin, rayDir, camera.position,
+                                      viewRay_.forward, viewRay_.right, viewRay_.up,
+                                      viewRay_.tanX, viewRay_.tanY, viewport, *body)
+                    : gizmo::pickAxis(pointerX, pointerY, rayOrigin, rayDir, camera.position,
+                                      viewRay_.forward, viewRay_.right, viewRay_.up,
+                                      viewRay_.tanX, viewRay_.tanY, viewport, *body, mode);
     if (dragAxis_ < 0) return false;
 
     dragOrigin_ = body->position;
     Vec3 axes[3];
-    gizmo::axesFor(*body, gizmoMode_, axes);
+    gizmo::axesFor(*body, mode, axes);
+
+    if (mode == gizmo::Mode::Rotate) {
+        // Remember where the pointer sat on the ring, in the ring's own frame, so
+        // the drag is a delta from that and not an absolute angle.
+        dragStartOrientation_ = body->orientation;
+        rotateStartAngle_ = pointerAngleOnRing(rayOrigin, rayDir, *body, axes[dragAxis_],
+                                               pointerX, pointerY, camera);
+        return true;
+    }
+
     float rayT = 0.0f;
     picking::closestOnAxis(rayOrigin, rayDir, dragOrigin_, axes[dragAxis_],
                            dragStartAxisT_, rayT);
     return true;
 }
 
+// Where the pointer ray crosses the plane the ring lies in, as an angle around
+// `axis`. Returns 0 when the ray is too close to parallel to that plane to give a
+// meaningful answer, which leaves the body where it was instead of spinning it.
+float Editor::pointerAngleOnRing(const Vec3& rayOrigin, const Vec3& rayDir,
+                                 const RigidBody& body, const Vec3& axis, float pointerX,
+                                 float pointerY, const Camera& camera) {
+    const float denominator = rayDir.x * axis.x + rayDir.y * axis.y + rayDir.z * axis.z;
+    if (std::fabs(denominator) < 1e-3f) return 0.0f;
+
+    const Vec3 toPlane = body.position - rayOrigin;
+    const float t = (toPlane.x * axis.x + toPlane.y * axis.y + toPlane.z * axis.z) / denominator;
+    if (t <= 0.0f) return 0.0f;
+
+    const Vec3 hit = rayOrigin + rayDir * t - body.position;
+    Vec3 u, v;
+    gizmo::ringFrame(axis, u, v);
+    return std::atan2(hit.x * v.x + hit.y * v.y + hit.z * v.z,
+                      hit.x * u.x + hit.y * u.y + hit.z * u.z);
+}
+
 void Editor::applyGizmoDrag(PhysicsWorld& world, Camera& camera) {
     RigidBody* body = world.find(activeBody_);
     if (!body) return;
 
+    const Rect viewport = layout_.viewport;
     const Vec3 rayOrigin = camera.position;
     const Vec3 rayDir = viewportRay(camera);
 
+    gizmo::Mode mode = gizmo::Mode::Move;
+    if (!gizmoModeFor(tool_, mode)) return;
+
     Vec3 axes[3];
-    gizmo::axesFor(*body, gizmoMode_, axes);
+    gizmo::axesFor(*body, mode, axes);
+
+    if (mode == gizmo::Mode::Rotate) {
+        // The pointer's angle around the axis now, minus where it started: a delta
+        // applied to the orientation the body had when the ring was grabbed.
+        const float angle = pointerAngleOnRing(rayOrigin, rayDir, *body, axes[dragAxis_],
+                                               ui_.pointerX() - viewport.x,
+                                               ui_.pointerY() - viewport.y, camera);
+        const float delta = angle - rotateStartAngle_;
+        if (std::fabs(delta) < 1e-4f) return;
+        body->orientation =
+            (Quat::axisAngle(axes[dragAxis_], delta) * dragStartOrientation_).normalized();
+        body->wake();
+        return;
+    }
+
     float axisT = 0.0f, rayT = 0.0f;
     picking::closestOnAxis(rayOrigin, rayDir, dragOrigin_, axes[dragAxis_], axisT, rayT);
 
-    if (gizmoMode_ == gizmo::Mode::Move) {
+    if (mode == gizmo::Mode::Move) {
         body->position = dragOrigin_ + axes[dragAxis_] * (axisT - dragStartAxisT_);
     } else {
         float factor =
@@ -301,10 +373,43 @@ const Rect viewport = layout_.viewport;
 
     if (tryNavigationGizmo(camera)) return;
 
+    // Pan is a viewport drag, not a UI press: start it here and keep feeding it
+    // below, so the camera tracks the pointer for as long as the button is down.
+    if (tool_ == Tool::Pan) {
+        if (ui_.pointerPressed()) {
+            panStartPointer_ = {ui_.pointerX(), ui_.pointerY(), 0.0f};
+            panStartCamera_ = camera.position;
+            // One screen pixel of drag per world unit at the focal plane, so the
+            // scene follows the pointer at any zoom or field of view. The plane is
+            // taken at whatever the user is looking at: the selection if there is
+            // one, otherwise the origin.
+            Vec3 reference{0.0f, 0.0f, 0.0f};
+            if (const RigidBody* body = world.find(activeBody_)) reference = body->position;
+            const float distance = (camera.position - reference).length();
+            panPixelsPerUnit_ = std::fmax(0.001f, distance * 2.0f *
+                                                        std::tan(camera.fovDeg * 0.5f * kPi / 180.0f) /
+                                                        std::fmax(1.0f, viewport.height));
+            viewRay_.valid = false;
+            return;
+        }
+        if (ui_.pointerDown()) {
+            Vec3 forward, right, up;
+            camera.basis(forward, right, up);
+            const float dx = ui_.pointerX() - panStartPointer_.x;
+            const float dy = ui_.pointerY() - panStartPointer_.y;
+            camera.position =
+                panStartCamera_ - right * (dx * panPixelsPerUnit_) + up * (dy * panPixelsPerUnit_);
+            viewRay_.valid = false;
+            return;
+        }
+        return;
+    }
+
     if (ui_.pointerPressed()) {
         if (tryGizmoGrip(world, camera)) {
             const RigidBody* body = world.find(activeBody_);
-            if (body && gizmoMode_ == gizmo::Mode::Scale) {
+            gizmo::Mode mode = gizmo::Mode::Move;
+            if (body && gizmoModeFor(tool_, mode) && mode == gizmo::Mode::Scale) {
                 if (body->hasMesh()) dragStartScale_ = body->meshScale;
                 else if (body->shape == Shape::Sphere) dragStartScale_ = body->halfExtents.x;
                 else dragStartScale_ = (&body->halfExtents.x)[dragAxis_];
@@ -385,32 +490,44 @@ void Editor::renderOverlay(SceneRenderer& scene, PhysicsWorld& world) {
         const RigidBody* body = world.find(index);
         if (body) scene.renderSelection(*body);
     }
-    if (!gizmoEnabled_) return;
     const RigidBody* body = world.find(activeBody_);
     if (!body) return;
 
+    // Only the tool that is actually active draws handles: Select and Pan show
+    // none, and a gizmo left over from the previous tool would be a lie about
+    // what a drag would do.
+    gizmo::Mode mode = gizmo::Mode::Move;
+    if (!gizmoModeFor(tool_, mode)) return;
+
     Vec3 axes[3];
-    gizmo::axesFor(*body, gizmoMode_, axes);
-    scene.renderGizmo(body->position, axes, gizmo::handleLength(*body), dragAxis_,
-                      gizmoMode_ == gizmo::Mode::Scale);
+    gizmo::axesFor(*body, mode, axes);
+
+    Vec3 ringU[3], ringV[3];
+    for (int i = 0; i < 3; ++i) gizmo::ringFrame(axes[i], ringU[i], ringV[i]);
+
+    SceneRenderer::GizmoShape shape = SceneRenderer::GizmoShape::Arrows;
+    if (mode == gizmo::Mode::Rotate) shape = SceneRenderer::GizmoShape::Rings;
+    else if (mode == gizmo::Mode::Scale) shape = SceneRenderer::GizmoShape::Cubes;
+
+    scene.renderGizmo(body->position, axes, gizmo::handleLength(*body),
+                      gizmo::ringRadius(*body), ringU, ringV, dragAxis_, shape);
 }
 
 void Editor::renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
                       int fbWidth, int fbHeight) {
     ui.begin(fbWidth, fbHeight);
 
-    drawTopBar(ui, world, camera, fbWidth);
+    drawTopBar(ui, world, camera, window, fbWidth);
     drawLeftColumn(ui, world, camera, window, fbWidth);
     drawInspectorDock(ui, world, window, fbWidth, fbHeight);
     drawSceneHeader(ui, world, camera);
     drawViewportTools(ui, camera);
     drawConsolePanel(ui);
-    drawStatusBar(ui, world, fbWidth);
-    // Overlays last, and after a flush: the Create menu hangs over the panels
-    // below the top bar, and the batcher emits every rectangle before any text,
-    // so without the flush its background would land under their labels.
+    // Overlays last, and after a flush: the dropdowns hang over the panels below
+    // the top bar, and the batcher emits every rectangle before any text, so
+    // without the flush their background would land under their neighbours' labels.
     ui.flush();
-    drawCreateMenu(ui, world, camera);
+    drawTopBarOverlay(ui, world, camera, window, fbWidth, fbHeight);
 
     ui.end();
     pruneSelection(world);

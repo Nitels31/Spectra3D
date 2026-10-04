@@ -97,19 +97,4 @@ void Editor::drawConsolePanel(UiRenderer& ui) {
         ui.text(panel.x + 8.0f, bodyTop + 4.0f, text("bar.consoleEmpty"), theme::textDim);
 }
 
-void Editor::drawStatusBar(UiRenderer& ui, PhysicsWorld& world, int fbWidth) {
-    const Rect bar = layout_.statusBar;
-    ui.fillRect(bar.x, bar.y, bar.width, bar.height, theme::background);
-    ui.fillRect(bar.x, bar.y, bar.width, 1.0f, theme::separator);
-
-    const char* mode = playMode_ ? (playing_ ? text("bar.playing") : text("bar.paused"))
-                                 : text("bar.edit");
-    char status[160];
-    std::snprintf(status, sizeof(status), "%s  |  %s: %d  |  %s: %s", mode,
-                  text("bar.bodies"), (int)world.bodies.size(), text("bar.gravity"),
-                  gravityName(world.gravityAxis));
-    ui.textFit(bar.x + 8.0f, bar.y + 7.0f, bar.width - 110.0f, status, theme::textDim);
-    ui.text(bar.x + bar.width - 80.0f, bar.y + 7.0f, "v2.0.0", theme::textDim);
-}
-
 } // namespace s3d
