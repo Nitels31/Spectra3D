@@ -18,12 +18,21 @@ namespace s3d {
 
 // Panel geometry, recomputed once per frame from the framebuffer size. Panels
 // read these instead of recomputing offsets.
+//
+// The shape follows the editor sketch: a top bar, a left column (hierarchy over
+// assets), the viewport in the middle with its own header strip and a tool
+// column down its left edge, the inspector on the right, and a console across the
+// bottom under the viewport and the inspector.
 struct EditorLayout {
     Rect menuBar;
     Rect leftDock;
+    Rect hierarchyDock;  // top of the left column
+    Rect assetDock;      // bottom of the left column
     Rect rightDock;
     Rect viewport;
-    Rect viewportChrome; // toolbar strip inside the viewport
+    Rect sceneHeader;    // "Scene" strip across the top of the viewport
+    Rect viewportTools;  // vertical tool column inside the viewport, on the left
+    Rect console;        // bottom, spanning viewport + inspector
     Rect statusBar;
 };
 
@@ -33,17 +42,22 @@ class Editor {
 public:
     // Widget id ranges, kept disjoint so panels can never collide.
     enum : int {
-        kMenuBar = 100,
-        kSceneDockTabs = 200,
-        kCreateButton = 210,
+        kTopBar = 100,
+        kTransportPlay = 101,
+        kTransportPause = 102,
+        kTransportStop = 103,
+        kTransportLang = 104,
+        kAssetImport = 200,
         kAssetDock = 300,
         kImportRow = 310,
         kHierarchyRow = 400,
+        kHierarchySearch = 440,
         kInspectorDock = 500,
         kInspectorProperty = 600,
         kFilterField = 700,
-        kViewportChrome = 800,
+        kSceneHeader = 800,
         kStatusBar = 900,
+        kConsoleFilter = 950,
     };
 
     Editor(MeshRegistry& meshes, i18n::Localizer& localizer);
@@ -67,6 +81,8 @@ public:
     // "scene.txt" next to the binary, which is what happens when the editor runs
     // without a project.
     void setScenePath(std::string path) { scenePath_ = std::move(path); }
+    // Shown next to the engine name in the top bar, the way the sketch has it.
+    void setProjectName(std::string name) { projectName_ = std::move(name); }
     const char* scenePath() const {
         return scenePath_.empty() ? "scene.txt" : scenePath_.c_str();
     }
@@ -115,14 +131,32 @@ private:
                               int index);
     static void formatPrefixed(char* out, size_t size, const char* prefix, const char* value);
 
-    // --- panels (defined in panels/*.cpp) -----------------------------------
-    void drawMenuBar(UiRenderer& ui, PhysicsWorld& world, int fbWidth);
-    void drawSceneDock(UiRenderer& ui, PhysicsWorld& world, Camera& camera, int fbHeight);
-    void drawHierarchy(UiRenderer& ui, PhysicsWorld& world, Camera& camera, const Rect& dock);
-    void drawAssetDock(UiRenderer& ui, PhysicsWorld& world, Camera& camera, const Rect& dock);
+    // --- hierarchy -----------------------------------------------------------
+    // The label a row shows, and the two helpers the filter needs. All three build
+    // the label the same way, so the filter can never disagree with the row about
+    // what a body is called.
+    std::string bodyLabel(const PhysicsWorld& world, int index) const;
+    bool bodyMatchesFilter(const PhysicsWorld& world, int index, const char* query) const;
+    int filteredBodyIndex(const PhysicsWorld& world, int n, const char* query) const;
+
+    // --- panels (one file each, panels/*.cpp) -----------------------------
+    void drawTopBar(UiRenderer& ui, PhysicsWorld& world, Camera& camera, int fbWidth);
+    // The Create dropdown, drawn last so it can overlap the panels below.
+    void drawCreateMenu(UiRenderer& ui, PhysicsWorld& world, Camera& camera);
+    void drawLeftColumn(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
+                        int fbWidth);
+    void drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
+                           const Rect& dock, int fbWidth);
+    void drawAssetDock(UiRenderer& ui, PhysicsWorld& world, Camera& camera, const Rect& dock,
+                       int fbWidth);
+    void drawSceneHeader(UiRenderer& ui, PhysicsWorld& world, Camera& camera);
+    void drawViewportTools(UiRenderer& ui, Camera& camera);
+    void drawNavigationBalls(UiRenderer& ui) const;
+    void drawConsolePanel(UiRenderer& ui);
+    void drawStatusBar(UiRenderer& ui, PhysicsWorld& world, int fbWidth);
     void drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& window, int fbWidth,
                            int fbHeight);
-    void drawEmptyInspectorCard(UiRenderer& ui, const Rect& dock, float y);
+    void drawEmptyInspector(UiRenderer& ui, const Rect& dock, float y, int fbWidth);
     void drawTransformSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
     void drawShapeSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
     void drawMaterialSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
@@ -130,10 +164,7 @@ private:
     void drawAnchorSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
     void drawStateSection(UiRenderer& ui, PhysicsWorld& world, RigidBody& body,
                           const Rect& dock, float& y);
-    void drawViewportChrome(UiRenderer& ui, Camera& camera);
-    void drawStatusBar(UiRenderer& ui, PhysicsWorld& world, int fbWidth, int fbHeight);
-    void drawConsolePanel(UiRenderer& ui, PhysicsWorld& world, int fbWidth);
-    void drawNavigationBalls(UiRenderer& ui) const;
+    void drawNodeSection(UiRenderer& ui, const Rect& dock, float& y);
 
     MeshRegistry& meshes_;
     i18n::Localizer& loc_;
@@ -160,11 +191,23 @@ private:
     bool showGrid_ = true;
     bool showVectors_ = true;
     int perspectiveIndex_ = 1;
-    bool showConsole_ = false;
-    int sceneTab_ = 0;
-    int inspectorTab_ = 0;
+    // Console lives under the viewport and the inspector now, so it is always
+    // there; these three are its level filters.
+    bool consoleWarn_ = true;
+    bool consoleError_ = true;
+    bool consoleInfo_ = true;
+    // Which top-bar menu is open, or -1. The Create menu is the only one that is.
+    int openMenu_ = -1;
+    // True on the frame a menu was opened, so that same press does not also close
+    // it - and so that no state changes after the frame has been drawn, which
+    // on-demand rendering would leave on screen until something else woke it.
+    bool menuOpenedThisFrame_ = false;
     float hierarchyScroll_ = 0.0f;
     TextField filter_;
+    // Hierarchy filter. Its own field, because filtering the scene tree and
+    // filtering the inspector are different questions.
+    TextField hierarchyFilter_;
+    std::string projectName_;
     EditorLayout layout_;
 
     // --- gizmo drag ---------------------------------------------------------

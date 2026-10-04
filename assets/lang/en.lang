@@ -20,6 +20,9 @@ tab.assets=Assets
 tab.inspector=Inspector
 tab.node=Node
 tab.console=Console
+tab.scene=Scene
+hierarchy.search=Search objects
+hierarchy.noMatches=Nothing matches the filter
 
 hier.sceneRoot=Scene Root
 sec.create=Create
@@ -77,6 +80,9 @@ bar.edit=Edit
 bar.bodies=Bodies
 bar.gravity=Gravity
 bar.consoleEmpty=Console empty
+console.warnings=Warnings
+console.errors=Errors
+console.info=Info
 
 vp.perspective60=FOV 60
 vp.perspective70=FOV 70

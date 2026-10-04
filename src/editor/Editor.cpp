@@ -14,8 +14,11 @@ namespace s3d {
 namespace {
 
 constexpr float kMinViewportSize = 120.0f;
-constexpr float kViewportTopInset = 28.0f;
-constexpr float kChromeHeight = 26.0f;
+// "Scene" strip above the viewport, and the vertical tool column inside it.
+constexpr float kSceneHeaderHeight = 26.0f;
+constexpr float kToolStripWidth = 34.0f;
+// Console height under the viewport and the inspector.
+constexpr float kConsoleHeight = 156.0f;
 // Fallback when no project is open: next to the binary.
 const char* const kDefaultSceneFile = "scene.txt";
 
@@ -51,23 +54,43 @@ void Editor::recomputeLayout(int fbWidth, int fbHeight) {
     const float width = (float)fbWidth;
     const float height = (float)fbHeight;
 
-    layout_.menuBar = Rect{0.0f, 0.0f, width, theme::menuBarHeight};
-    layout_.leftDock = Rect{0.0f, theme::menuBarHeight, theme::leftDockWidth,
-                            height - theme::menuBarHeight - theme::statusBarHeight};
-    layout_.rightDock = Rect{width - theme::rightDockWidth, theme::menuBarHeight,
-                             theme::rightDockWidth,
-                             height - theme::menuBarHeight - theme::statusBarHeight};
+    const float consoleH = std::fmin(kConsoleHeight, height * 0.28f);
+    const float statusH = theme::statusBarHeight;
 
-    const float viewY = theme::menuBarHeight + kViewportTopInset;
-    layout_.viewport = Rect{theme::leftDockWidth, viewY,
-                            std::fmax(kMinViewportSize, width - theme::leftDockWidth -
-                                                              theme::rightDockWidth),
-                            std::fmax(kMinViewportSize, height - viewY -
-                                                              theme::statusBarHeight)};
-    layout_.viewportChrome =
-        Rect{layout_.viewport.x, layout_.viewport.y, layout_.viewport.width, kChromeHeight};
-    layout_.statusBar = Rect{0.0f, height - theme::statusBarHeight, width,
-                             theme::statusBarHeight};
+    layout_.menuBar = Rect{0.0f, 0.0f, width, theme::menuBarHeight};
+
+    // The console spans the viewport and the inspector, not the whole window: the
+    // left column keeps its full height, which is what the sketch shows.
+    const float consoleY = height - statusH - consoleH;
+    layout_.console = Rect{theme::leftDockWidth, consoleY,
+                           std::fmax(0.0f, width - theme::leftDockWidth), consoleH};
+
+    const float columnTop = theme::menuBarHeight;
+    const float columnH = std::fmax(0.0f, consoleY - columnTop);
+
+    layout_.leftDock = Rect{0.0f, columnTop, theme::leftDockWidth, columnH};
+    // Two stacked docks, not two tabs: the sketch has both on screen at once, and
+    // a tab means one of them is always hidden.
+    const float splitY = columnTop + columnH * 0.58f;
+    layout_.hierarchyDock = Rect{layout_.leftDock.x, columnTop, layout_.leftDock.width,
+                                 splitY - columnTop};
+    layout_.assetDock = Rect{layout_.leftDock.x, splitY, layout_.leftDock.width,
+                             columnTop + columnH - splitY};
+    layout_.rightDock = Rect{std::fmax(0.0f, width - theme::rightDockWidth), columnTop,
+                             theme::rightDockWidth, columnH};
+
+    const float viewX = theme::leftDockWidth;
+    const float viewW = std::fmax(kMinViewportSize,
+                                  width - theme::leftDockWidth - theme::rightDockWidth);
+    const float headerH = kSceneHeaderHeight;
+    layout_.sceneHeader = Rect{viewX, columnTop, viewW, headerH};
+    layout_.viewport =
+        Rect{viewX, columnTop + headerH, viewW,
+             std::fmax(kMinViewportSize, consoleY - columnTop - headerH)};
+    layout_.viewportTools = Rect{layout_.viewport.x + 4.0f, layout_.viewport.y + 4.0f,
+                                 kToolStripWidth, 0.0f};
+    layout_.viewportTools.height = std::max(0.0f, layout_.viewport.height - 8.0f);
+    layout_.statusBar = Rect{0.0f, height - statusH, width, statusH};
 }
 
 void Editor::pruneSelection(const PhysicsWorld& world) {
@@ -264,10 +287,13 @@ void Editor::handleViewport(PhysicsWorld& world, Camera& camera, Window& window)
         return;
     }
 
-    const Rect viewport = layout_.viewport;
-    const bool onChrome = ui_.pointerY() >= layout_.viewportChrome.y &&
-                          ui_.pointerY() < layout_.viewportChrome.y +
-                                                 layout_.viewportChrome.height;
+const Rect viewport = layout_.viewport;
+    // A press on the tool column or the "Scene" strip is a UI press, not a drag in
+    // the scene: without this, clicking GIZ or M would also grab whatever is under
+    // the pointer in the world.
+    const Rect tools = layout_.viewportTools;
+    const bool onChrome = ui_.hovered(tools) ||
+                          ui_.hovered(layout_.sceneHeader);
     if (!ui_.hovered(viewport) || onChrome) {
         if (ui_.pointerReleased()) dragAxis_ = -1;
         return;
@@ -373,11 +399,18 @@ void Editor::renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Windo
                       int fbWidth, int fbHeight) {
     ui.begin(fbWidth, fbHeight);
 
-    drawMenuBar(ui, world, fbWidth);
-    drawSceneDock(ui, world, camera, fbHeight);
+    drawTopBar(ui, world, camera, fbWidth);
+    drawLeftColumn(ui, world, camera, window, fbWidth);
     drawInspectorDock(ui, world, window, fbWidth, fbHeight);
-    drawViewportChrome(ui, camera);
-    drawStatusBar(ui, world, fbWidth, fbHeight);
+    drawSceneHeader(ui, world, camera);
+    drawViewportTools(ui, camera);
+    drawConsolePanel(ui);
+    drawStatusBar(ui, world, fbWidth);
+    // Overlays last, and after a flush: the Create menu hangs over the panels
+    // below the top bar, and the batcher emits every rectangle before any text,
+    // so without the flush its background would land under their labels.
+    ui.flush();
+    drawCreateMenu(ui, world, camera);
 
     ui.end();
     pruneSelection(world);

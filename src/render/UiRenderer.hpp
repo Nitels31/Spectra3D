@@ -26,6 +26,10 @@ bool buildFonts();
 
     void begin(int width, int height);
     void end();
+    // Draws everything queued so far and starts a new batch. An overlay needs
+    // this: the batcher emits every rectangle before any text, so without a flush
+    // an overlay's background lands UNDER the text of the panel it is covering.
+    void flush();
 
     void fillRect(float x, float y, float w, float h, const Color& color);
     void fillCircle(float cx, float cy, float radius, const Color& color);
@@ -33,6 +37,10 @@ bool buildFonts();
     // Same glyphs at `scale`. Used to fit a long string into a narrow slot instead
     // of chopping characters off it.
     void textScaled(float x, float y, const char* utf8, const Color& color, float scale);
+    // Draws `utf8` inside `maxWidth`, shrinking it until it fits and never going
+    // below kMinTextScale. Returns the scale used, so a caller can put a caret or
+    // a second column right after the text.
+    float textFit(float x, float y, float maxWidth, const char* utf8, const Color& color);
 
 private:
     TextAtlas atlas_;

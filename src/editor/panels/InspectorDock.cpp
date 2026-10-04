@@ -9,11 +9,13 @@
 namespace s3d {
 namespace {
 
-// Filter matching is case insensitive and substring based, matching how editors
-// of this kind usually behave. The needle is folded once here instead of once
-// per (label offset, needle offset) comparison; str::lowerAscii is an inline
-// range test where std::tolower was an out of line, locale aware call.
-bool matchesFilter(const char* label, const TextField& filter) {
+constexpr float kHeaderHeight = 24.0f;
+constexpr float kRowStep = 22.0f;
+
+// Case-insensitive substring match against a property label. The needle is folded
+// once here instead of once per comparison; str::lowerAscii is an inline range
+// test where std::tolower was an out-of-line, locale-aware call.
+bool labelMatches(const char* label, const TextField& filter) {
     if (filter.empty()) return true;
     const char* needle = filter.text();
     const size_t needleLength = (size_t)filter.length;
@@ -30,8 +32,6 @@ bool matchesFilter(const char* label, const TextField& filter) {
     return false;
 }
 
-constexpr float kRowStep = 22.0f;
-
 } // namespace
 
 void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& window,
@@ -39,132 +39,103 @@ void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
     const Rect dock = layout_.rightDock;
     ui.fillRect(dock.x, dock.y, dock.width, dock.height, theme::panel);
 
-    const float halfWidth = dock.width * 0.5f;
-    if (ui_.tab(ui, dock.x, dock.y, halfWidth, text("tab.inspector"), inspectorTab_ == 0))
-        inspectorTab_ = 0;
-    if (ui_.tab(ui, dock.x + halfWidth, dock.y, halfWidth, text("tab.node"),
-                inspectorTab_ == 1))
-        inspectorTab_ = 1;
-    ui.fillRect(dock.x, dock.y + 24.0f, dock.width, 1.0f, theme::separator);
+    // One header, one filter, one column of properties. The old second tab held
+    // three static strings; it is a section at the bottom now instead of a tab
+    // that hid the whole inspector behind it.
+    ui.fillRect(dock.x, dock.y, dock.width, kHeaderHeight, theme::panelDark);
+    ui.text(dock.x + 8.0f, dock.y + 5.0f, text("tab.inspector"), theme::text);
+    ui.fillRect(dock.x, dock.y + kHeaderHeight - 1.0f, dock.width, 1.0f, theme::separator);
 
-    float y = dock.y + 30.0f;
+    float y = dock.y + kHeaderHeight + 4.0f;
+    const Rect filterRect{dock.x + 6.0f, y, dock.width - 12.0f, theme::fieldHeight};
+    ui_.pumpTextField(window, filter_, ui_.hovered(filterRect));
+    ui.fillRect(filterRect.x, filterRect.y, filterRect.width, filterRect.height,
+                filter_.editing ? theme::accent.scaled(0.35f) : theme::field);
+    ui.text(filterRect.x + 6.0f,
+            filterRect.y + (filterRect.height - theme::textLineHeight) * 0.5f,
+            filter_.empty() && !filter_.editing ? text("filter.placeholder") : filter_.text(),
+            filter_.empty() ? theme::textDim : theme::text);
+    if (filter_.editing)
+        ui.fillRect(filterRect.x + 7.0f + ui.textWidth(filter_.text()), filterRect.y + 3.0f, 1.5f,
+                    filterRect.height - 6.0f, theme::accent);
+    y += filterRect.height + 6.0f;
 
-    // Filter field (inspector tab only).
-    if (inspectorTab_ == 0) {
-        const float fieldX = dock.x + 6.0f;
-        const float fieldW = dock.width - 12.0f;
-        ui_.pumpTextField(window, filter_, ui_.hovered(Rect{fieldX, y, fieldW, 22.0f}));
-        ui.fillRect(fieldX, y, fieldW, 22.0f, theme::field);
-        if (filter_.empty() && !filter_.editing)
-            ui.text(fieldX + 6.0f, y + 3.0f, text("filter.placeholder"), theme::textDim);
-        else
-            ui.text(fieldX + 6.0f, y + 3.0f, filter_.text(), theme::text);
-        if (filter_.editing)
-            ui.fillRect(fieldX + 7.0f + ui.textWidth(filter_.text()), y + 4.0f, 1.5f, 14.0f,
-                        theme::accent.scaled(0.8f));
-        y += 28.0f;
-    }
-
-    const RigidBody* body = world.find(activeBody_);
-
-    if (inspectorTab_ == 1) {
-        if (body) {
-char label[48];
-            formatIndexed(label, sizeof(label), "Body_", '\0', activeBody_);
-            ui.text(dock.x + 10.0f, dock.y + 38.0f, label, theme::text);
-            ui.text(dock.x + 10.0f, dock.y + 60.0f, text("node.signals"), theme::textDim);
-            ui.text(dock.x + 20.0f, dock.y + 78.0f, text("node.onBodyEntered"),
-                    theme::textDim);
-            ui.text(dock.x + 20.0f, dock.y + 96.0f, text("node.onSleepChanged"),
-                    theme::textDim);
-        } else {
-            ui.text(dock.x + 10.0f, dock.y + 38.0f, text("node.noNode"), theme::textDim);
-        }
+    const RigidBody* found = world.find(activeBody_);
+    if (!found) {
+        drawEmptyInspector(ui, dock, y, fbWidth);
         return;
     }
 
-    if (!body) {
-        drawEmptyInspectorCard(ui, dock, y);
-        return;
-    }
-
-    RigidBody& editable = world.bodies[activeBody_];
-    drawTransformSection(ui, editable, dock, y);
-    drawShapeSection(ui, editable, dock, y);
-    drawMaterialSection(ui, editable, dock, y);
-    drawFlagsSection(ui, editable, dock, y);
-    drawAnchorSection(ui, editable, dock, y);
-    drawStateSection(ui, world, editable, dock, y);
+    RigidBody& body = world.bodies[(size_t)activeBody_];
+    drawTransformSection(ui, body, dock, y);
+    drawShapeSection(ui, body, dock, y);
+    drawMaterialSection(ui, body, dock, y);
+    drawFlagsSection(ui, body, dock, y);
+    drawAnchorSection(ui, body, dock, y);
+    drawStateSection(ui, world, body, dock, y);
+    drawNodeSection(ui, dock, y);
+    (void)fbHeight;
 }
 
-void Editor::drawEmptyInspectorCard(UiRenderer& ui, const Rect& dock, float y) {
-    const float cardX = dock.x + 12.0f;
-    const float cardY = y + 30.0f;
-    const float cardW = dock.width - 24.0f;
-    const float cardH = 74.0f;
-
-    ui.fillRect(cardX, cardY, cardW, cardH, theme::panelDark);
-    ui.fillRect(cardX, cardY, cardW, 2.0f, theme::accent.scaled(0.9f));
-
+void Editor::drawEmptyInspector(UiRenderer& ui, const Rect& dock, float y, int fbWidth) {
+    // Centred in the dock, and nothing that looks like a card floating in the
+    // corner: an empty inspector should read as empty space.
     const char* title = text("inspector.nothing");
     const char* hint = text("inspector.click");
-    ui.text(cardX + (cardW - ui.textWidth(title)) * 0.5f, cardY + 16.0f, title, theme::text);
-    ui.text(cardX + (cardW - ui.textWidth(hint)) * 0.5f, cardY + 38.0f, hint,
-            theme::textDim);
-    ui.text(cardX + (cardW - 92.0f) * 0.5f, cardY + 56.0f, "[ LMB ]  select",
-            theme::textDim.scaled(0.9f));
+    const float centreY = y + std::fmax(0.0f, (dock.height - (y - dock.y) - 40.0f) * 0.35f);
+    ui.text(dock.x + (dock.width - ui.textWidth(title)) * 0.5f, centreY, title, theme::textDim);
+    ui.textFit(dock.x + 8.0f, centreY + 20.0f, dock.width - 16.0f, hint, theme::textDim);
+    (void)fbWidth;
 }
 
-void Editor::drawTransformSection(UiRenderer& ui, RigidBody& body, const Rect& dock,
-                                  float& y) {
-char label[64];
+void Editor::drawTransformSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y) {
+    char label[64];
     formatIndexed(label, sizeof(label), shapeName(body.shape), '_', activeBody_);
-    ui.text(dock.x + 8.0f, y + 2.0f, label, theme::accent);
+    ui.textFit(dock.x + 8.0f, y + 2.0f, dock.width - 16.0f, label, theme::accent);
     y += 22.0f;
 
     ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.transform"));
-    y += 24.0f;
+    y += 26.0f;
 
     float* position[3] = {&body.position.x, &body.position.y, &body.position.z};
     const char* keys[3] = {"Position X", "Position Y", "Position Z"};
     const char* labels[3] = {"prop.posX", "prop.posY", "prop.posZ"};
     for (int i = 0; i < 3; ++i) {
-        if (matchesFilter(keys[i], filter_))
-            ui_.propertyFloat(ui, kInspectorProperty + i, dock.x, y, dock.width,
-                              text(labels[i]), *position[i], 0.05f, -99999.0f, 99999.0f);
+        if (labelMatches(keys[i], filter_))
+            ui_.propertyFloat(ui, kInspectorProperty + i, dock.x, y, dock.width, text(labels[i]),
+                              *position[i], 0.05f, -99999.0f, 99999.0f);
         y += i == 2 ? 24.0f : kRowStep;
     }
 }
 
 void Editor::drawShapeSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y) {
     ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.shape"));
-    y += 24.0f;
+    y += 26.0f;
 
     bool changed = false;
     if (body.hasMesh()) {
-char meshLabel[96];
-        formatPrefixed(meshLabel, sizeof(meshLabel), "MESH: ",
-                       meshes_.nameOf(body.mesh).c_str());
-        ui.text(dock.x + 8.0f, y + 2.0f, meshLabel, theme::textDim);
+        char meshLabel[96];
+        formatPrefixed(meshLabel, sizeof(meshLabel), "MESH: ", meshes_.nameOf(body.mesh).c_str());
+        ui.textFit(dock.x + 8.0f, y + 2.0f, dock.width - 16.0f, meshLabel, theme::textDim);
         y += 22.0f;
-        if (matchesFilter("SCALE", filter_)) {
-            changed |= ui_.propertyFloat(ui, kInspectorProperty, dock.x, y, dock.width,
-                                         "Scale", body.meshScale, 0.01f, 0.001f, 99999.0f);
+        if (labelMatches("SCALE", filter_)) {
+            changed |= ui_.propertyFloat(ui, kInspectorProperty, dock.x, y, dock.width, "Scale",
+                                         body.meshScale, 0.01f, 0.001f, 99999.0f);
             if (changed) {
                 const MeshAsset* mesh = meshes_.at(body.mesh);
                 if (mesh) body.halfExtents = mesh->half * body.meshScale;
                 body.configure(body.mass);
             }
         }
-        y += 22.0f;
+        y += 24.0f;
         return;
     }
 
-    // Radius / height / sides per primitive, plus the derived hull.
+    // Radius / height / sides per primitive, plus the hull derived from them.
     float* radius = nullptr;
     float* height = nullptr;
     int* sides = nullptr;
-    const char* filterKeys[3] = {nullptr, nullptr, nullptr};
+    const char* filterKeys[3] = {"SX", "SY", "SZ"};
     switch (body.shape) {
         case Shape::Sphere:
             radius = &body.halfExtents.x;
@@ -203,41 +174,35 @@ char meshLabel[96];
             filterKeys[2] = "SIDES";
             break;
         default:
-            filterKeys[0] = "SX";
-            filterKeys[1] = "SY";
-            filterKeys[2] = "SZ";
             break;
     }
 
     if (body.shape == Shape::Sphere) {
-        if (matchesFilter("RADIUS", filter_))
+        if (labelMatches("RADIUS", filter_))
             changed |= ui_.propertyFloat(ui, kInspectorProperty, dock.x, y, dock.width,
-                                         text("prop.radius"), body.halfExtents.x, 0.02f,
-                                         0.001f, 99999.0f);
+                                         text("prop.radius"), body.halfExtents.x, 0.02f, 0.001f,
+                                         99999.0f);
         if (changed) {
             body.halfExtents.y = body.halfExtents.z = body.halfExtents.x;
             body.configure(body.mass);
         }
-        y += 22.0f;
+        y += 24.0f;
     } else if (radius) {
-        if (matchesFilter(filterKeys[0], filter_))
+        if (labelMatches(filterKeys[0], filter_))
             changed |= ui_.propertyFloat(ui, kInspectorProperty, dock.x, y, dock.width,
-                                         text("prop.radius"), *radius, 0.02f, 0.001f,
-                                         99999.0f);
+                                         text("prop.radius"), *radius, 0.02f, 0.001f, 99999.0f);
         y += 22.0f;
-        if (height && matchesFilter(filterKeys[1], filter_))
+        if (height && labelMatches(filterKeys[1], filter_))
             changed |= ui_.propertyFloat(ui, kInspectorProperty + 1, dock.x, y, dock.width,
-                                         text("prop.height"), *height, 0.02f, 0.001f,
-                                         99999.0f);
+                                         text("prop.height"), *height, 0.02f, 0.001f, 99999.0f);
         y += 22.0f;
-        if (sides && matchesFilter(filterKeys[2], filter_))
+        if (sides && labelMatches(filterKeys[2], filter_))
             changed |= ui_.propertyInt(ui, kInspectorProperty + 2, dock.x, y, dock.width,
-                                      text("prop.sides"), *sides, 3, 64);
-        y += 22.0f;
+                                       text("prop.sides"), *sides, 3, 64);
+        y += 24.0f;
         if (changed) {
             if (body.shape == Shape::Cylinder)
-                body.halfExtents = {body.cylinderRadius, body.halfExtents.y,
-                                    body.cylinderRadius};
+                body.halfExtents = {body.cylinderRadius, body.halfExtents.y, body.cylinderRadius};
             else if (body.shape == Shape::Capsule)
                 body.halfExtents = {body.capsuleRadius,
                                     body.capsuleHeight * 0.5f + body.capsuleRadius,
@@ -255,23 +220,20 @@ char meshLabel[96];
         float* extents[3] = {&body.halfExtents.x, &body.halfExtents.y, &body.halfExtents.z};
         const char* labels[3] = {"prop.sx", "prop.sy", "prop.sz"};
         for (int i = 0; i < 3; ++i) {
-            if (matchesFilter(filterKeys[i], filter_))
-                changed |= ui_.propertyFloat(ui, kInspectorProperty + i, dock.x, y,
-                                             dock.width, text(labels[i]), *extents[i], 0.02f,
-                                             0.001f, 99999.0f);
+            if (labelMatches(filterKeys[i], filter_))
+                changed |= ui_.propertyFloat(ui, kInspectorProperty + i, dock.x, y, dock.width,
+                                             text(labels[i]), *extents[i], 0.02f, 0.001f, 99999.0f);
             y += 22.0f;
         }
         if (changed) body.configure(body.mass);
+        y += 2.0f;
     }
-    y += 2.0f;
 }
 
-void Editor::drawMaterialSection(UiRenderer& ui, RigidBody& body, const Rect& dock,
-                                 float& y) {
+void Editor::drawMaterialSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y) {
     ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.material"));
-    y += 24.0f;
+    y += 26.0f;
 
-    bool changed = false;
     struct Field {
         const char* filterKey;
         const char* labelKey;
@@ -284,8 +246,9 @@ void Editor::drawMaterialSection(UiRenderer& ui, RigidBody& body, const Rect& do
         {"RESTITUTION", "prop.bounce", &body.material.restitution, 0.005f},
         {"DENSITY", "prop.density", &body.material.density, 0.01f},
     };
+    bool changed = false;
     for (int i = 0; i < 4; ++i) {
-        if (matchesFilter(fields[i].filterKey, filter_))
+        if (labelMatches(fields[i].filterKey, filter_))
             changed |= ui_.propertyFloat(ui, kInspectorProperty + i, dock.x, y, dock.width,
                                          text(fields[i].labelKey), *fields[i].value,
                                          fields[i].step, 0.001f, 999999.0f);
@@ -296,14 +259,13 @@ void Editor::drawMaterialSection(UiRenderer& ui, RigidBody& body, const Rect& do
 
 void Editor::drawFlagsSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y) {
     ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.flags"));
-    y += 24.0f;
-
+    y += 26.0f;
     ui_.checkbox(ui, kInspectorProperty, dock.x, y, dock.width, text("flag.static_"),
                  body.material.isStatic);
     y += kRowStep;
     ui_.checkbox(ui, kInspectorProperty + 1, dock.x, y, dock.width, text("flag.visible"),
                  body.visible);
-    y += 24.0f;
+    y += kRowStep;
     ui_.checkbox(ui, kInspectorProperty + 2, dock.x, y, dock.width, text("flag.locked"),
                  body.locked);
     y += 24.0f;
@@ -311,30 +273,27 @@ void Editor::drawFlagsSection(UiRenderer& ui, RigidBody& body, const Rect& dock,
 
 void Editor::drawAnchorSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y) {
     ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.anchor"));
-    y += 24.0f;
+    y += 26.0f;
 
-    if (ui_.checkbox(ui, kInspectorProperty + 3, dock.x, y, dock.width,
-                     text("anchor.pinPosition"), body.anchorPosition)) {
+    if (ui_.checkbox(ui, kInspectorProperty + 3, dock.x, y, dock.width, text("anchor.pinPosition"),
+                     body.anchorPosition)) {
         if (body.anchorPosition) body.anchorPoint = body.position;
     }
     y += kRowStep;
-    if (ui_.checkbox(ui, kInspectorProperty + 4, dock.x, y, dock.width,
-                     text("anchor.pinRotation"), body.anchorRotation)) {
+    if (ui_.checkbox(ui, kInspectorProperty + 4, dock.x, y, dock.width, text("anchor.pinRotation"),
+                     body.anchorRotation)) {
         if (body.anchorRotation) body.anchorOrientation = body.orientation;
     }
     y += kRowStep;
 
-    const float buttonX = dock.x + 6.0f;
-    const float buttonW = dock.width - 12.0f;
     if (!body.anchorPosition && !body.anchorRotation) {
         y += 24.0f;
         return;
     }
-
-    ui_.propertyFloat(ui, kInspectorProperty + 5, dock.x, y, dock.width,
-                      text("anchor.spring"), body.anchorSpring, 1.0f, 0.0f, 999999.0f);
+    ui_.propertyFloat(ui, kInspectorProperty + 5, dock.x, y, dock.width, text("anchor.spring"),
+                      body.anchorSpring, 1.0f, 0.0f, 999999.0f);
     y += kRowStep;
-    if (ui_.button(ui, kInspectorProperty + 6, buttonX, y, buttonW, 22.0f,
+    if (ui_.button(ui, kInspectorProperty + 6, dock.x + 6.0f, y, dock.width - 12.0f, 22.0f,
                    text("anchor.setAtBody"))) {
         body.anchorPoint = body.position;
         body.anchorOrientation = body.orientation;
@@ -345,25 +304,38 @@ void Editor::drawAnchorSection(UiRenderer& ui, RigidBody& body, const Rect& dock
 void Editor::drawStateSection(UiRenderer& ui, PhysicsWorld& world, RigidBody& body,
                               const Rect& dock, float& y) {
     ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.state"));
-    y += 24.0f;
+    y += 26.0f;
 
     char line[64];
     std::snprintf(line, sizeof(line), "%s: %.1f m/s", text("state.velocity"),
                   body.velocity.length());
-    ui.text(dock.x + 8.0f, y + 2.0f, line, Color{0.60f, 1.0f, 0.65f});
-    ui.text(dock.x + dock.width * 0.5f, y + 2.0f,
-            body.asleep ? text("state.sleeping") : text("state.active"),
-            body.asleep ? Color{0.60f, 0.70f, 0.80f} : Color{0.55f, 1.0f, 0.60f});
+    ui.textFit(dock.x + 8.0f, y + 2.0f, dock.width * 0.55f, line, Color{0.60f, 1.0f, 0.65f});
+    const char* state = body.asleep ? text("state.sleeping") : text("state.active");
+    const Color stateColor = body.asleep ? Color{0.60f, 0.70f, 0.80f} : Color{0.55f, 1.0f, 0.60f};
+    ui.textFit(dock.x + dock.width * 0.55f, y + 2.0f, dock.width * 0.42f, state, stateColor);
     y += 26.0f;
 
-    const float buttonX = dock.x + 6.0f;
-    if (ui_.button(ui, kInspectorProperty + 7, buttonX, y, 70.0f, 24.0f, text("btn.wake"))) {
+    // Buttons sized to their labels: a fixed 70 pixel button clips a longer word
+    // in one language and looks empty in the other.
+    const float wakeW = ui.textWidth(text("btn.wake")) + 20.0f;
+    const float deleteW = ui.textWidth(text("btn.delete_")) + 20.0f;
+    if (ui_.button(ui, kInspectorProperty + 7, dock.x + 6.0f, y, wakeW, 24.0f, text("btn.wake"))) {
         body.wake();
         Log::info("Body %d woken", activeBody_);
     }
-    if (ui_.button(ui, kInspectorProperty + 8, buttonX + 78.0f, y, 76.0f, 24.0f,
+    if (ui_.button(ui, kInspectorProperty + 8, dock.x + 12.0f + wakeW, y, deleteW, 24.0f,
                    text("btn.delete_")))
         deleteSelection(world);
+    y += 28.0f;
+}
+
+void Editor::drawNodeSection(UiRenderer& ui, const Rect& dock, float& y) {
+    ui_.sectionHeader(ui, dock.x, y, dock.width, text("tab.node"));
+    y += 26.0f;
+    ui.text(dock.x + 10.0f, y, text("node.onBodyEntered"), theme::textDim);
+    y += kRowStep;
+    ui.text(dock.x + 10.0f, y, text("node.onSleepChanged"), theme::textDim);
+    y += kRowStep;
 }
 
 } // namespace s3d

@@ -2,6 +2,8 @@
 
 #include "../core/Math.hpp"
 
+#include <algorithm>
+
 namespace s3d {
 namespace {
 
@@ -59,6 +61,20 @@ void UiRenderer::begin(int width, int height) {
 }
 
 void UiRenderer::end() {
+    flush();
+
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_LIGHTING);
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glViewport(0, 0, width_, height_);
+}
+
+void UiRenderer::flush() {
     if (!colorBatch_.empty()) {
         glEnableClientState(GL_VERTEX_ARRAY);
         glEnableClientState(GL_COLOR_ARRAY);
@@ -67,6 +83,7 @@ void UiRenderer::end() {
         glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(colorBatch_.size() / 6));
         glDisableClientState(GL_VERTEX_ARRAY);
         glDisableClientState(GL_COLOR_ARRAY);
+        colorBatch_.clear();
     }
     if (!textBatch_.empty() && atlas_.ready()) {
         glEnable(GL_TEXTURE_2D);
@@ -83,17 +100,8 @@ void UiRenderer::end() {
         glDisableClientState(GL_COLOR_ARRAY);
         glBindTexture(GL_TEXTURE_2D, 0);
         glDisable(GL_TEXTURE_2D);
+        textBatch_.clear();
     }
-
-    glDisable(GL_BLEND);
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_LIGHTING);
-    glMatrixMode(GL_MODELVIEW);
-    glPopMatrix();
-    glMatrixMode(GL_PROJECTION);
-    glPopMatrix();
-    glMatrixMode(GL_MODELVIEW);
-    glViewport(0, 0, width_, height_);
 }
 
 void UiRenderer::fillRect(float x, float y, float w, float h, const Color& color) {
@@ -149,6 +157,20 @@ void UiRenderer::textScaled(float x, float y, const char* utf8, const Color& col
         return;
     }
     atlas_.appendQuads(textBatch_, x, y, utf8, color.r, color.g, color.b, scale);
+}
+
+float UiRenderer::textFit(float x, float y, float maxWidth, const char* utf8,
+                          const Color& color) {
+    if (!utf8 || !*utf8 || maxWidth <= 0.0f) return 1.0f;
+    const float full = atlas_.textWidth(utf8);
+    if (full <= maxWidth) {
+        atlas_.appendQuads(textBatch_, x, y, utf8, color.r, color.g, color.b);
+        return 1.0f;
+    }
+    // Width is linear in the scale, so one division is exact - no search loop.
+    const float scale = std::max(kMinTextScale, maxWidth / full);
+    atlas_.appendQuads(textBatch_, x, y, utf8, color.r, color.g, color.b, scale);
+    return scale;
 }
 
 } // namespace s3d

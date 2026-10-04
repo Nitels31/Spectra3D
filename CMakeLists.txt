@@ -127,10 +127,11 @@ add_executable(spectra3d
     src/editor/Picking.cpp
     src/editor/Gizmo.cpp
     src/editor/AssetBrowser.cpp
-    src/editor/panels/MenuBar.cpp
-    src/editor/panels/SceneDock.cpp
+    src/editor/panels/TopBar.cpp
+    src/editor/panels/LeftColumn.cpp
+    src/editor/panels/ScenePanel.cpp
     src/editor/panels/InspectorDock.cpp
-    src/editor/panels/ViewportChrome.cpp
+    src/editor/panels/BottomBar.cpp
 )
 target_include_directories(spectra3d PRIVATE
     src

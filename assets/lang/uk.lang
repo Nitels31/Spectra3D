@@ -20,6 +20,9 @@ tab.assets=Ресурси
 tab.inspector=Інспектор
 tab.node=Вузол
 tab.console=Консоль
+tab.scene=Сцена
+hierarchy.search=Пошук об'єктів
+hierarchy.noMatches=Нічого не знайдено за фільтром
 
 hier.sceneRoot=Корінь сцени
 sec.create=Створити
@@ -77,6 +80,9 @@ bar.edit=Редагування
 bar.bodies=Тіла
 bar.gravity=Гравітація
 bar.consoleEmpty=Консоль порожня
+console.warnings=Попередження
+console.errors=Помилки
+console.info=Інформація
 
 vp.perspective60=FOV 60
 vp.perspective70=FOV 70

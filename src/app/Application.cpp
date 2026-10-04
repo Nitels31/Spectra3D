@@ -233,11 +233,14 @@ double Application::frameInterval() const {
 
 void Application::updateTitle() {
     char title[128];
-    if (inEditor_)
-        std::snprintf(title, sizeof(title), "%s | FPS %.0f", project_.name.c_str(), fps_);
-    else if (idle_)
-        // An idle window is not slow, it is not drawing at all; saying "FPS 1"
-        // would be technically true and completely misleading.
+    if (inEditor_) {
+        // An idle editor is not slow, it is not drawing at all; "FPS 1" would be
+        // technically true and completely misleading.
+        if (idle_)
+            std::snprintf(title, sizeof(title), "%s | idle", project_.name.c_str());
+        else
+            std::snprintf(title, sizeof(title), "%s | FPS %.0f", project_.name.c_str(), fps_);
+    } else if (idle_)
         std::snprintf(title, sizeof(title), "Spectra3D | OpenGL %s | idle",
                       gl::requestedVersion());
     else
@@ -281,8 +284,9 @@ void Application::openProject(const ProjectInfo& project) {
         scenes::load(world_, meshes_, scenePath);
     }
 
-    editor_ = std::make_unique<Editor>(meshes_, localizer_);
+editor_ = std::make_unique<Editor>(meshes_, localizer_);
     editor_->setScenePath(scenePath);
+    editor_->setProjectName(project_.name);
     inEditor_ = true;
     updateTitle();
     Log::info("Project '%s' opened: %s", project_.name.c_str(), scenePath.c_str());
