@@ -3,6 +3,17 @@
 
 namespace s3d {
 
+// The OpenGL context the engine asks for: 3.3 in the COMPATIBILITY profile, not
+// core. Core would remove the fixed pipeline the renderer is written against
+// (glOrtho, glEnableClientState, glTexCoord2f); compatibility keeps all of it.
+//
+// Note that a driver's GL_VERSION string is not this number. NVIDIA, for one,
+// reports its highest supported version for any compatibility context, so a 3.3
+// context on that driver still prints "4.6.0 ...". The requested version is what
+// the UI shows; the driver string goes to the log.
+inline constexpr int kGlVersionMajor = 3;
+inline constexpr int kGlVersionMinor = 3;
+
 // GLFW window + input state. Edge-triggered flags (`mousePressed`,
 // `takePressed`) are consumed by the reader, level-triggered flags (`mouseDown`,
 // `keyPressed`) describe the current state.
@@ -17,6 +28,7 @@ public:
     void setSizeLimits(int minW, int minH, int maxW, int maxH);
     bool pumpEvents();
     void present();
+
 
     void setMouseCaptured(bool capture);
     bool mouseCaptured() const { return captured_; }

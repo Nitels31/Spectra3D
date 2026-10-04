@@ -59,6 +59,17 @@ public:
     bool simulating() const { return playMode_ && playing_; }
     bool consumeSingleStep();
     bool consumeTimeReset() { return std::exchange(timeResetRequested_, false); }
+    // True once, on the frame the editor enters play mode. The application runs
+    // the project's scripts at that point, so they see a live world.
+    bool consumePlayStarted() { return std::exchange(playStarted_, false); }
+
+    // Scene file this editor saves to and loads from. Empty falls back to
+    // "scene.txt" next to the binary, which is what happens when the editor runs
+    // without a project.
+    void setScenePath(std::string path) { scenePath_ = std::move(path); }
+    const char* scenePath() const {
+        return scenePath_.empty() ? "scene.txt" : scenePath_.c_str();
+    }
 
     bool showVectors() const { return showVectors_; }
     bool showGrid() const { return showGrid_; }
@@ -138,6 +149,8 @@ private:
     bool playing_ = true;
     bool singleStepRequested_ = false;
     bool timeResetRequested_ = false;
+    bool playStarted_ = false;
+    std::string scenePath_;
     std::vector<RigidBody> editSnapshot_;
     GravityAxis snapshotGravity_ = GravityAxis::NegY;
 

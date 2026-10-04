@@ -4,6 +4,7 @@
 
 #include <cstdio>
 
+
 namespace s3d {
 namespace {
 
@@ -68,10 +69,28 @@ Window::~Window() {
 bool Window::create(const char* title, int width, int height) {
     glfwSetErrorCallback(glfwErrorCallback);
     if (!glfwInit()) return false;
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+    // 3.3 compatibility, not 3.3 core. The renderer is written against the fixed
+    // pipeline (glOrtho, glEnableClientState, glTexCoord2f), which a core profile
+    // removes entirely; the compatibility profile keeps all of it and still pins
+    // the context to a modern version instead of the 2.1 the driver used to hand
+    // out, which made a lot of hardware spin up far more of the GPU than the
+    // engine ever asked for.
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, kGlVersionMajor);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, kGlVersionMinor);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
+    if (!window_) {
+        // A driver without a 3.3 compatibility profile still runs the 2.1 fixed
+        // pipeline the renderer is written against, so falling back is correct
+        // rather than fatal.
+        Log::warn("GL: no 3.3 compatibility context, falling back to 2.1");
+        glfwDefaultWindowHints();
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+        window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
+    }
     if (!window_) {
         glfwTerminate();
         return false;

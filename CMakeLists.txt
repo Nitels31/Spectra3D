@@ -17,7 +17,11 @@ foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${config} ${CMAKE_BINARY_DIR})
 endforeach()
 
-option(SPECTRA_BUILD_TOOLS "Build the standalone asset inspection tools" ON)
+# Developer utilities (glbinfo, fbxtest, scripttest). Off by default so a normal
+# build produces exactly one executable - the engine. Turn on with
+# -DSPECTRA_BUILD_TOOLS=ON when working on assets or the scripting layer.
+option(SPECTRA_BUILD_TOOLS "Build the standalone asset inspection tools" OFF)
+option(SPECTRA_SCRIPTING "Build the AngelScript runtime" ON)
 
 set(SPECTRA_THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 set(SPECTRA_ASSETS ${CMAKE_CURRENT_SOURCE_DIR}/assets)
@@ -69,13 +73,35 @@ add_library(spectra_miniply STATIC third_party/miniply/miniply.cpp)
 target_include_directories(spectra_miniply PUBLIC third_party/miniply)
 
 # ---------------------------------------------------------------------------
+# Scripting (AngelScript 2.38.0)
+# ---------------------------------------------------------------------------
+
+if(SPECTRA_SCRIPTING)
+    file(GLOB ANGELSCRIPT_SOURCES ${SPECTRA_THIRD_PARTY}/angelscript/source/*.cpp)
+    add_library(spectra_angelscript STATIC ${ANGELSCRIPT_SOURCES})
+    target_include_directories(spectra_angelscript
+        PUBLIC third_party/angelscript/include
+        PRIVATE third_party/angelscript/source)
+    if(NOT MSVC)
+        target_compile_options(spectra_angelscript PRIVATE -w)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
 
 add_executable(spectra3d
     src/app/main.cpp
     src/app/Application.cpp
+    src/app/Launcher.cpp
+    src/script/ScriptHost.cpp
+    src/script/BindEngine.cpp
+    src/script/BindScene.cpp
+    src/script/BindCamera.cpp
+    src/script/BindString.cpp
     src/core/Log.cpp
+    src/core/Project.cpp
     src/platform/Window.cpp
     src/platform/Filesystem.cpp
     src/physics/RigidBody.cpp
@@ -93,6 +119,7 @@ add_executable(spectra3d
     src/render/UiRenderer.cpp
     src/render/SceneRenderer.cpp
     src/ui/UiContext.cpp
+    src/ui/Theme.cpp
     src/scene/BodyFactory.cpp
     src/scene/SceneSerializer.cpp
     src/i18n/Localizer.cpp
@@ -116,6 +143,11 @@ target_include_directories(spectra3d PRIVATE
 )
 target_compile_definitions(spectra3d PRIVATE SPECTRA_ASSET_DIR="${SPECTRA_ASSETS}")
 target_link_libraries(spectra3d PRIVATE spectra_freetype spectra_ufbx spectra_miniply)
+if(SPECTRA_SCRIPTING)
+    target_compile_definitions(spectra3d PRIVATE SPECTRA_SCRIPTING=1)
+    target_link_libraries(spectra3d PRIVATE spectra_angelscript)
+    target_include_directories(spectra3d PRIVATE third_party/angelscript/include)
+endif()
 
 if(MSVC)
     target_compile_options(spectra3d PRIVATE /W3 /permissive-)
@@ -126,6 +158,10 @@ endif()
 if(WIN32)
     target_compile_definitions(spectra3d PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_link_libraries(spectra3d PRIVATE opengl32 gdi32 user32 kernel32)
+    # Native folder dialog: ole32 for COM, shell32 for the shell item factory,
+    # uuid for CLSID_FileOpenDialog / IID_IFileDialog. winmm for the 1 ms timer
+    # resolution the frame cap needs.
+    target_link_libraries(spectra3d PRIVATE ole32 shell32 uuid winmm)
     if(MSVC)
         target_link_libraries(spectra3d PRIVATE
             "${SPECTRA_THIRD_PARTY}/glfw/lib-vc2022/glfw3.lib")
@@ -167,6 +203,48 @@ if(SPECTRA_BUILD_TOOLS)
     add_executable(fbxtest tools/fbxtest.cpp)
     target_include_directories(fbxtest PRIVATE third_party/ufbx)
     target_link_libraries(fbxtest PRIVATE spectra_ufbx)
+
+    if(SPECTRA_SCRIPTING)
+        # Headless check of the script host: the entry-point rule and the optional
+        # hooks, with no window and no project. It links the script layer plus the
+        # world, registry and camera the bindings mutate, which is why the asset
+        # loaders come along - MeshRegistry::importFile is one of them.
+add_executable(scripttest
+tools/scripttest.cpp
+            src/script/ScriptHost.cpp
+            src/script/BindEngine.cpp
+            src/script/BindScene.cpp
+            src/script/BindCamera.cpp
+            src/script/BindString.cpp
+            src/scene/BodyFactory.cpp
+            src/core/Log.cpp
+            src/physics/PhysicsWorld.cpp
+            src/physics/RigidBody.cpp
+            src/assets/MeshRegistry.cpp
+            src/assets/MeshImport.cpp
+            src/assets/MeshUtil.cpp
+            src/assets/loaders/FbxLoader.cpp
+            src/assets/loaders/GltfLoader.cpp
+            src/assets/loaders/ObjLoader.cpp
+            src/assets/loaders/PlyLoader.cpp
+            src/render/Camera.cpp
+        )
+        target_include_directories(scripttest PRIVATE
+            src
+            third_party/cgltf
+            third_party/rapidobj
+            third_party/miniply
+            third_party/ufbx
+            third_party/angelscript/include
+        )
+        target_compile_definitions(scripttest PRIVATE SPECTRA_SCRIPTING=1)
+        target_link_libraries(scripttest PRIVATE spectra_angelscript spectra_ufbx spectra_miniply)
+        if(MSVC)
+            target_compile_options(scripttest PRIVATE /W3 /permissive-)
+        else()
+            target_compile_options(scripttest PRIVATE -Wall -Wextra -Wno-unused-parameter)
+        endif()
+    endif()
 endif()
 
 install(TARGETS spectra3d RUNTIME DESTINATION bin)

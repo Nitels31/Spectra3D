@@ -70,9 +70,16 @@ bool UiContext::button(UiRenderer& ui, int id, float x, float y, float w, float 
     else if (isHovered) background = theme::buttonHover;
 
     ui.fillRect(x, y, w, h, background);
+
+    // Measure, never assume. A label that does not fit is shrunk rather than
+    // allowed to spill over its neighbours: "Без обмежень" is 60 pixels wider
+    // than "Off", and a fixed guess that suits one ruins the other.
     const float textWidth = ui.textWidth(label);
-    const float textX = std::fmax(x + 3.0f, x + (w - textWidth) * 0.5f);
-    ui.text(textX, y + (h - theme::textLineHeight) * 0.5f, label, theme::text);
+    const float slot = std::fmax(0.0f, w - 8.0f);
+    const float scale = textWidth > slot ? std::fmax(UiRenderer::kMinTextScale, slot / textWidth) : 1.0f;
+    const float drawnWidth = textWidth * scale;
+    const float textX = x + (w - drawnWidth) * 0.5f;
+    ui.textScaled(textX, y + (h - theme::textLineHeight * scale) * 0.5f, label, theme::text, scale);
     return clicked;
 }
 

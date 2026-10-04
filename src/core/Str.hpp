@@ -78,12 +78,14 @@ inline std::string_view extensionView(std::string_view path) {
 }
 
 // ASCII case-insensitive equality, used in place of "lowercase into a temporary
-// then compare". Only `a` is folded, matching the old "lowercase the file side,
-// compare against the (lowercase) reference list" behaviour exactly.
+// then compare". Both sides are folded: an earlier version folded only `a` and
+// demanded a lowercase literal on the right, which silently broke every caller
+// that passed real text - a Windows path like "C:/Games/MyProject" never matched
+// itself, so the recent list grew a duplicate per launch.
 inline bool equalsIgnoreAscii(std::string_view a, std::string_view b) {
     if (a.size() != b.size()) return false;
     for (size_t i = 0; i < a.size(); ++i)
-        if (lowerAscii(a[i]) != b[i]) return false;
+        if (lowerAscii(a[i]) != lowerAscii(b[i])) return false;
     return true;
 }
 

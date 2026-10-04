@@ -21,6 +21,7 @@ void adoptAssetWorkingDir();
 const std::string& assetRoot();
 
 bool isDirectory(const std::string& path);
+bool exists(const std::string& path);
 
 // One entry as reported by the OS listing, including whether it is a directory.
 struct DirEntry {
@@ -41,7 +42,29 @@ bool listDirectory(const std::string& dir, std::vector<std::string>& out);
 std::vector<std::string> listFilesByExtension(const std::string& dir,
                                              const std::vector<std::string>& extensions);
 
+// Whole-file IO. Returns false when the file cannot be opened.
+bool readFile(const std::string& path, std::string& out);
+// Text mode, so line endings are native to the platform.
+bool writeFile(const std::string& path, const std::string& contents);
 
+// Deletes `path` and, when it is a directory, everything inside it, depth first.
+// Returns false when something could not be removed. Read-only files and
+// directories are made writable first: a project folder that came from a zip or
+// a git checkout must still be deletable.
+bool removeTree(const std::string& path);
+
+// Outcome of pickFolder(). The distinction between "the user pressed Cancel" and
+// "this platform has no native dialog" matters: the launcher only falls back to
+// its own browser for the second one.
+enum class PickResult { Picked, Cancelled, Unsupported };
+
+// Opens the platform's own folder chooser - the Windows Explorer shell dialog -
+// starting at `startPath`. On success `out` receives the chosen absolute path.
+//
+// This is the real shell dialog on purpose. A hand-rolled in-app browser looks
+// like the system one until the user tries a network share, a hidden folder or a
+// typed UNC path, none of which an in-app listing can offer.
+PickResult pickFolder(const std::string& startPath, std::string& out);
 
 } // namespace fs
 } // namespace s3d

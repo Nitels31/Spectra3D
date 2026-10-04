@@ -1,6 +1,7 @@
 #include "../Editor.hpp"
 
 #include "../../core/Log.hpp"
+#include "../../render/GlInfo.hpp"
 #include "../../ui/Theme.hpp"
 
 #include "../../i18n/Localizer.hpp"
@@ -61,7 +62,13 @@ void Editor::drawMenuBar(UiRenderer& ui, PhysicsWorld& world, int fbWidth) {
                    ukrainian ? "EN" : "UA"))
         loc_.setLanguage(ukrainian ? i18n::Language::English : i18n::Language::Ukrainian);
 
-    ui.text((float)fbWidth - 58.0f, bar.y + 5.0f, "GL 2.1", theme::textDim);
+    // The real context version, not a hardcoded one: the engine asks for 3.3
+    // compatibility and falls back to 2.1 on drivers that cannot give it, and the
+    // label has to tell the truth either way.
+    std::string glLabel = "GL ";
+    glLabel += gl::requestedVersion();
+    ui.text((float)fbWidth - 20.0f - ui.textWidth(glLabel.c_str()), bar.y + 5.0f, glLabel.c_str(),
+            theme::textDim);
 }
 
 } // namespace s3d

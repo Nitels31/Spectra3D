@@ -1,29 +1,50 @@
 #pragma once
+#include <cstddef>
+
 #include "../render/SceneRenderer.hpp"
 
 namespace s3d {
 namespace theme {
 
-// Dark editor palette. Colours live here (not inline in panel code) so the whole
-// UI can be re-skinned from one place.
-inline constexpr Color background{0.12f, 0.12f, 0.14f};
-inline constexpr Color panel{0.16f, 0.17f, 0.20f};
-inline constexpr Color panelDark{0.13f, 0.14f, 0.17f};
-inline constexpr Color header{0.19f, 0.21f, 0.25f};
-inline constexpr Color button{0.24f, 0.27f, 0.33f};
-inline constexpr Color buttonHover{0.30f, 0.34f, 0.42f};
-inline constexpr Color buttonPressed{0.18f, 0.20f, 0.25f};
-inline constexpr Color accent{0.33f, 0.55f, 0.85f};
-inline constexpr Color accentDim{0.22f, 0.33f, 0.50f};
-inline constexpr Color text{0.85f, 0.87f, 0.90f};
-inline constexpr Color textDim{0.50f, 0.53f, 0.58f};
-inline constexpr Color separator{0.08f, 0.09f, 0.11f};
-inline constexpr Color field{0.11f, 0.12f, 0.15f};
-inline constexpr Color success{0.30f, 0.70f, 0.40f};
-inline constexpr Color warning{0.85f, 0.70f, 0.25f};
-inline constexpr Color error{0.85f, 0.35f, 0.30f};
+// Palettes. A palette is a plain set of colours, so adding one costs a line here
+// and nothing anywhere else.
+enum class ThemeId { Dark, Light, Contrast };
 
-// Shared metrics, so panels stay aligned without magic numbers everywhere.
+// The theme chosen by the user, or Dark when nothing has been chosen yet.
+ThemeId activeTheme();
+void setActiveTheme(ThemeId id);
+const char* themeName(ThemeId id);
+ThemeId themeFromName(const char* name);
+constexpr size_t themeCount() { return 3; }
+
+// These are variables, not constants, on purpose: switching a theme has to be
+// visible to every panel that says `theme::panel`, and there are hundreds of
+// those references. A function returning a reference would mean the same edit in
+// every one of them; a mutable definition means none.
+//
+// `ui` is the one place allowed to write them (setActiveTheme); everything else
+// reads. That keeps the palette as close to a constant as a switchable value can
+// be without a rename of the entire UI layer.
+extern Color background;
+extern Color panel;
+extern Color panelDark;
+extern Color header;
+extern Color button;
+extern Color buttonHover;
+extern Color buttonPressed;
+extern Color accent;
+extern Color accentDim;
+extern Color text;
+extern Color textDim;
+extern Color separator;
+extern Color field;
+extern Color success;
+extern Color warning;
+extern Color error;
+
+// Shared metrics, so panels stay aligned without magic numbers everywhere. These
+// are deliberately not part of the theme: a light palette does not want a
+// different row height.
 inline constexpr float rowHeight = 22.0f;
 inline constexpr float fieldHeight = 20.0f;
 inline constexpr float menuBarHeight = 26.0f;

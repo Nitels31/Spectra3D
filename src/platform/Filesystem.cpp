@@ -4,6 +4,8 @@
 #include "../core/Str.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <fstream>
 #include <string_view>
 
 #if defined(_WIN32)
@@ -14,6 +16,14 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+// The shell folder dialog. shobjidl(_core) covers IFileDialog and IShellItem;
+// objbase covers COM itself. MinGW ships the pre-C++11 header name.
+#if defined(__MINGW32__)
+#include <shobjidl.h>
+#else
+#include <shobjidl_core.h>
+#endif
+#include <objbase.h>
 #else
 #include <dirent.h>
 #include <sys/stat.h>
@@ -127,6 +137,15 @@ void adoptAssetWorkingDir() {
 
 const std::string& assetRoot() { return g_assetRoot; }
 
+bool exists(const std::string& path) {
+#if defined(_WIN32)
+    return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+#else
+    struct stat st;
+    return stat(path.c_str(), &st) == 0;
+#endif
+}
+
 bool isDirectory(const std::string& path) {
 #if defined(_WIN32)
     const DWORD attr = GetFileAttributesA(path.c_str());
@@ -224,6 +243,165 @@ std::vector<std::string> listFilesByExtension(
     return found;
 }
 
+bool readFile(const std::string& path, std::string& out) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return false;
+    std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    out.swap(text);
+    return true;
+}
+
+bool writeFile(const std::string& path, const std::string& contents) {
+    std::ofstream file(path); // text mode: CRLF on Windows, LF elsewhere
+    if (!file) return false;
+    file.write(contents.data(), (std::streamsize)contents.size());
+    file.flush();
+    return (bool)file;
+}
+
+namespace {
+
+// One level of the delete. Kept separate from removeTree() so the recursion
+// reads as "children first, then this entry", which is the only order the
+// platform calls accept.
+bool removeEntry(const std::string& path, bool isDir) {
+    if (!isDir) {
+#if defined(_WIN32)
+        // A read-only file cannot be deleted on Windows, and DeleteFile fails
+        // instead of clearing the attribute for us.
+        const DWORD attr = GetFileAttributesA(path.c_str());
+        if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY))
+            SetFileAttributesA(path.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
+        return DeleteFileA(path.c_str()) != 0;
+#else
+        return std::remove(path.c_str()) == 0;
+#endif
+    }
+#if defined(_WIN32)
+    const DWORD attr = GetFileAttributesA(path.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY))
+        SetFileAttributesA(path.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
+    return RemoveDirectoryA(path.c_str()) != 0;
+#else
+    return rmdir(path.c_str()) == 0;
+#endif
+}
+
+} // namespace
+
+bool removeTree(const std::string& path) {
+    if (path.empty()) return false;
+
+    const bool dir = isDirectory(path);
+    bool ok = true;
+    if (dir) {
+        std::vector<DirEntry> entries;
+        if (!listDirectoryEx(path, entries)) {
+            Log::warn("fs: cannot list '%s' while deleting it", path.c_str());
+            return false;
+        }
+        // Depth first: every child has to be gone before the parent will accept
+        // a delete, and a child that fails must not be papered over by reporting
+        // the parent as removed.
+        for (const DirEntry& entry : entries) {
+            const std::string child =
+                path.back() == '/' || path.back() == '\\' ? path + entry.name : path + "/" + entry.name;
+            if (!removeTree(child)) ok = false;
+        }
+    }
+    if (!removeEntry(path, dir)) {
+        Log::error("fs: cannot remove '%s'", path.c_str());
+        return false;
+    }
+    return ok;
+}
+
+#if defined(_WIN32)
+namespace {
+
+std::wstring utf8ToWide(const std::string& utf8) {
+    if (utf8.empty()) return {};
+    const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), (int)utf8.size(), nullptr, 0);
+    if (n <= 0) return {};
+    std::wstring out((size_t)n, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), (int)utf8.size(), &out[0], n);
+    return out;
+}
+
+} // namespace
+#endif
+
+PickResult pickFolder(const std::string& startPath, std::string& out) {
+#if defined(_WIN32)
+    // The shell dialog is a COM object. Initialising COM here, for the duration
+    // of the call, keeps the rest of the engine free of COM - it has no other
+    // use for it. S_FALSE means somebody already did it on this thread, which is
+    // fine; a changed apartment model is not, and is reported as "unsupported" so
+    // the caller can fall back instead of showing nothing at all.
+    const HRESULT coInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    if (FAILED(coInit) && coInit != RPC_E_CHANGED_MODE) {
+        Log::error("fs: COM init failed (0x%08lx), no folder dialog", (unsigned long)coInit);
+        return PickResult::Unsupported;
+    }
+    const bool uninitCom = SUCCEEDED(coInit);
+
+    // IFileDialog lives in shobjidl; the wide API is the only one that handles
+    // long and non-ASCII paths correctly.
+    IFileDialog* dialog = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                  IID_IFileDialog, (void**)&dialog);
+    if (FAILED(hr) || !dialog) {
+        if (uninitCom) CoUninitialize();
+        Log::error("fs: cannot create the shell folder dialog (0x%08lx)", (unsigned long)hr);
+        return PickResult::Unsupported;
+    }
+
+    DWORD options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+
+    const std::string start = isDirectory(startPath) ? startPath : std::string();
+    if (!start.empty()) {
+        IShellItem* folder = nullptr;
+        if (SUCCEEDED(SHCreateItemFromParsingName(utf8ToWide(start).c_str(), nullptr,
+                                                  IID_IShellItem, (void**)&folder)) &&
+            folder) {
+            dialog->SetFolder(folder);
+            folder->Release();
+        }
+    }
+
+    hr = dialog->Show(nullptr);
+    PickResult result = PickResult::Cancelled;
+    if (SUCCEEDED(hr)) {
+        IShellItem* item = nullptr;
+        if (SUCCEEDED(dialog->GetResult(&item)) && item) {
+            PWSTR raw = nullptr;
+            if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &raw)) && raw) {
+                out = wideToUtf8(raw, wcslen(raw));
+                CoTaskMemFree(raw);
+                result = out.empty() ? PickResult::Cancelled : PickResult::Picked;
+            }
+            item->Release();
+        }
+    } else if (hr != HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+        // 0x800704C7: the user pressed Cancel. That is an answer, not a failure,
+        // and it must not be logged as one - ERROR_CANCELLED is a Win32 code, and
+        // comparing it to the HRESULT as a bare number never matches.
+        Log::warn("fs: folder dialog failed (0x%08lx)", (unsigned long)hr);
+    }
+
+    dialog->Release();
+    if (uninitCom) CoUninitialize();
+    return result;
+#else
+    // No GTK/Qt dependency is worth adding for this, so the caller falls back to
+    // its own browser.
+    (void)startPath;
+    (void)out;
+    return PickResult::Unsupported;
+#endif
+}
 
 } // namespace fs
 } // namespace s3d

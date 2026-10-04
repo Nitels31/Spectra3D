@@ -43,8 +43,11 @@ public:
 
     float textWidth(const char* utf8) const;
     // Appends the textured quads for `utf8` into `batch` (x, y, u, v, r, g, b).
+    // `scale` shrinks or grows the glyphs and their advances around the anchor at
+    // (x, baselineY); the atlas itself is untouched, so one texture serves every
+    // size the UI asks for.
     void appendQuads(std::vector<float>& batch, float x, float baselineY,
-                     const char* utf8, float r, float g, float b) const;
+                     const char* utf8, float r, float g, float b, float scale = 1.0f) const;
 
 private:
     unsigned codepointAt(int index) const;

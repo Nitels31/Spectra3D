@@ -5,30 +5,39 @@
 заголовок шару, який нижче нього.
 
 ```
-        app            Application, FixedClock, main
-          |
-        editor         Editor, panels/, Picking, Gizmo, AssetBrowser
-          |
-     +----+----+
-     |         |
-    ui        i18n        UiContext+Theme        Localizer
-     |         |
-  scene      render       BodyFactory       Camera, SceneRenderer,
-     |       |          SceneSerializer    UiRenderer, TextAtlas,
-     |       |                             PrimitiveCache
-     |       |
-     |      assets      MeshAsset, MeshRegistry, MeshImport, loaders/
-     |         |
-     +----+----+
-          |
-       physics      RigidBody, PhysicsWorld, Material
-          |
-       platform      Window, Filesystem
-          |
-         core        Math, Log, Str, Rng
-          |
-     third_party/     glfw, freetype, cgltf, rapidobj, miniply, ufbx
+              app        Application, Launcher, FixedClock, main
+                |
+              editor      Editor, panels/, Picking, Gizmo, AssetBrowser
+                |
+              script      ScriptHost, BindEngine/BindScene/BindCamera/BindString
+                |
+              scene       BodyFactory, SceneSerializer
+                |
+                ui         Theme (палітри), UiContext
+                |
+              render      Camera, Color, SceneRenderer, UiRenderer,
+                |          TextAtlas, PrimitiveCache, GlInfo
+              assets      MeshAsset, MeshRegistry, MeshImport, MeshUtil, loaders/
+                |
+              physics     RigidBody, Material, PhysicsWorld
+                |
+             +------+------+
+             |             |
+          platform        i18n       Window, Filesystem      Localizer
+             |                         (core + platform)
+             +------+------+
+                    |
+                   core     Math, Log, Str, Project
+
+   third_party/     glfw, freetype, cgltf, rapidobj, miniply, ufbx, angelscript
 ```
+
+`ui` стоїть над `render`, бо `UiContext.hpp` бере `Rect`/`Color` звідти, а
+`Theme.hpp` — лише кольори. `script` лежить над `scene` ( `BindEngine.cpp`
+створює тіла через `BodyFactory`) і під `editor`, бо `Application` запускає
+його разом із `MeshRegistry` та камерою. `GlInfo.hpp` лежить у `render`, бо це
+про контекст, і читає `kGlVersionMajor` з `platform/Window.hpp` — залежність
+вгору.
 
 ## Правила, які тримають структуру
 
@@ -39,34 +48,51 @@
    належить. Єдиний виняток — `s3d::Log`: його читають усі шари, зокрема
    завантажувачі моделей, і протягувати його інстанс через усі стеки
    викликів не дає нічого.
+   *Виняток у самому скриптовому шарі:* `ScriptHost.cpp` тримає
+   `g_state`/`g_sink` — глобальні функції AngelScript не мають receiver'а,
+   тому єдиний активний `ScriptState` публікується через `activeState()`.
+   Інстанс лише один: другий `Host::initialize()` відмовляє.
 3. **Жодних `namespace`- глобальних імен.** Увесь код у просторі `s3d`.
-4. **Власні заголовки поруч із кодом.** Усі `#include` — відносні
-   (`../core/Log.hpp`), жодних абсолютних шляхів і жодного `src` в include
-   path (крім кореня `src`, щоб можна було писати `core/Log.hpp`).
+4. **Власні заголовки поруч із кодом.** Каталогу `include/` на верхньому рівні
+   немає вже давно: `.hpp` лежить у тому ж каталозі, що й його `.cpp`, а всі
+   `#include` — відносні (`../core/Log.hpp`). У `include path` додається лише
+   корінь `src`, щоб можна було писати `core/Log.hpp`.
 5. **Сторонні бібліотеки — в `third_party/`, дані — в `assets/`.** Корінь
    репозиторію тримає лише `CMakeLists.txt`, `README.md`, `ARCHITECTURE.md`,
-   `build_windows.bat`, `build_linux.sh` та каталоги `src/ third_party/
-   assets/ tools/ build/`.
+   `build_windows.bat`, `build_linux.sh`, `.gitignore` та каталоги `src/
+   third_party/ assets/ tools/ build/`. Каталог `build/` створює CMake і він
+   же у `.gitignore`.
 6. **`CMakeLists.txt` — єдине джерело правди для збірки.** `bat`/`sh` лише
-   викликають CMake. Список файлів не дублюється.
+   викликають CMake. Список файлів движка не дублюється; окремо лише
+   `third_party/angelscript/source/*.cpp` береться `file(GLOB)`, бо там
+   близько сотні файлів. Опції: `SPECTRA_SCRIPTING` (ON) і
+   `SPECTRA_BUILD_TOOLS` (ON).
 
 ## Шари
 
 ### `core`
-`Math.hpp` (Vec3/Quat/Mat3), `Log` (stderr + `engine.log` + кільце буфер для
-консолі редактора), `Str` (UTF-8, шляхи, розширення), `Rng`.
-Не залежать ні від чого.
+`Math.hpp` (`Vec3`/`Quat`/`Mat3`, `clampf`, `lerpf`), `Log` (stderr +
+`engine.log` + кільце буфер для консолі редактора), `Str` (UTF-8, шляхи,
+розширення) і `Project` (`Settings`, `ProjectLibrary`, `ProjectInfo`,
+константи назв файлів проєкту). Не залежать ні від чого, крім стандартної
+бібліотеки. `Project.cpp` — єдине місце, де `core` дозволяє собі `#include
+"../platform/Filesystem.hpp"`: перелік директорій і шлях до виконуваного файлу
+потрібні і скануванню проєктів, і читанню/запису файлів.
 
 ### `platform`
-`Window` — обгортка GLFW. Інстанс дістається з GLFW-колбеків через
-`glfwSetWindowUserPointer`, тому файлового «поточного вікна» немає.
-`Filesystem` — єдине місце з `#ifdef _WIN32` для роботи з файловою системою
-(лістинг директорій, шлях до виконуваного файлу, пошук кореня ассетів).
+`Window` — обгортка GLFW, яка тримає й стан вводу (edge- та level-triggered
+прапорці миші й клавіатури, текстовий буфер, час). Інстанс дістається з
+GLFW-колбеків через `glfwSetWindowUserPointer`, тому файлового «поточного
+вікна» немає. `Filesystem` — єдине місце з `#ifdef _WIN32` для роботи з
+файловою системою (лістинг директорій, шлях до виконуваного файлу, пошук
+кореня ассетів, `adoptAssetWorkingDir()`). Окремого завантажувача GL немає:
+проєкт цілеспрямовано працює на фіксованому конвеєрі OpenGL 2.1 і бере
+`<GL/gl.h>` напряму.
 
 ### `physics`
-`RigidBody` (маса, інерція, габарити, warm-start кеш) і `PhysicsWorld`
-(гравітація, генерація контактів, солвер, сон). Не знає про моделі: тіло
-зберігає лише індекс `mesh` — розв'язується рендерером.
+`RigidBody` (маса, інерція, габарити, warm-start кеш, `Material`) і
+`PhysicsWorld` (гравітація, генерація контактів, солвер, сон). Не знає про
+моделі: тіло зберігає лише індекс `mesh` — розв'язується рендерером.
 
 ### `assets`
 `MeshAsset`, `MeshRegistry` (власник усіх імпортованих моделей; глобального
@@ -89,17 +115,146 @@
 
 ### `i18n`
 `Localizer` — інстанс замість глобальної таблиці; усі панелі беруть його
-через посилання.
+через посилання. Мови завантажуються з `assets/lang/{en,uk}.lang` і
+перемикаються з `Launcher`.
+
+### `script`
+`ScriptHost` — AngelScript-рушій (`asCreateScriptEngine`), компіляція й
+запуск модулів, діагностика. `Bindings.hpp` описує `ScriptState` (світі
+`PhysicsWorld`/`MeshRegistry`/`Camera` плюс групи, створені скриптами) і
+таблиці реєстрації; `BindEngine.cpp` — логування, спавн, гравітація, доступ
+до тіл; `BindScene.cpp` — сцена, імпорт моделей, групи; `BindCamera.cpp` —
+камера; `BindString.cpp` — власний тип `string` (в AngelScript немає
+стандартного). Простір імен `engine` створюється через
+`SetDefaultNamespace("engine")`, бо 2.38 не приймає модифікатор `namespace` у
+`RegisterGlobalFunction`.
+
+Три рішення, які варто знати перед правками:
+
+- **Один модуль на скрипт.** `Build()` в AngelScript атомарний: помилка в
+  одному файлі обнулила б функції інших. Ім'я модуля походить із імені файлу
+  без розширення (`moduleNameFor`), а `asGM_ALWAYS_CREATE` робить повторний
+  запуск заміною лише свого модуля.
+- **Рівно одна точка входу на скрипт.** `onInit` (або `main`/`start`), інакше
+  перша глобальна `void()`; `shared`-функції з правила виключені.
+- **Пошук функції — через `resolveFunction()`, а не лише рушій.**
+  `asCScriptEngine::GetGlobalFunctionByDecl` переглядає тільки
+  `RegisterGlobalFunction`, тобто біндінги `engine::`, і **не бачить** функцій,
+  які оголосив скрипт. Тому `hasFunction()`/`callFunction()` спершу шукають у
+  таблиці рушія, а потім перебирають функції кожного модуля. Без цього
+  `callFunction("void onUpdate()")` завжди повертав би `false`.
+- **`str::equalsIgnoreAscii` згортає лише перший аргумент** (`Str.hpp`):
+  порівняння робиться з уже зниженим `a`, а `b` має бути літералом у нижньому
+  регістрі. Тому в правилі точки входу імена пишуться як `"oninit"`, `"main"`,
+  `"start"` — інакше `onInit` не знайшовся б і правило тихо перетворилося на
+  «перша `void()`», тобто на допоміжник.
+- **Світ не крокують тут.** Біндінги мутують живий `PhysicsWorld` на місці,
+  тому один скрипт личиться і в редагуванні, і в Play.
 
 ### `editor`
 `Editor` — лише оркестрація: вибір, режим Play, маршрутизація вводу, розкладка.
 Малювання рознесено по `panels/*.cpp`, геометрія — в `Picking`/`Gizmo`,
-пошук моделей — в `AssetBrowser`.
+пошук моделей — в `AssetBrowser`. `Editor::handleHotkeys()` порожня свідомо:
+Play/Pause/Stop, збереження, завантаження й видалення живуть на кнопках.
 
 ### `app`
 `Application` — композиційний корінь: володіє всіма підсистемами, крутить
-цикл кадру. `FixedClock` — акумулятор фіксованого кроку (60 Гц).
-`main.cpp` — 5 рядків.
+цикл кадру і перемикає два стани. `Launcher` — стартове меню, яке живе у
+`Launcher::Result { Stay, OpenProject, Quit }`. `FixedClock` — акумулятор
+фіксованого кроку (60 Гц, до 10 кроків на кадр). `main.cpp` — 5 рядків.
+
+## Машина станів застосунку
+
+```
+        initialize()
+              |
+              v
+        +-----------+   Result::OpenProject    +-----------+
+        | Launcher  | ------------------------> |  Editor   |
+        +-----------+                          +-----------+
+              |                                    |
+        Result::Quit                      закриття вікна
+              |                                    |
+              v                                    v
+           requestClose()                        return 0
+```
+
+- `Application::initialize()` створює вікно, вантажить мови й шрифти,
+  ініціалізує `script::Host` і запускає `Launcher::initialize()`, який читає
+  `settings.ini`, роздає корінь проєктів і мову в `ProjectLibrary` та
+  `Localizer` і сканує каталог.
+- Щокадру в `runLauncherFrame()` результат `Launcher::update()` або повертає
+  кадр у меню, або відкриває проєкт (`readManifest` → `openProject`), або
+  закриває вікно.
+- `Application::openProject()` чистить `PhysicsWorld`, застосовує гравітацію й
+  камеру з маніфесту, вантажить `scene.txt` (відсутність або порожній файл —
+  свіжий проєкт, не помилка), створює `Editor` і передає йому шлях сцени.
+- Назад у `Launcher` немає: `Application::closeProject()` існує, але жодного
+  виклика немає. Вихід із редактора — закрити вікно.
+- `Application::runEditorFrame()`: клавіатура камери й `1..6` для гравітації →
+  `Editor::handleInput()` → `consumePlayStarted()` (одноразовий сигнал) →
+  під час нього `runProjectScripts()` → фіксований крок `world_.step()` →
+  рендер.
+
+## Файли проєкту
+
+`ProjectLibrary` у `core` — єдиний власник формату на диску; імена файлів
+задані константами в `Project.hpp`, аби редактор і скриптовий шар не
+заводили власні літерали.
+
+| Шлях | Що це |
+|---|---|
+| `<projectsRoot>/<Project>/project.spectra` | маніфест: `name`, `version`, `engine`, `created`, `modified`, `language`, `gravity`, `cameraX/Y/Z`, `cameraYaw`, `cameraPitch`, `cameraFov` |
+| `<projectsRoot>/<Project>/scene.txt` | документ сцени (порожній файл створюється одразу з проєктом) |
+| `<projectsRoot>/<Project>/scripts/` | `*.as` — скрипти, які виконуються при вході в Play |
+| `<projectsRoot>/<Project>/models/` | каталог під моделі проєкту |
+
+Корінь проєктів — `Settings::projectRoot`, за замовчуванням
+`<exeDir>/project`; глобальні налаштування живуть у `settings.ini` поруч із
+бінарником (`projectRoot`, `language`, до 8 `recent`).
+
+Відомості, які варто тримати в голові, бо вони злегка суперечать інтуїції:
+
+- **Маніфест пишеться один раз.** `writeManifest()` викликає лише
+  `ProjectLibrary::create()`, тому ключі камери й гравітації у файлі лишаються
+  такими, якими їх задали під час створення, навіть якщо камеру в редакторі
+  рухали.
+- **`models/` проєкту не сканується.** `AssetBrowser::refresh()` читає
+  `assets/models` спільного бенчмарку; каталог створюється, але заповнюється
+  лише вручну або через `engine::importModel`.
+- **Тип `LanguageTag` живе в `core`, а не в `i18n`** — інакше `core` залежав
+  би від шару локалізації. Переклад між двома переліками робить рівно одна
+  функція, `Launcher::applySettings()`.
+- **`Settings::load()` повертає false на першому запуску** — це не помилка:
+  відсутні ключі просто лишають типові значення.
+
+## Скриптовий шар у деталях
+
+- **Коли.** `Application::runProjectScripts()` читає
+  `<project>/scripts/*.as` (сортування за іменем) і запускає кожен файл через
+  `Host::runFile()`. Виклик ініціює `Editor::consumePlayStarted()`, тобто
+  скрипти бачать живий світ у першому ж кадрі Play. Якщо каталогу або файлів
+  немає, це не помилка.
+- **Точка входу.** Рівно одна функція на модуль: `onInit` / `main` / `start`,
+  інакше перша глобальна `void()` у порядку оголошення, інакше (`shared`
+  лише) нічого.
+- **Хуки.** `Host` знає `void onInit()`, `void onUpdate()`, `void onStop()`
+  (константи `kOn*Declaration`) і вміє викликати їх через
+  `callFunction()`/`hasFunction()`. Але **викликає їх лише сам модуль**
+  (`onInit` — як точку входу): ні цикл кадру, ні `Editor::exitPlayMode()` їх
+  не викликають, тож `onUpdate`/`onStop` наразі мертві. Ввімкнення потребує
+  одного рядка в `Application::runEditorFrame()` і одного — в
+  `exitPlayMode`/`consumePlayStarted`.
+- **Діагностика.** `Host::setDiagnosticSink()` ставиться до `initialize()`;
+  повідомлення компілятора й винятків ідуть у `Log` з файлом, рядком і
+  колонкою (`[script] ...` для `engine::log*`).
+- **Один хост.** Глобальні функції AngelScript не мають receiver'а, тому
+  `ScriptState` публікується через `activeState()`, а другий `Host` відмовляє
+  ініціалізуватися.
+- **Збірка без скриптів.** Увесь `src/script/*.cpp` guarded-ний
+  `SPECTRA_SCRIPTING`; заголовки не містять жодного символу AngelScript, тому
+  `-DSPECTRA_SCRIPTING=OFF` просто лишає рушій вимкненим
+  (`Host::available()` == false, у банері старту `Scripting: off`).
 
 ## Виправлені під час переробки дефекти
 
@@ -107,7 +262,8 @@
 
 - **Підлога арени не створювала контактів.** Генератор контактів пропускав
   стінку, до якої спрямована гравітація, тому тіла падали крізь підлогу
-  (`World::floorWallIndex`). Тепер беруть участь усі шість стін.
+  (тодішній `World::floorWallIndex`). Тепер беруть участь усі шість стін —
+  `PhysicsWorld::collectWallContacts()`.
 - **Warm-start імпульси жили вічно.** Кеш по (стінка, кут) не скидався, коли
   контакт зникав: тіло, що відстрибнуло й знову впало на те саме місце,
   отримувало поштовх від попереднього удару — відскоки зростали безмежно.
@@ -125,3 +281,15 @@
 боксів, відскок сфери від боксу, всі шість осей гравітації, ray-pick, цикл
 збереження/завантаження сцени (включно з імпортом реальної моделі з
 `assets/models/`) та формули об'єму/інерції.
+
+Для скриптового шару окремо перевірено ланцюжок у журналі: `Scripting engine
+2.38.0 ready` на старті, далі `Scripts: running N file(s) from .../scripts` і
+рядки `[script] ...` від точок входу — тобто компіляція, запуск і діагностика
+доходять від файлу до світу.
+
+Правила точки входу та хуків перевіряються без вікна й без проєкту —
+окремою утилітою `scripttest` (`tools/scripttest.cpp`, 46 перевірок): точка
+входу з помічником виконується рівно один раз, відсутній хук повертає `false`
+**мовчки**, наявний — виконується, помилка компіляції дає ERROR-діагностику,
+`shared`-лише скрипт збирається без помилок. Скрипт перевірки живе в
+`tools/`, а не в `src/script/`, бо це не частина рушія, а його тест.

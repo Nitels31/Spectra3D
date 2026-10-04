@@ -143,4 +143,12 @@ void UiRenderer::text(float x, float y, const char* utf8, const Color& color) {
     atlas_.appendQuads(textBatch_, x, y, utf8, color.r, color.g, color.b);
 }
 
+void UiRenderer::textScaled(float x, float y, const char* utf8, const Color& color, float scale) {
+    if (scale >= 1.0f) {
+        atlas_.appendQuads(textBatch_, x, y, utf8, color.r, color.g, color.b);
+        return;
+    }
+    atlas_.appendQuads(textBatch_, x, y, utf8, color.r, color.g, color.b, scale);
+}
+
 } // namespace s3d

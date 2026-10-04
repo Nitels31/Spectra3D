@@ -162,20 +162,24 @@ float TextAtlas::textWidth(const char* utf8) const {
 }
 
 void TextAtlas::appendQuads(std::vector<float>& batch, float x, float topY,
-                            const char* utf8, float r, float g, float b) const {
+                            const char* utf8, float r, float g, float b, float scale) const {
     if (!ready_) return;
 
+    // Glyph metrics are baked at one size, so shrinking means scaling the box and
+    // the pen advance by the same factor. Doing it here rather than in each caller
+    // is what keeps a scaled string the same width as textWidth() * scale.
+    const float s = scale > 0.0f ? scale : 1.0f;
     float penX = x;
-    const float baselineY = topY + ascender_;
+    const float baselineY = topY + ascender_ * s;
     for (const char* p = utf8; *p;) {
         int index = glyphIndex(str::nextCodepoint(p));
         if (index < 0) index = glyphIndex('?');
         const Glyph& glyph = glyphs_[index];
 
-        const float x0 = penX + glyph.offsetX;
-        const float y0 = baselineY - glyph.offsetY;
-        const float x1 = x0 + glyph.width;
-        const float y1 = y0 + glyph.height;
+        const float x0 = penX + glyph.offsetX * s;
+        const float y0 = baselineY - glyph.offsetY * s;
+        const float x1 = x0 + glyph.width * s;
+        const float y1 = y0 + glyph.height * s;
 
         // One grow + one straight-line fill instead of six
         // vector::insert(end, ptr, ptr + 7) calls per glyph, each of which
@@ -199,7 +203,7 @@ void TextAtlas::appendQuads(std::vector<float>& batch, float x, float topY,
         put(x0, y0, glyph.u0, glyph.v0);
         put(x1, y1, glyph.u1, glyph.v1);
         put(x0, y1, glyph.u0, glyph.v1);
-        penX += glyph.advance;
+        penX += glyph.advance * s;
     }
 }
 

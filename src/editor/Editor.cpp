@@ -16,7 +16,8 @@ namespace {
 constexpr float kMinViewportSize = 120.0f;
 constexpr float kViewportTopInset = 28.0f;
 constexpr float kChromeHeight = 26.0f;
-constexpr const char* kSceneFile = "scene.txt";
+// Fallback when no project is open: next to the binary.
+const char* const kDefaultSceneFile = "scene.txt";
 
 // Navigation balls: camera orientation presets, offsets from the widget centre.
 struct NavBall {
@@ -168,14 +169,15 @@ void Editor::handleInput(PhysicsWorld& world, Camera& camera, Window& window, in
 }
 
 void Editor::handleHotkeys(PhysicsWorld& world, Window& window) {
-    if (window.takeKeyPress(GLFW_KEY_P)) {
-        if (!playMode_) enterPlayMode(world);
-        else exitPlayMode(world);
-    }
-    if (window.takeKeyPress(GLFW_KEY_O) && playMode_) singleStepRequested_ = true;
-    if (window.takeKeyPress(GLFW_KEY_F5)) saveScene(world);
-    if (window.takeKeyPress(GLFW_KEY_F9)) loadScene(world);
-    if (window.takeKeyPress(GLFW_KEY_V)) showVectors_ = !showVectors_;
+    // Deliberately empty of state-changing shortcuts.
+    //
+    // Play / Pause / Stop and save / load used to be bound to keys. Every one of
+    // them mutates or discards the scene, and a stray keypress while typing or
+    // working silently threw work away - stopping play mode restores the snapshot
+    // taken when play began, so anything built during the run is gone.
+    // Mode changes now only happen through the buttons in the menu bar.
+    (void)world;
+    (void)window;
 }
 
 bool Editor::tryNavigationGizmo(Camera& camera) {
@@ -257,12 +259,6 @@ void Editor::applyGizmoDrag(PhysicsWorld& world, Camera& camera) {
 }
 
 void Editor::handleViewport(PhysicsWorld& world, Camera& camera, Window& window) {
-    if (window.takeKeyPress(GLFW_KEY_DELETE) && !selectedBodies_.empty()) {
-        deleteSelection(world);
-        return;
-    }
-
-    // While the right mouse button drives the camera the viewport ignores input.
     if (ui_.cameraCaptured()) {
         dragAxis_ = -1;
         return;
@@ -329,6 +325,7 @@ void Editor::enterPlayMode(PhysicsWorld& world) {
     snapshotGravity_ = world.gravityAxis;
     playMode_ = true;
     playing_ = true;
+    playStarted_ = true;
     selectedBodies_.clear();
     world.wakeAll();
     Log::info(text("log.play"), (int)editSnapshot_.size());
@@ -345,12 +342,13 @@ void Editor::exitPlayMode(PhysicsWorld& world) {
 }
 
 void Editor::saveScene(const PhysicsWorld& world) {
-    if (scenes::save(world, meshes_, kSceneFile))
+    if (scenes::save(world, meshes_, scenePath()))
         Log::info(text("log.saved"), (int)world.bodies.size());
 }
 
 void Editor::loadScene(PhysicsWorld& world) {
-    if (!scenes::load(world, meshes_, kSceneFile)) return;
+    if (!scenes::load(world, meshes_, scenePath()))
+        return;
     activeBody_ = -1;
     selectedBodies_.clear();
     Log::info(text("log.loaded"), (int)world.bodies.size());
