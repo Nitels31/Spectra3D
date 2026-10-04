@@ -29,6 +29,15 @@ public:
     bool pumpEvents();
     void present();
 
+    // True when anything happened since the last call, which means the next frame
+    // has to be drawn: an event, a held key or button, a cursor move or a resize.
+    // The loop uses it to skip drawing a window nobody is touching, which on a
+    // laptop is the difference between a warm machine and a hot one.
+    //
+    // Peeks only. Every edge flag stays exactly as it was, so the widgets that
+    // consume them still see the event this frame.
+    bool consumeActivity();
+
 
     void setMouseCaptured(bool capture);
     bool mouseCaptured() const { return captured_; }
@@ -73,6 +82,8 @@ private:
     bool captured_ = false;
     bool deltaPrimed_ = false;
     double lastX_ = 0.0, lastY_ = 0.0;
+    // Cursor position as of the last consumeActivity(), to spot a move.
+    double activityX_ = -1.0, activityY_ = -1.0;
     int fbW_ = 0, fbH_ = 0;
 };
 

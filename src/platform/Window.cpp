@@ -124,6 +124,26 @@ bool Window::pumpEvents() {
 
 void Window::present() { glfwSwapBuffers(window_); }
 
+bool Window::consumeActivity() {
+    // A frame is worth drawing if something happened, if a control is being held
+    // (camera flight, a gizmo drag) or if the pointer moved, because hover
+    // highlights are part of the picture.
+    bool busy = scrollAcc_ != 0.0 || textLen_ > 0 || captured_;
+    for (int key = 0; key <= GLFW_KEY_LAST && !busy; ++key)
+        busy = keys_[key] || keyEdges_[key];
+    for (int button = 0; button < 8 && !busy; ++button)
+        busy = mouseDown_[button] || mousePressed_[button] || mouseReleased_[button];
+
+    double x = 0.0, y = 0.0;
+    cursorPos(x, y);
+    if (activityX_ >= 0.0 && (x != activityX_ || y != activityY_)) busy = true;
+    activityX_ = x;
+    activityY_ = y;
+
+    if (fbW_ != framebufferWidth() || fbH_ != framebufferHeight()) busy = true;
+    return busy;
+}
+
 void Window::setMouseCaptured(bool capture) {
     if (!window_ || capture == captured_) return;
     captured_ = capture;

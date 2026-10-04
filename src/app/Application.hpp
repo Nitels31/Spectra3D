@@ -41,6 +41,9 @@ private:
     void updateTitle();
     // Seconds between rendered frames, or 0 when uncapped.
     double frameInterval() const;
+    // True while the editor's physics is stepping: the one case where the picture
+    // changes without anyone touching anything.
+    bool isSimulating() const { return inEditor_ && editor_ && editor_->simulating(); }
 
     // Hands the window over to the editor for `project`.
     void openProject(const ProjectInfo& project);
@@ -70,11 +73,18 @@ private:
     ProjectInfo project_;
     bool inEditor_ = false;
 
+    // True while the window is untouched and nothing is simulating: the loop draws
+    // one frame a second to keep the clock alive and otherwise leaves the GPU
+    // alone.
+    bool idle_ = false;
+
     FixedClock clock_{60.0, 10};
     double simulationTime_ = 0.0;
     double fpsAccumulator_ = 0.0;
     int fpsFrames_ = 0;
     double fps_ = 0.0;
+    // Start of the current one-second window, on the window clock.
+    double lastTickTime_ = 0.0;
     double previousTime_ = 0.0;
 // When the next capped frame is due, on the window clock. Absolute, so the
     // period does not drift with the render time.

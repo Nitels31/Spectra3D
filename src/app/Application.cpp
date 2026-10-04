@@ -25,6 +25,11 @@ namespace {
 constexpr int kInitialWidth = 1280;
 constexpr int kInitialHeight = 720;
 constexpr double kMaxFrameTime = 0.1;
+
+// How long an untouched window may sit without drawing anything. Long enough that
+// the clock does not visibly stutter, short enough that a missed invalidation
+// cannot hide for more than a moment.
+constexpr double kIdleTickSeconds = 1.0;
 constexpr float kCameraSpeed = 12.0f;
 constexpr float kCameraBoost = 30.0f;
 constexpr float kLookSensitivity = 0.0025f;
@@ -48,10 +53,6 @@ namespace {
 // The wait lives here, in the frame loop, and not in Window: pacing a frame is the
 // loop's decision, and the window knows nothing about frame budgets.
 void waitForFrame(Window& window, double deadline) {
-    window.pumpEvents();
-    const double left = deadline - window.time();
-    if (left <= 0.0) return;
-
 #if defined(_WIN32)
     static HANDLE timer = [] {
         HANDLE h = CreateWaitableTimerExW(nullptr, nullptr,
@@ -60,30 +61,38 @@ void waitForFrame(Window& window, double deadline) {
         if (!h) h = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
         return h;
     }();
-    if (timer) {
-        LARGE_INTEGER due;  // 100 ns units, negative means "relative"
-        due.QuadPart = -(LONGLONG)(left * 1.0e7);
-        if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
-            while (WaitForSingleObject(timer, 0) == WAIT_TIMEOUT) {
-                if (!window.pumpEvents()) return;
-            }
-            return;
-        }
-    }
-    while (window.pumpEvents()) {
-        const double rest = deadline - window.time();
-        if (rest <= 0.0) return;
-        Sleep((DWORD)(std::fmin(rest, 0.004) * 1000.0));
-    }
-#else
-    while (window.pumpEvents()) {
-        const double rest = deadline - window.time();
-        if (rest <= 0.0) return;
-        std::this_thread::sleep_for(std::chrono::duration<double>(std::fmin(rest, 0.002)));
-    }
 #endif
-}
 
+    for (;;) {
+        if (!window.pumpEvents()) return;
+        const double left = deadline - window.time();
+        if (left <= 0.0) return;
+
+#if defined(_WIN32)
+        if (timer) {
+            LARGE_INTEGER due;  // 100 ns units, negative means "relative"
+            due.QuadPart = -(LONGLONG)(left * 1.0e7);
+            if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
+                // Wait for whichever arrives first: the deadline, or a message.
+                // Sleeping on the timer alone would make a click wait out the whole
+                // frame, and POLLING the timer with a zero timeout instead of
+                // sleeping burns a full core - both were measured, one at 95% of a
+                // core for an idle window.
+                MsgWaitForMultipleObjects(1, &timer, FALSE, (DWORD)(left * 1000.0) + 1,
+                                          QS_ALLINPUT);
+                // A waitable timer stays signalled after it fires, and this one is
+                // manual reset, so it has to be disarmed or the next wait returns
+                // instantly and the loop spins.
+                CancelWaitableTimer(timer);
+                continue;
+            }
+        }
+        Sleep((DWORD)(std::fmin(left, 0.004) * 1000.0));
+#else
+        std::this_thread::sleep_for(std::chrono::duration<double>(std::fmin(left, 0.002)));
+#endif
+    }
+}
 } // namespace
 
 Application::Application()
@@ -150,6 +159,27 @@ int Application::run() {
     while (window_.pumpEvents()) {
         double now = window_.time();
 
+        // Nothing to draw, so draw nothing. A window nobody touches still ran 60
+        // frames a second for as long as it was open, which on a laptop is heat
+        // with no picture to show for it. Two things force a frame: the user did
+        // something, or the physics is running. A third - once a second - keeps
+        // the clock honest and lets a missed invalidation heal itself.
+        const bool busy = window_.consumeActivity() || isSimulating();
+        const double tickDue = lastTickTime_ + kIdleTickSeconds;
+        if (!busy && now < tickDue) {
+            idle_ = true;
+            // Wait for the tick rather than spinning. The wait still pumps events,
+            // so the next click is acted on at once, and previousTime_ moves with
+            // it so resuming does not hand the physics a huge dt.
+            waitForFrame(window_, tickDue);
+            previousTime_ = window_.time();
+            lastTickTime_ = previousTime_;
+            updateTitle();
+            continue;
+        }
+        idle_ = false;
+        lastTickTime_ = now;
+
         // Frame cap as an ABSOLUTE schedule: the next frame is due at
         // nextFrameTime_, not "one budget after the previous one finished".
         // Adding the budget to a timestamp that already contains the render time
@@ -158,8 +188,10 @@ int Application::run() {
         const double budget = frameInterval();
         if (budget > 0.0) {
             if (nextFrameTime_ <= 0.0) nextFrameTime_ = now;
-            if (now < nextFrameTime_) waitForFrame(window_, nextFrameTime_);
-            now = window_.time();
+            if (now < nextFrameTime_) {
+                waitForFrame(window_, nextFrameTime_);
+                now = window_.time();
+            }
             nextFrameTime_ += budget;
             // A stall - a modal dialog, a breakpoint, a dragged window - must not be
             // paid back as a burst of catch-up frames. Resynchronise instead.
@@ -203,9 +235,14 @@ void Application::updateTitle() {
     char title[128];
     if (inEditor_)
         std::snprintf(title, sizeof(title), "%s | FPS %.0f", project_.name.c_str(), fps_);
+    else if (idle_)
+        // An idle window is not slow, it is not drawing at all; saying "FPS 1"
+        // would be technically true and completely misleading.
+        std::snprintf(title, sizeof(title), "Spectra3D | OpenGL %s | idle",
+                      gl::requestedVersion());
     else
-        std::snprintf(title, sizeof(title), "Spectra3D | OpenGL %s | FPS %.0f", gl::requestedVersion(),
-                      fps_);
+        std::snprintf(title, sizeof(title), "Spectra3D | OpenGL %s | FPS %.0f",
+                      gl::requestedVersion(), fps_);
     window_.setTitle(title);
 }
 
