@@ -101,8 +101,12 @@ void Editor::drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
     // ones do I care about".
     const Rect favButton{dock.x + dock.width - 28.0f, dock.y, 24.0f, kHeaderHeight};
     if (ui_.button(ui, kHierarchyFavOnly, favButton.x, favButton.y, favButton.width,
-                   favButton.height, "", favoritesOnly_))
+                   favButton.height, "", favoritesOnly_)) {
         favoritesOnly_ = !favoritesOnly_;
+        // Part of the workspace, not of the scene: it is what the window looked
+        // like, so it belongs in the layout file next to the panel sizes.
+        markLayoutDirty();
+    }
     drawStar(ui, favButton.x + favButton.width * 0.5f, dock.y + kHeaderHeight * 0.5f, 5.5f,
              favoritesOnly_ ? theme::warning : theme::textDim);
 
@@ -212,8 +216,13 @@ void Editor::drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
         else if (starHovered)
             drawStar(ui, star.x + kStarSize * 0.5f, y + kRowStep * 0.5f, 5.0f,
                      theme::textDim.scaled(0.7f));
-        if (starHovered && ui_.pointerPressed())
+        if (starHovered && ui_.pointerPressed()) {
             world.bodies[(size_t)index].favorite = !body.favorite;
+            // A star is scene data like any other: it is written to scene.txt, so
+            // it has to make "unsaved changes" true or the "save first?" question
+            // asks about a scene that is in fact already on disk.
+            markSceneDirty();
+        }
 
         if (hovered) ui_.markHovered(kHierarchyRow + index);
         if (hovered && ui_.pointerPressed() && !starHovered) {

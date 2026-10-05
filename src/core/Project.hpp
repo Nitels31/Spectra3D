@@ -20,6 +20,10 @@ inline constexpr const char* kProjectManifestFile = "project.spectra";
 inline constexpr const char* kProjectSceneFile = "scene.txt";
 inline constexpr const char* kProjectScriptsDir = "scripts";
 inline constexpr const char* kProjectModelsDir = "models";
+// Where the editor keeps the workspace it was left in: dock sizes, which panels
+// are open and where each one floats. Per project, like the scene - two projects
+// are two workspaces.
+inline constexpr const char* kEditorLayoutFile = "editorlayout.txt";
 inline constexpr const char* kSettingsFileName = "settings.ini";
 
 // Languages a project can be tagged with. Deliberately not i18n::Language:

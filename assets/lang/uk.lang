@@ -85,9 +85,12 @@ tab.hierarchy=Ієрархія
 tab.inspector=Інспектор
 tab.node=Вузол
 tab.console=Консоль
+tab.favorites=Обране
 tab.scene=Сцена
 hierarchy.search=Пошук об'єктів
 hierarchy.noMatches=Нічого не знайдено за фільтром
+favorites.empty=Обраного поки немає
+favorites.hint=Зірка в рядку ієрархії додає об'єкт сюди
 
 hier.sceneRoot=Корінь сцени
 sec.create=Створити

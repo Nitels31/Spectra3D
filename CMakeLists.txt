@@ -124,12 +124,14 @@ add_executable(spectra3d
     src/scene/SceneSerializer.cpp
     src/i18n/Localizer.cpp
     src/editor/Editor.cpp
+    src/editor/EditorLayout.cpp
     src/editor/Picking.cpp
     src/editor/Gizmo.cpp
     src/editor/AssetBrowser.cpp
     src/editor/panels/TopBar.cpp
     src/editor/panels/TopBarOverlay.cpp
     src/editor/panels/LeftColumn.cpp
+    src/editor/panels/FavoritesDock.cpp
     src/editor/panels/ScenePanel.cpp
     src/editor/panels/InspectorDock.cpp
     src/editor/panels/BottomBar.cpp

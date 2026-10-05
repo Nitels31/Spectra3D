@@ -32,9 +32,9 @@ struct EditorLayout {
 };
 
 // Panels that can be dragged between the edges and the middle of the window, the
-// way Unity's are. Three of them, four places to be: two vertical edges, one
+// way Unity's are. Four of them, four places to be: two vertical edges, one
 // bottom strip, and free float over the scene.
-enum class PanelId { Hierarchy = 0, Inspector = 1, Console = 2, PanelCount = 3 };
+enum class PanelId { Hierarchy = 0, Inspector = 1, Console = 2, Favorites, PanelCount };
 enum class PanelZone { Left, Right, Bottom, Float };
 
 inline constexpr int kPanelCount = (int)PanelId::PanelCount;
@@ -53,6 +53,7 @@ public:
         kHierarchyStar = 420,
         kHierarchyFavOnly = 421,
         kHierarchySearch = 440,
+        kFavoriteRow = 460,
         kInspectorDock = 500,
         kInspectorProperty = 600,
         kFilterField = 700,
@@ -129,6 +130,15 @@ public:
     void loadScene(PhysicsWorld& world);
 
 private:
+    // Bounds for every panel size, wherever the size came from: a drag, a layout
+    // file, a hand-edited one. Shared rather than repeated, because "too small to
+    // be a panel" has to mean the same number in all three places.
+    static constexpr float kPanelMinWidth = 160.0f;
+    static constexpr float kPanelMinHeight = 88.0f;
+    static constexpr float kDockMinWidth = 180.0f;
+    static constexpr float kDockMaxWidth = 520.0f;
+    static constexpr float kConsoleMinHeight = 80.0f;
+
     // --- input phases -------------------------------------------------------
     void handleHotkeys(PhysicsWorld& world, Window& window);
     void handleViewport(PhysicsWorld& world, Camera& camera, Window& window);
@@ -174,19 +184,42 @@ private:
     // near the left edge" and needs the window, not the panels.
     int fbWidth_ = 0, fbHeight_ = 0;
     // Dock sizes. Seeded from the theme metrics, then the user's: dragging an edge
-    // is the only way to change them, and the value survives everything else.
+    // is the only way to change them, and the value survives everything else -
+    // and the next launch, because they are part of the saved workspace.
     float leftWidth_ = 260.0f;
     float rightWidth_ = 280.0f;
     float bottomHeight_ = 156.0f;
 
+    // Which edges of a panel a resize grip the pointer took: one bit per edge, so
+    // a corner is two bits and the drag itself is four independent ifs. A docked
+    // panel only ever has the one edge that faces the scene; a floating one has
+    // all four.
+    enum : unsigned {
+        kGripLeft = 1u,
+        kGripRight = 2u,
+        kGripTop = 4u,
+        kGripBottom = 8u,
+    };
+
     // Drag in progress. -1 when nothing is being dragged.
     int dragPanel_ = -1;
     int resizePanel_ = -1;
+    unsigned resizeEdges_ = 0;
     PanelZone dropZone_ = PanelZone::Left;
     Rect dragRect_{};
     float dragGrabX_ = 0.0f, dragGrabY_ = 0.0f;
     float resizeStartPointer_ = 0.0f;
     float resizeStartSize_ = 0.0f;
+    // A floating panel is resized from where it was when the grip was taken, not
+    // from where it is this frame: the pointer's own position is the delta.
+    Rect resizeStartRect_{};
+    float resizeStartPointerX_ = 0.0f, resizeStartPointerY_ = 0.0f;
+
+    // The workspace as the user left it. Written out once per change (see
+    // EditorLayout.cpp) and read back on the first frame, so a project opens the
+    // way it was closed rather than the way it was first seen.
+    bool layoutLoaded_ = false;
+    bool layoutDirty_ = false;
 
     // Projection basis for the current pointer position inside the viewport.
     // `camera.basis()` costs four transcendentals and the field of view one
@@ -223,6 +256,11 @@ private:
     // between frames; the obvious alternative - walk the bodies again for every
     // visible row - is quadratic.
     std::vector<int> filterRows_;
+    // The same for the Favorites panel: the starred bodies, in scene order. A
+    // separate list because it is a different question - "which ones do I care
+    // about" rather than "which ones match what I typed".
+    std::vector<int> favoriteRows_;
+    float favoritesScroll_ = 0.0f;
     // "Only favourites", the star in the hierarchy header. With it on, the filter
     // is not the only thing that decides what a row shows.
     bool favoritesOnly_ = false;
@@ -293,6 +331,8 @@ private:
     // are [menuFirst_[m], menuFirst_[m + 1]). A member with a fixed capacity
     // instead of a vector - the toolbar redraws on every frame and forty rows of
     // heap traffic per frame is what the rest of the UI is careful not to do.
+    // The capacity is the fixed menus plus room for the Create list, which is one
+    // row per model in assets/models and is the only menu whose length changes.
     void buildMenuRows();
     int menuRowCount(int menu) const {
         return menuFirst_[menu + 1] - menuFirst_[menu];
@@ -326,7 +366,7 @@ private:
     // Points the camera at the selection, far enough back that it fits.
     void frameSelection(PhysicsWorld& world, Camera& camera);
 
-    static constexpr int kMaxMenuRows = 64;
+    static constexpr int kMaxMenuRows = 72;
     MenuRow menuRows_[kMaxMenuRows];
     int menuFirst_[kMenuCount + 1] = {};
     // Where the search field and the layers button ended up this frame, so the
@@ -365,6 +405,7 @@ private:
     void drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Window& window, const Rect& dock);
     void drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& window, const Rect& dock);
     void drawConsolePanel(UiRenderer& ui, const Rect& panel);
+    void drawFavoritesDock(UiRenderer& ui, PhysicsWorld& world, const Rect& dock);
     // One panel, wherever it currently is: its own rectangle decides the rest.
     void drawPanelById(UiRenderer& ui, PhysicsWorld& world, Window& window, PanelId id);
     void drawDockedPanels(UiRenderer& ui, PhysicsWorld& world, Window& window);
@@ -381,6 +422,15 @@ private:
     PanelZone zoneAt(float x, float y) const;
     Rect zoneRect(PanelZone zone) const;
     void commitPanelDrop();
+    // Resizing. `panelGripsAt` is the hit test both the drag and the highlight
+    // ask, so the edge that lights up is the edge that takes the pointer.
+    unsigned panelGripsAt(int index, float x, float y) const;
+    void applyFloatingResize(float x, float y);
+    // The saved workspace: dock sizes, where each panel lives, which are closed.
+    std::string layoutPath() const;
+    void loadLayout();
+    void saveLayout();
+    void markLayoutDirty() { layoutDirty_ = true; }
     void drawSceneHeader(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window);
     void drawViewportTools(UiRenderer& ui, Camera& camera);
     void drawToolIcon(UiRenderer& ui, const Rect& rect, Tool tool, bool on) const;

@@ -85,9 +85,12 @@ tab.hierarchy=Hierarchy
 tab.inspector=Inspector
 tab.node=Node
 tab.console=Console
+tab.favorites=Favorites
 tab.scene=Scene
 hierarchy.search=Search objects
 hierarchy.noMatches=Nothing matches the filter
+favorites.empty=No favorites yet
+favorites.hint=Star a row in the hierarchy to add it here
 
 hier.sceneRoot=Scene Root
 sec.create=Create

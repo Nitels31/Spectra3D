@@ -421,6 +421,9 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
                         break;
                     }
             }
+            // Which panels are on screen is part of the workspace, so the window
+            // comes back the way it was left.
+            markLayoutDirty();
         }
         break;
     case Action::Grid:
