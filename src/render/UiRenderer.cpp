@@ -42,6 +42,12 @@ bool UiRenderer::buildFonts() { return atlas_.build(); }
 void UiRenderer::begin(int width, int height) {
     width_ = width;
     height_ = height;
+    clipDepth_ = 0;
+    // The scissor test is state, and state survives a frame. Forgetting to turn it
+    // off here meant a panel whose clip rectangle moved - a floating panel, a dock
+    // dragged to the other edge - had the PREVIOUS frame's box still in force for
+    // everything it drew before its own push, and silently drew nothing.
+    glDisable(GL_SCISSOR_TEST);
     colorBatch_.clear();
     textBatch_.clear();
 
@@ -63,6 +69,10 @@ void UiRenderer::begin(int width, int height) {
 void UiRenderer::end() {
     flush();
 
+    // Symmetric with begin(): whatever a panel pushed, the next frame starts from
+    // a clean state.
+    clipDepth_ = 0;
+    glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_LIGHTING);
@@ -102,6 +112,42 @@ void UiRenderer::flush() {
         glDisable(GL_TEXTURE_2D);
         textBatch_.clear();
     }
+}
+
+void UiRenderer::pushClip(const Rect& rect) {
+    // Flush first: the batches hold geometry submitted under the previous clip,
+    // and submitting it now would mix clipped and unclipped triangles into one
+    // draw call.
+    flush();
+    if (clipDepth_ >= kMaxClips) return;
+
+    // GL scissors cannot be switched off per triangle, so an empty intersection is
+    // expressed as a degenerate box - nothing inside it can pass.
+    Clip next{(int)rect.x, height_ - (int)(rect.y + rect.height), (int)rect.width,
+              (int)rect.height};
+    if (clipDepth_ > 0) {
+        const Clip& outer = clips_[clipDepth_ - 1];
+        const int left = std::max(outer.x, next.x);
+        const int right = std::min(outer.x + outer.width, next.x + next.width);
+        const int top = std::max(outer.y, next.y);
+        const int bottom = std::min(outer.y + outer.height, next.y + next.height);
+        next = Clip{left, top, std::max(0, right - left), std::max(0, bottom - top)};
+    }
+    clips_[clipDepth_++] = next;
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(next.x, next.y, next.width, next.height);
+}
+
+void UiRenderer::popClip() {
+    if (clipDepth_ <= 0) return;
+    flush();
+    --clipDepth_;
+    if (clipDepth_ == 0) {
+        glDisable(GL_SCISSOR_TEST);
+        return;
+    }
+    const Clip& current = clips_[clipDepth_ - 1];
+    glScissor(current.x, current.y, current.width, current.height);
 }
 
 void UiRenderer::fillRect(float x, float y, float w, float h, const Color& color) {

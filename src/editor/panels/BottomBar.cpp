@@ -22,18 +22,18 @@ struct LevelFilter {
 
 } // namespace
 
-// Console under the viewport and the inspector. The header carries one filter per
-// level with a live count: a quiet log is the normal state, and "Errors 3" is the
-// one thing in it worth reading.
-void Editor::drawConsolePanel(UiRenderer& ui) {
-    const Rect panel = layout_.console;
+// Console. Docked along the bottom or floating over the scene, and it does not
+// care: the rectangle it is handed is the rectangle it fills. The header carries
+// one filter per level with a live count: a quiet log is the normal state, and
+// "Errors 3" is the one thing in it worth reading.
+void Editor::drawConsolePanel(UiRenderer& ui, const Rect& panel) {
     if (panel.width <= 0.0f || panel.height <= 0.0f) return;
 
     ui.fillRect(panel.x, panel.y, panel.width, panel.height, theme::panelDark.scaled(0.97f));
     ui.fillRect(panel.x, panel.y, panel.width, 1.0f, theme::separator);
     ui.fillRect(panel.x, panel.y, panel.width, kHeaderHeight, theme::panelDark);
     ui.fillRect(panel.x, panel.y + kHeaderHeight - 1.0f, panel.width, 1.0f, theme::separator);
-    ui.text(panel.x + 8.0f, panel.y + 5.0f, text("tab.console"), theme::text);
+    ui.text(panel.x + 18.0f, panel.y + 5.0f, text("tab.console"), theme::text);
 
     const std::vector<Log::Entry>& lines = Log::entries();
     int warnings = 0, errors = 0, infos = 0;

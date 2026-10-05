@@ -176,18 +176,62 @@ void Editor::drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& came
         }
         width = std::fmin(width, kMenuPanelWidthMax);
 
-        const Rect panel{captionX, layout_.menuBar.y + layout_.menuBar.height - 1.0f, width,
-                         kPanelPadding * 2.0f + (float)count * kMenuRowHeight};
-        ui.fillRect(panel.x, panel.y, panel.width, panel.height, theme::panel);
-        ui.fillRect(panel.x, panel.y, panel.width, 1.0f, theme::separator);
+        // A menu is as long as its contents, and Create is every model on disk.
+        // The bound is the window: rows that do not fit are reached with the wheel,
+        // and the footer says how many are below.
+        const float panelY = layout_.menuBar.y + layout_.menuBar.height - 1.0f;
+        const float available =
+            std::fmax(3.0f * kMenuRowHeight, (float)fbHeight - panelY - 8.0f);
+        const int visible =
+            std::clamp((int)((available - kPanelPadding * 2.0f) / kMenuRowHeight), 1, count);
+        const int maxFirst = std::max(0, count - visible);
+        const int shown = std::min(count, visible);
+        const int hidden = count - shown;
+
+        auto panelRect = [&](int first) {
+            const int rows = shown + (hidden > 0 ? 1 : 0);
+            return Rect{captionX, panelY, width, kPanelPadding * 2.0f + (float)rows * kMenuRowHeight};
+        };
+
+        int first = std::clamp((int)(menuScroll_ / kMenuRowHeight), 0, maxFirst);
+        Rect panel = panelRect(first);
+        // Two rows per notch, the same as the scene tree.
+        if (ui_.hovered(panel) && ui_.scrollDelta() != 0.0) {
+            menuScroll_ = clampf(menuScroll_ - (float)ui_.scrollDelta() * 2.0f * kMenuRowHeight,
+                                 0.0f, (float)maxFirst * kMenuRowHeight);
+            first = std::clamp((int)(menuScroll_ / kMenuRowHeight), 0, maxFirst);
+            panel = panelRect(first);
+        }
         insidePanel |= ui_.hovered(panel);
 
-        for (int i = 0; i < count; ++i) {
+        ui.fillRect(panel.x, panel.y, panel.width, panel.height, theme::panel);
+        ui.fillRect(panel.x, panel.y, panel.width, 1.0f, theme::separator);
+
+        // A dropdown longer than the window gets a bar on the right edge, so the
+        // length of the list is visible and not merely scrollable, and the rows
+        // stop short of it.
+        const bool scrollable = count > visible;
+        const float rowInset = scrollable ? 9.0f : 4.0f;
+        if (scrollable) {
+            const float trackTop = panel.y + kPanelPadding;
+            const float trackHeight = (float)shown * kMenuRowHeight;
+            const float thumbHeight =
+                std::fmax(20.0f, trackHeight * (float)shown / (float)count);
+            const float maxOffset = (float)maxFirst * kMenuRowHeight;
+            const float travel = trackHeight - thumbHeight;
+            const float thumbY =
+                trackTop + travel * (maxOffset > 0.0f ? clampf(menuScroll_ / maxOffset, 0.0f, 1.0f) : 0.0f);
+            const float barX = panel.x + panel.width - 5.0f;
+            ui.fillRect(barX, trackTop, 3.0f, trackHeight, theme::panelDark);
+            ui.fillRect(barX, thumbY, 3.0f, thumbHeight, theme::textDim.scaled(0.55f));
+        }
+
+        for (int i = first; i < first + shown; ++i) {
             const MenuRow& row = menuRow(openMenu_, i);
             if (row.separator) continue;
             const Rect rowRect{panel.x + 2.0f,
-                               panel.y + kPanelPadding + (float)i * kMenuRowHeight,
-                               panel.width - 4.0f, kMenuRowHeight};
+                               panel.y + kPanelPadding + (float)(i - first) * kMenuRowHeight,
+                               panel.width - rowInset, kMenuRowHeight};
             const bool hovered = ui_.hovered(rowRect);
             if (hovered) {
                 ui_.markHovered(kMenuRow + i);
@@ -203,6 +247,14 @@ void Editor::drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& came
                 closeOverlays();
                 break;
             }
+        }
+
+        if (hidden > 0) {
+            char more[24];
+            std::snprintf(more, sizeof(more), "+%d", hidden);
+            ui.text(panel.x + 8.0f,
+                    panel.y + kPanelPadding + (float)shown * kMenuRowHeight + 2.0f, more,
+                    theme::textDim);
         }
     }
 

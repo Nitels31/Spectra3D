@@ -26,13 +26,18 @@ namespace s3d {
 // bottom under the viewport and the inspector.
 struct EditorLayout {
     Rect menuBar;
-    Rect leftDock;
-    Rect rightDock;
     Rect viewport;
     Rect sceneHeader;    // "Scene" strip across the top of the viewport
     Rect viewportTools;  // vertical tool column inside the viewport, on the left
-    Rect console;        // bottom, spanning viewport + inspector
 };
+
+// Panels that can be dragged between the edges and the middle of the window, the
+// way Unity's are. Three of them, four places to be: two vertical edges, one
+// bottom strip, and free float over the scene.
+enum class PanelId { Hierarchy = 0, Inspector = 1, Console = 2, PanelCount = 3 };
+enum class PanelZone { Left, Right, Bottom, Float };
+
+inline constexpr int kPanelCount = (int)PanelId::PanelCount;
 
 // Godot-style editor shell. Owns selection, play mode and the UI context, and
 // delegates drawing to the panels in `panels/`.
@@ -44,8 +49,9 @@ public:
         kTransportPlay = 101,
         kTransportPause = 102,
         kTransportStop = 103,
-        kAssetImport = 200,
         kHierarchyRow = 400,
+        kHierarchyStar = 420,
+        kHierarchyFavOnly = 421,
         kHierarchySearch = 440,
         kInspectorDock = 500,
         kInspectorProperty = 600,
@@ -53,6 +59,7 @@ public:
         kSceneHeader = 800,
         kConsoleFilter = 950,
         // Top bar, right-hand cluster. 1000+ so nothing else can collide with it.
+        kTopBarTool = 990,  // + tool index, the five tools in the bar itself
         kToolbarHelp = 1000,
         kToolbarLayers = 1001,
         kToolbarReload = 1002,
@@ -62,6 +69,7 @@ public:
         kLayerRow = 1200,  // + body index
         kLayerToggle = 1300,
         kHelpClose = 1400,
+        kPanelGrip = 1500,
     };
 
     Editor(MeshRegistry& meshes, i18n::Localizer& localizer);
@@ -123,6 +131,24 @@ private:
     void pruneSelection(const PhysicsWorld& world);
     void deleteSelection(PhysicsWorld& world);
 
+    // Framebuffer size of the last layout pass: the drag code asks "is the pointer
+    // near the left edge" and needs the window, not the panels.
+    int fbWidth_ = 0, fbHeight_ = 0;
+    // Dock sizes. Seeded from the theme metrics, then the user's: dragging an edge
+    // is the only way to change them, and the value survives everything else.
+    float leftWidth_ = 260.0f;
+    float rightWidth_ = 280.0f;
+    float bottomHeight_ = 156.0f;
+
+    // Drag in progress. -1 when nothing is being dragged.
+    int dragPanel_ = -1;
+    int resizePanel_ = -1;
+    PanelZone dropZone_ = PanelZone::Left;
+    Rect dragRect_{};
+    float dragGrabX_ = 0.0f, dragGrabY_ = 0.0f;
+    float resizeStartPointer_ = 0.0f;
+    float resizeStartSize_ = 0.0f;
+
     // Projection basis for the current pointer position inside the viewport.
     // `camera.basis()` costs four transcendentals and the field of view one
     // more, and both the picking ray and the gizmo projection want the same
@@ -150,10 +176,17 @@ private:
     // the hierarchy redraws every frame and the body count is unbounded.
     const char* bodyKind(const PhysicsWorld& world, int index) const;
     void rebuildFilter(const PhysicsWorld& world, const char* query);
+    // A five-pointed star from small squares along five rays. There is no glyph for
+    // a star in the atlas and no rotated rectangle in the batcher, so this is what
+    // "favourite" looks like.
+    static void drawStar(UiRenderer& ui, float cx, float cy, float radius, const Color& tint);
     // Body indexes that pass the current filter. A member so its capacity survives
     // between frames; the obvious alternative - walk the bodies again for every
     // visible row - is quadratic.
     std::vector<int> filterRows_;
+    // "Only favourites", the star in the hierarchy header. With it on, the filter
+    // is not the only thing that decides what a row shows.
+    bool favoritesOnly_ = false;
 
     // The toolbar's tools. Every one changes what a drag in the viewport does -
     // there is no tool here that only renames another one.
@@ -233,17 +266,27 @@ private:
     // Points the camera at the selection, far enough back that it fits.
     void frameSelection(PhysicsWorld& world, Camera& camera);
 
-    static constexpr int kMaxMenuRows = 48;
+    static constexpr int kMaxMenuRows = 64;
     MenuRow menuRows_[kMaxMenuRows];
     int menuFirst_[kMenuCount + 1] = {};
     // Where the search field and the layers button ended up this frame, so the
     // panels that hang off them can be anchored to exactly the same rectangles.
     Rect searchField_;
     Rect layersButton_;
-    // "+7" for the models the Create menu did not have room for. A member because
-    // a menu row borrows its label and the frame is over long before this stack
-    // frame is.
-    char modelOverflow_[16] = {};
+    // Scroll offset of an open dropdown, in pixels. A menu is as long as its
+    // contents and Create lists every model on disk, so the bound on a dropdown is
+    // the window, not an arbitrary row count.
+    float menuScroll_ = 0.0f;
+
+    // --- panels that can be moved (see the enum above) ----------------------
+    // `floatRect` is where a panel sits while it is floating; its width and height
+    // are also what it snaps back to when it is docked again, so undocking does
+    // not reset a panel the user had resized.
+    struct Panel {
+        PanelZone zone = PanelZone::Left;
+        Rect floatRect;
+    };
+    Panel panels_[kPanelCount];
 
     // --- panels (one file each, panels/*.cpp) -----------------------------
     void drawTopBar(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
@@ -252,19 +295,30 @@ private:
     // overlap the panels below.
     void drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
                            int fbWidth, int fbHeight);
-    void drawLeftColumn(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
-                        int fbWidth);
-    void drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
-                           int fbWidth);
-    void drawSceneHeader(UiRenderer& ui, PhysicsWorld& world, Camera& camera);
+    void drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Window& window, const Rect& dock);
+    void drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& window, const Rect& dock);
+    void drawConsolePanel(UiRenderer& ui, const Rect& panel);
+    // One panel, wherever it currently is: its own rectangle decides the rest.
+    void drawPanelById(UiRenderer& ui, PhysicsWorld& world, Window& window, PanelId id);
+    void drawDockedPanels(UiRenderer& ui, PhysicsWorld& world, Window& window);
+    void drawFloatingPanels(UiRenderer& ui, PhysicsWorld& world, Window& window);
+    // Title bar of a panel: the handle it is dragged by, and the strip the drop
+    // preview is anchored to.
+    Rect panelHeader(PanelId id) const;
+    Rect panelRect(PanelId id) const;
+    void drawPanelChrome(UiRenderer& ui, PanelId id);
+    void handlePanelDrag(PhysicsWorld& world);
+    void drawPanelDragFeedback(UiRenderer& ui);
+    const char* panelTitle(PanelId id) const;
+    PanelZone zoneAt(float x, float y) const;
+    Rect zoneRect(PanelZone zone) const;
+    void commitPanelDrop();
+    void drawSceneHeader(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window);
     void drawViewportTools(UiRenderer& ui, Camera& camera);
     void drawToolIcon(UiRenderer& ui, const Rect& rect, Tool tool, bool on) const;
     void drawNavigationBalls(UiRenderer& ui) const;
-    void drawConsolePanel(UiRenderer& ui);
-    void drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& window, int fbWidth,
-                           int fbHeight);
 
-    void drawEmptyInspector(UiRenderer& ui, const Rect& dock, float y, int fbWidth);
+    void drawEmptyInspector(UiRenderer& ui, const Rect& dock, float y);
     void drawTransformSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
     void drawShapeSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
     void drawMaterialSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
@@ -296,6 +350,9 @@ private:
     // --- viewport options ---------------------------------------------------
     bool showGrid_ = true;
     bool showVectors_ = true;
+    // Snap while dragging: the position lands on a quarter of a unit instead of
+    // wherever the ray happened to hit. The magnet in the viewport toolbar.
+    bool snapEnabled_ = false;
     int perspectiveIndex_ = 1;
     // Console lives under the viewport and the inspector now, so it is always
     // there; these three are its level filters.
@@ -312,6 +369,12 @@ private:
     // on-demand rendering would leave on screen until something else woke it.
     bool overlayOpenedThisFrame_ = false;
     float hierarchyScroll_ = 0.0f;
+    // Inspector body: where it is scrolled to, and how tall its content turned
+    // out to be last frame. The second number is measured, not predicted - the
+    // sections add up as they are drawn - and it is what the scroll is clamped
+    // against, so a body shorter than the dock cannot be scrolled into emptiness.
+    float inspectorScroll_ = 0.0f;
+    float inspectorContentHeight_ = 0.0f;
     TextField filter_;
     // Hierarchy filter. Its own field, because filtering the scene tree and
     // filtering the inspector are different questions.

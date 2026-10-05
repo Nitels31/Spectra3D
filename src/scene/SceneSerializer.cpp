@@ -239,6 +239,10 @@ bool save(const PhysicsWorld& world, const MeshRegistry& meshes, const std::stri
         row.num(body.anchorOrientation.y);
         row.num(body.anchorOrientation.z);
         row.num(body.anchorSpring);
+        // Trailing, and optional to the reader, so a scene written before
+        // favourites existed still loads - with every star empty, which is exactly
+        // what those scenes meant.
+        row.integer(body.favorite ? 1 : 0);
         text += '\n';
     }
 
@@ -340,6 +344,11 @@ bool load(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path) {
                nextDouble(field, lineEnd, aqy) && nextDouble(field, lineEnd, aqz) &&
                nextDouble(field, lineEnd, anchorSpring));
 
+        // The favourite star, written last so it can be missing without costing
+        // the whole line: an old scene loads, with no stars.
+        long favorite = 0;
+        (void)nextLong(field, lineEnd, favorite);
+
         // Filled in place instead of building a local and copying it in.
         // emplace_back() value-initialises, which also gives force/torque a
         // defined zero rather than the previous body's leftovers.
@@ -366,6 +375,7 @@ bool load(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path) {
         body.anchorOrientation =
             Quat{(float)aqw, (float)aqx, (float)aqy, (float)aqz}.normalized();
         body.anchorSpring = (float)anchorSpring;
+        body.favorite = favorite != 0;
 
         if (name != kNoMesh) {
             meshName.assign(name.data(), name.size());

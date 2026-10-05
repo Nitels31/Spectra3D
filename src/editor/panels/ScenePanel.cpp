@@ -11,6 +11,78 @@ constexpr float kHeaderHeight = 26.0f;
 constexpr float kToolSize = 26.0f;
 constexpr float kToolGap = 3.0f;
 constexpr float kNavBallInset = 52.0f;
+constexpr float kBarSize = 20.0f;
+constexpr float kBarGap = 3.0f;
+
+// Icons of the viewport toolbar, drawn from rects and circles because that is all
+// the UI renderer has. Each one is a different shape on purpose: letters on a
+// toolbar say nothing about what the button does and look the same whether it is
+// active or not.
+enum class ViewIcon { Grid, Vectors, Snap, Frame, Reset, Layers };
+
+void drawViewIcon(UiRenderer& ui, const Rect& r, ViewIcon icon, const Color& tint) {
+    const float cx = r.x + r.width * 0.5f;
+    const float cy = r.y + r.height * 0.5f;
+    const float s = std::fmin(r.width, r.height);
+    auto bar = [&](float x, float y, float w, float h) { ui.fillRect(x, y, w, h, tint); };
+
+    switch (icon) {
+    case ViewIcon::Grid:
+        // Three lines each way: what it toggles looks like this from above.
+        for (int i = -1; i <= 1; ++i) {
+            bar(cx - 6.0f, cy + (float)i * 4.0f - 0.5f, 12.0f, 1.0f);
+            bar(cx + (float)i * 4.0f - 0.5f, cy - 6.0f, 1.0f, 12.0f);
+        }
+        break;
+    case ViewIcon::Vectors:
+        bar(cx - 5.0f, cy - 0.5f, 9.0f, 1.5f);
+        bar(cx + 3.0f, cy - 3.0f, 1.5f, 6.0f);
+        bar(cx + 1.5f, cy - 3.0f, 1.5f, 2.0f);
+        bar(cx + 1.5f, cy + 1.0f, 1.5f, 2.0f);
+        break;
+    case ViewIcon::Snap:
+        // A magnet: two legs and a crossbar. The one icon in the row whose shape
+        // is a thing rather than a mark, which is why it is the one that has to be
+        // drawn - there is no glyph for it in a font either.
+        bar(cx - 5.0f, cy - 5.0f, 1.5f, 7.0f);
+        bar(cx + 3.5f, cy - 5.0f, 1.5f, 7.0f);
+        bar(cx - 5.0f, cy + 1.0f, 10.0f, 1.5f);
+        break;
+    case ViewIcon::Frame: {
+        // Four corner brackets: "put the selection in frame".
+        const float arm = 4.0f, off = 6.0f;
+        bar(cx - off, cy - off, arm, 1.0f);
+        bar(cx - off, cy - off, 1.0f, arm);
+        bar(cx + off - arm, cy - off, arm, 1.0f);
+        bar(cx + off - 1.0f, cy - off, 1.0f, arm);
+        bar(cx - off, cy + off - 1.0f, arm, 1.0f);
+        bar(cx - off, cy + off - arm, 1.0f, arm);
+        bar(cx + off - arm, cy + off - 1.0f, arm, 1.0f);
+        bar(cx + off - 1.0f, cy + off - arm, 1.0f, arm);
+        break;
+    }
+    case ViewIcon::Reset: {
+        // A ring with a gap at the top and a head in it.
+        const float radius = s * 0.26f;
+        for (int i = 0; i < 12; ++i) {
+            const float a = (float)i / 12.0f * 2.0f * kPi + kPi * 0.15f;
+            ui.fillCircle(cx + std::cos(a) * radius, cy + std::sin(a) * radius, s * 0.055f,
+                          tint);
+        }
+        for (int i = 0; i < 5; ++i) {
+            const float t = (float)i / 4.0f;
+            const float w = s * 0.30f * (1.0f - std::fabs(t * 2.0f - 1.0f));
+            bar(cx - s * 0.15f, cy - radius - s * 0.22f + (float)i * (s * 0.07f), w, s * 0.08f);
+        }
+        break;
+    }
+    case ViewIcon::Layers:
+        // Three plates: the panel it opens is a list of them.
+        for (int i = 0; i < 3; ++i)
+            bar(cx - 6.0f, cy - 4.0f + (float)i * 3.0f, 12.0f - (float)i * 2.0f, 1.5f);
+        break;
+    }
+}
 
 const float kPositiveOffsets[3][2] = {{26.0f, 7.0f}, {0.0f, -26.0f}, {-22.0f, 22.0f}};
 const float kNegativeOffsets[3][2] = {{-26.0f, -7.0f}, {0.0f, 26.0f}, {22.0f, -22.0f}};
@@ -44,11 +116,11 @@ void Editor::drawNavigationBalls(UiRenderer& ui) const {
 // "Scene" strip across the top of the viewport.
 //
 // The tools used to be duplicated here as letters, which meant two places to
-// change a tool and no way to tell which buttons were active. The tool column owns
-// them now, so this strip carries only the two view toggles that are worth having
-// one click away. Everything else about the view - the field of view, framing the
-// selection, the camera reset - is in the View menu, where it can carry a label.
-void Editor::drawSceneHeader(UiRenderer& ui, PhysicsWorld& world, Camera& camera) {
+// change a tool and no way to tell which buttons were active. The tool column and
+// the top bar own them now, so this strip is the viewport toolbar from the sketch:
+// a row of square buttons on the right, each one a command that does something.
+void Editor::drawSceneHeader(UiRenderer& ui, PhysicsWorld& world, Camera& camera,
+                             Window& window) {
     const Rect header = layout_.sceneHeader;
     ui.fillRect(header.x, header.y, header.width, header.height, theme::panelDark);
     ui.fillRect(header.x, header.y + header.height - 1.0f, header.width, 1.0f,
@@ -57,36 +129,70 @@ void Editor::drawSceneHeader(UiRenderer& ui, PhysicsWorld& world, Camera& camera
 
     // Laid out from the right edge inwards, so the row can never run into the
     // title on a narrow window.
-    const float size = 20.0f;
     float x = header.x + header.width - 8.0f;
-
-    // Grid: three lines each way, which is what the thing it toggles looks like
-    // from above. Vectors: an arrow, because that is what it draws. Letters were
-    // the alternative and they said nothing about either.
-    auto icon = [&](int id, int kind, bool on) {
+    auto button = [&](int id, float size) {
         const Rect rect{x - size, header.y + 3.0f, size, size};
-        const bool pressed = ui_.button(ui, id, rect.x, rect.y, rect.width, rect.height, "", on);
-        const Color tint = on ? theme::accent : theme::textDim;
-        const float cx = rect.x + size * 0.5f, cy = rect.y + size * 0.5f;
-        if (kind == 0) {
-            for (int i = -1; i <= 1; ++i) {
-                ui.fillRect(cx - 6.0f, cy + (float)i * 4.0f - 0.5f, 12.0f, 1.0f, tint);
-                ui.fillRect(cx + (float)i * 4.0f - 0.5f, cy - 6.0f, 1.0f, 12.0f, tint);
-            }
-        } else {
-            ui.fillRect(cx - 5.0f, cy - 0.5f, 9.0f, 1.5f, tint);
-            ui.fillRect(cx + 3.0f, cy - 3.0f, 1.5f, 6.0f, tint);
-            ui.fillRect(cx + 1.5f, cy - 3.0f, 1.5f, 2.0f, tint);
-            ui.fillRect(cx + 1.5f, cy + 1.0f, 1.5f, 2.0f, tint);
-        }
-        x -= size + kToolGap;
-        return pressed;
+        x -= size + kBarGap;
+        return rect;
     };
 
-    if (icon(kSceneHeader + 3, 0, showGrid_)) showGrid_ = !showGrid_;
-    if (icon(kSceneHeader + 4, 1, showVectors_)) showVectors_ = !showVectors_;
-    (void)world;
-    (void)camera;
+    // Layers: the same panel the top bar opens, from here too.
+    {
+        const Rect rect = button(kSceneHeader + 40, kBarSize);
+        if (ui_.button(ui, kSceneHeader + 40, rect.x, rect.y, rect.width, rect.height, "",
+                       layersOpen_))
+            layersOpen_ = !layersOpen_;
+        drawViewIcon(ui, rect, ViewIcon::Layers, layersOpen_ ? theme::accent : theme::textDim);
+    }
+    {
+        const Rect rect = button(kSceneHeader + 41, kBarSize);
+        if (ui_.button(ui, kSceneHeader + 41, rect.x, rect.y, rect.width, rect.height, ""))
+            runAction(Action::ResetCamera, 0, world, camera, window);
+        drawViewIcon(ui, rect, ViewIcon::Reset, theme::textDim);
+    }
+    {
+        const Rect rect = button(kSceneHeader + 42, kBarSize);
+        if (ui_.button(ui, kSceneHeader + 42, rect.x, rect.y, rect.width, rect.height, ""))
+            frameSelection(world, camera);
+        drawViewIcon(ui, rect, ViewIcon::Frame, theme::textDim);
+    }
+
+    // The field of view is the one button that is a number rather than a mark, and
+    // showing the number is the point: it cycles through the three the manifest
+    // can hold.
+    static const float kFovValues[3] = {60.0f, 70.0f, 90.0f};
+    char fovLabel[8];
+    std::snprintf(fovLabel, sizeof(fovLabel), "%d", (int)kFovValues[perspectiveIndex_]);
+    const float fovWidth = std::fmax(kBarSize, ui.textWidth(fovLabel) + 12.0f);
+    {
+        const Rect rect = button(kSceneHeader + 43, fovWidth);
+        if (ui_.button(ui, kSceneHeader + 43, rect.x, rect.y, rect.width, rect.height, fovLabel)) {
+            perspectiveIndex_ = (perspectiveIndex_ + 1) % 3;
+            camera.fovDeg = kFovValues[perspectiveIndex_];
+        }
+    }
+
+    {
+        const Rect rect = button(kSceneHeader + 44, kBarSize);
+        if (ui_.button(ui, kSceneHeader + 44, rect.x, rect.y, rect.width, rect.height, "",
+                       snapEnabled_))
+            snapEnabled_ = !snapEnabled_;
+        drawViewIcon(ui, rect, ViewIcon::Snap, snapEnabled_ ? theme::accent : theme::textDim);
+    }
+    {
+        const Rect rect = button(kSceneHeader + 45, kBarSize);
+        if (ui_.button(ui, kSceneHeader + 45, rect.x, rect.y, rect.width, rect.height, "",
+                       showVectors_))
+            showVectors_ = !showVectors_;
+        drawViewIcon(ui, rect, ViewIcon::Vectors, showVectors_ ? theme::accent : theme::textDim);
+    }
+    {
+        const Rect rect = button(kSceneHeader + 46, kBarSize);
+        if (ui_.button(ui, kSceneHeader + 46, rect.x, rect.y, rect.width, rect.height, "",
+                       showGrid_))
+            showGrid_ = !showGrid_;
+        drawViewIcon(ui, rect, ViewIcon::Grid, showGrid_ ? theme::accent : theme::textDim);
+    }
 }
 
 // Tool icons, drawn from rects and circles because that is all the UI renderer

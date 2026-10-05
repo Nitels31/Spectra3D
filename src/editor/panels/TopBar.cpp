@@ -19,10 +19,6 @@ constexpr float kBarButtonHeight = 20.0f;
 constexpr float kBarGap = 4.0f;
 constexpr float kSearchWidth = 172.0f;
 
-// How many rows the Create menu lists before it says how many more there are. The
-// model list is the one menu whose length changes from frame to frame.
-constexpr int kMaxModelRows = 10;
-
 // Shape names, in `Shape` order. A menu row carries the shape as its parameter,
 // so these two have to stay in step - hence the count check.
 const char* const kShapeLabels[] = {"Box",      "Sphere",   "Cylinder", "Capsule",
@@ -174,16 +170,13 @@ void Editor::buildMenuRows() {
     if (models.empty()) {
         add(Action::None, 0, text("assets.noModels"));
     } else {
-        const int shown = std::min((int)models.size(), kMaxModelRows);
-        for (int i = 0; i < shown; ++i)
-            add(Action::Model, i, str::fileNameView(models[(size_t)i]).data());
-        // What did not fit says so. A menu that quietly shows ten of twenty
-        // models is indistinguishable from a folder that has ten.
-        if ((int)models.size() > shown) {
-            std::snprintf(modelOverflow_, sizeof(modelOverflow_), "+%d",
-                          (int)models.size() - shown);
-            add(Action::None, 0, modelOverflow_);
-        }
+        // Every model in the folder, every time. The list used to stop at ten and
+        // print "+7" instead, which is indistinguishable from a folder that holds
+        // ten files - and a Create menu that silently hides half the project's
+        // models is worse than no menu. A menu that outgrows the window is bounded
+        // by the window and scrolls; see drawTopBarOverlay.
+        for (size_t i = 0; i < models.size(); ++i)
+            add(Action::Model, (int)i, str::fileNameView(models[i]).data());
     }
     close(kMenuCreate);
 
@@ -199,6 +192,9 @@ void Editor::closeOverlays() {
     openMenu_ = -1;
     layersOpen_ = false;
     helpPage_ = 0;
+    // Each menu starts at its top: a scroll left over from the last one opened
+    // would drop a long Create menu halfway down its own list.
+    menuScroll_ = 0.0f;
 }
 
 const char* Editor::menuCaption(int menu) const {
@@ -416,6 +412,27 @@ void Editor::drawTopBar(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Win
         }
         menuX += width;
     }
+
+    // --- tools, next to the menus, the way Unity puts them ---
+    //
+    // The same five tools the viewport column carries, one click away without the
+    // pointer having to go into the scene first. Same Tool value either way, so
+    // the two are two handles on one setting, not two settings: the bar shows the
+    // active one lit, and so does the column.
+    static const Tool kTools[5] = {Tool::Select, Tool::Move, Tool::Rotate, Tool::Scale,
+                                   Tool::Pan};
+    float toolX = menuX + 10.0f;
+    for (int i = 0; i < 5; ++i) {
+        const Rect rect{toolX, buttonY, kBarButtonHeight, kBarButtonHeight};
+        const bool on = tool_ == kTools[i];
+        if (ui_.button(ui, kTopBarTool + i, rect.x, rect.y, rect.width, rect.height, "", on))
+            tool_ = kTools[i];
+        drawToolIcon(ui, rect, kTools[i], on);
+        toolX += kBarButtonHeight + kBarGap;
+    }
+    // A hairline between the tools and the rest of the bar: without it the group
+    // reads as part of the menu captions.
+    ui.fillRect(toolX + 2.0f, bar.y + 5.0f, 1.0f, bar.height - 10.0f, theme::separator);
 
     // --- centre: transport, like a media player ---
     const float groupWidth = kBarButtonHeight * 3.0f + kBarGap * 2.0f;

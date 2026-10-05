@@ -61,11 +61,16 @@ struct RigidBody {
     Vec3 aabbMax;
 
     // --- simulation flags --------------------------------------------------
-    bool asleep = false;
+bool asleep = false;
     float sleepTime = 0.0f;
     bool touching = false;
     bool visible = true;
     bool locked = false;
+    // Starred in the hierarchy. Purely an editor mark - the simulation never reads
+    // it - but it lives here and in scene.txt next to `visible` and `locked`
+    // because those are editor marks too, and a star that forgets itself on reload
+    // is not a star.
+    bool favorite = false;
 
     // --- soft constraint ---------------------------------------------------
     bool anchorPosition = false;

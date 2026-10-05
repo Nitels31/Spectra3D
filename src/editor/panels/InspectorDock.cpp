@@ -4,6 +4,8 @@
 #include "../../core/Str.hpp"
 #include "../../ui/Theme.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace s3d {
@@ -11,6 +13,27 @@ namespace {
 
 constexpr float kHeaderHeight = 24.0f;
 constexpr float kRowStep = 22.0f;
+constexpr float kScrollWidth = 6.0f;
+// How far one wheel notch moves a scrolling dock. Enough to cross a section, small
+// enough to land on a row.
+constexpr float kScrollStep = 26.0f;
+
+// A dock taller than its contents shows no bar at all, and a bar that covers the
+// whole height means there is nothing to scroll to. Both are drawn from the same
+// two numbers.
+void drawScrollbar(UiRenderer& ui, const Rect& body, float offset, float contentHeight) {
+    if (contentHeight <= body.height + 0.5f) return;
+    const float trackHeight = body.height;
+    const float thumbHeight = std::fmax(24.0f, trackHeight * trackHeight / contentHeight);
+    const float travel = trackHeight - thumbHeight;
+    const float maxOffset = contentHeight - trackHeight;
+    const float thumbY = body.y + travel * (maxOffset > 0.0f ? clampf(offset / maxOffset, 0.0f, 1.0f) : 0.0f);
+
+    ui.fillRect(body.x + body.width - kScrollWidth, body.y, kScrollWidth, trackHeight,
+                theme::panelDark);
+    ui.fillRect(body.x + body.width - kScrollWidth, thumbY, kScrollWidth, thumbHeight,
+                theme::textDim.scaled(0.55f));
+}
 
 // Case-insensitive substring match against a property label. The needle is folded
 // once here instead of once per comparison; str::lowerAscii is an inline range
@@ -35,15 +58,12 @@ bool labelMatches(const char* label, const TextField& filter) {
 } // namespace
 
 void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& window,
-                               int fbWidth, int fbHeight) {
-    const Rect dock = layout_.rightDock;
-    ui.fillRect(dock.x, dock.y, dock.width, dock.height, theme::panel);
-
+                               const Rect& dock) {
     // One header, one filter, one column of properties. The old second tab held
     // three static strings; it is a section at the bottom now instead of a tab
     // that hid the whole inspector behind it.
     ui.fillRect(dock.x, dock.y, dock.width, kHeaderHeight, theme::panelDark);
-    ui.text(dock.x + 8.0f, dock.y + 5.0f, text("tab.inspector"), theme::text);
+    ui.text(dock.x + 18.0f, dock.y + 5.0f, text("tab.inspector"), theme::text);
     ui.fillRect(dock.x, dock.y + kHeaderHeight - 1.0f, dock.width, 1.0f, theme::separator);
 
     float y = dock.y + kHeaderHeight + 4.0f;
@@ -60,24 +80,62 @@ void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
                     filterRect.height - 6.0f, theme::accent);
     y += filterRect.height + 6.0f;
 
+    // --- body: clipped to the dock and scrollable -------------------------
+    //
+    // The dock ends where the console begins, and a body with every section on it
+    // is taller than that. Without a clip the last sections were drawn straight
+    // over the console's level filters; without a scroll they were drawn but never
+    // reachable. So the body is a scissored region that follows the pointer's
+    // wheel, and a bar on the right edge shows how much of it is off screen.
+    const float bodyTop = y;
+    const Rect bodyRect{dock.x, bodyTop, dock.width,
+                        std::fmax(0.0f, dock.y + dock.height - bodyTop)};
+
+    const float maxScroll =
+        std::fmax(0.0f, inspectorContentHeight_ - bodyRect.height);
+    // Clamped against the height measured while drawing the previous frame: the
+    // total is only known once the sections have been laid out, and measuring
+    // twice would double the work of the one panel that redraws on every frame.
+    inspectorScroll_ = clampf(inspectorScroll_, 0.0f, maxScroll);
+    if (ui_.hovered(bodyRect) && ui_.scrollDelta() != 0.0)
+        inspectorScroll_ = clampf(inspectorScroll_ - (float)ui_.scrollDelta() * kScrollStep,
+                                  0.0f, maxScroll);
+
     const RigidBody* found = world.find(activeBody_);
     if (!found) {
-        drawEmptyInspector(ui, dock, y, fbWidth);
+        // Nothing selected: there is nothing long to scroll through.
+        inspectorScroll_ = 0.0f;
+        ui.pushClip(bodyRect);
+        drawEmptyInspector(ui, dock, bodyTop);
+        ui.popClip();
         return;
     }
 
+    // The bar takes its width out of the panel, so the sections are laid out in
+    // what is left - otherwise a numeric field ends up under the bar and its text
+    // stops one character early for no visible reason.
+    const bool needsBar = maxScroll > 0.5f;
+    const Rect innerDock{dock.x, dock.y, dock.width - (needsBar ? kScrollWidth : 0.0f),
+                         dock.height};
+
+    ui.pushClip(bodyRect);
+    float y2 = bodyTop - inspectorScroll_;
     RigidBody& body = world.bodies[(size_t)activeBody_];
-    drawTransformSection(ui, body, dock, y);
-    drawShapeSection(ui, body, dock, y);
-    drawMaterialSection(ui, body, dock, y);
-    drawFlagsSection(ui, body, dock, y);
-    drawAnchorSection(ui, body, dock, y);
-    drawStateSection(ui, world, body, dock, y);
-    drawNodeSection(ui, dock, y);
-    (void)fbHeight;
+    drawTransformSection(ui, body, innerDock, y2);
+    drawShapeSection(ui, body, innerDock, y2);
+    drawMaterialSection(ui, body, innerDock, y2);
+    drawFlagsSection(ui, body, innerDock, y2);
+    drawAnchorSection(ui, body, innerDock, y2);
+    drawStateSection(ui, world, body, innerDock, y2);
+    drawNodeSection(ui, innerDock, y2);
+    ui.popClip();
+
+    // A couple of pixels so the last row is not flush against the bottom edge.
+    inspectorContentHeight_ = y2 + inspectorScroll_ - bodyTop + 8.0f;
+    if (needsBar) drawScrollbar(ui, bodyRect, inspectorScroll_, inspectorContentHeight_);
 }
 
-void Editor::drawEmptyInspector(UiRenderer& ui, const Rect& dock, float y, int fbWidth) {
+void Editor::drawEmptyInspector(UiRenderer& ui, const Rect& dock, float y) {
     // Centred in the dock, and nothing that looks like a card floating in the
     // corner: an empty inspector should read as empty space.
     const char* title = text("inspector.nothing");
@@ -85,7 +143,6 @@ void Editor::drawEmptyInspector(UiRenderer& ui, const Rect& dock, float y, int f
     const float centreY = y + std::fmax(0.0f, (dock.height - (y - dock.y) - 40.0f) * 0.35f);
     ui.text(dock.x + (dock.width - ui.textWidth(title)) * 0.5f, centreY, title, theme::textDim);
     ui.textFit(dock.x + 8.0f, centreY + 20.0f, dock.width - 16.0f, hint, theme::textDim);
-    (void)fbWidth;
 }
 
 void Editor::drawTransformSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y) {

@@ -17,8 +17,11 @@ constexpr float kMinViewportSize = 120.0f;
 // "Scene" strip above the viewport, and the vertical tool column inside it.
 constexpr float kSceneHeaderHeight = 26.0f;
 constexpr float kToolStripWidth = 34.0f;
-// Console height under the viewport and the inspector.
+// Console height under the viewport and the inspector when it is docked there.
 constexpr float kConsoleHeight = 156.0f;
+// Height of a panel's title bar: the handle it is dragged by. Every panel uses the
+// same one, so a grip always sits in the same place on all of them.
+constexpr float kPanelHeaderHeight = 24.0f;
 // Fallback when no project is open: next to the binary.
 const char* const kDefaultSceneFile = "scene.txt";
 
@@ -43,6 +46,19 @@ Editor::Editor(MeshRegistry& meshes, i18n::Localizer& localizer)
     : meshes_(meshes), loc_(localizer) {
     filter_.id = kFilterField;
     toolbarSearch_.id = kToolbarSearch;
+    // Seeded from the theme metrics; the edges are the only thing that changes
+    // them afterwards.
+    leftWidth_ = theme::leftDockWidth;
+    rightWidth_ = theme::rightDockWidth;
+    bottomHeight_ = kConsoleHeight;
+    panels_[(int)PanelId::Hierarchy] = Panel{PanelZone::Left, Rect{}};
+    panels_[(int)PanelId::Inspector] = Panel{PanelZone::Right, Rect{}};
+    panels_[(int)PanelId::Console] = Panel{PanelZone::Bottom, Rect{}};
+    // Somewhere sensible to drop the first floating panel, so undocking never
+    // opens one off screen or one pixel wide.
+    panels_[(int)PanelId::Inspector].floatRect = Rect{520.0f, 120.0f, 300.0f, 320.0f};
+    panels_[(int)PanelId::Hierarchy].floatRect = Rect{60.0f, 120.0f, 260.0f, 300.0f};
+    panels_[(int)PanelId::Console].floatRect = Rect{300.0f, 380.0f, 560.0f, 160.0f};
 }
 
 bool Editor::consumeSingleStep() {
@@ -51,37 +67,281 @@ bool Editor::consumeSingleStep() {
     return requested;
 }
 
+// Where a panel in `zone` sits this frame. A zone nobody occupies is an empty
+// rect at the origin, so a panel that is floating does not keep an invisible claim
+// on the edge it came from.
+Rect Editor::zoneRect(PanelZone zone) const {
+    if (zone == PanelZone::Float) return Rect{};
+
+    const float width = (float)fbWidth_;
+    const float height = (float)fbHeight_;
+    const float top = theme::menuBarHeight;
+
+    // Occupancy, not identity: an edge is only as tall as it can be because of
+    // what else is docked. Asking "is anything in the bottom strip" is what keeps
+    // a right dock from running under the console.
+    bool leftTaken = false, bottomTaken = false;
+    for (int i = 0; i < kPanelCount; ++i) {
+        if (panels_[i].zone == PanelZone::Left) leftTaken = true;
+        else if (panels_[i].zone == PanelZone::Bottom) bottomTaken = true;
+    }
+
+    const float bottomY = height - (bottomTaken ? bottomHeight_ : 0.0f);
+    switch (zone) {
+    case PanelZone::Left:
+        return Rect{0.0f, top, leftWidth_, bottomY - top};
+    case PanelZone::Right:
+        return Rect{width - rightWidth_, top, rightWidth_, bottomY - top};
+    case PanelZone::Bottom: {
+        // Under the right dock as well, the way it always was: the console is the
+        // bottom of the window, not the bottom of the middle column.
+        const float x = leftTaken ? leftWidth_ : 0.0f;
+        return Rect{x, bottomY, width - x, bottomHeight_};
+    }
+    case PanelZone::Float:
+        break;
+    }
+    return Rect{};
+}
+
+Rect Editor::panelRect(PanelId id) const {
+    const Panel& panel = panels_[(int)id];
+    return panel.zone == PanelZone::Float ? panel.floatRect : zoneRect(panel.zone);
+}
+
+Rect Editor::panelHeader(PanelId id) const {
+    const Rect panel = panelRect(id);
+    return Rect{panel.x, panel.y, panel.width, kPanelHeaderHeight};
+}
+
+const char* Editor::panelTitle(PanelId id) const {
+    switch (id) {
+    case PanelId::Hierarchy: return text("tab.hierarchy");
+    case PanelId::Inspector: return text("tab.inspector");
+    case PanelId::Console: return text("tab.console");
+    case PanelId::PanelCount: break;
+    }
+    return "";
+}
+
+// Which zone the pointer is over. The edges win over the bottom strip, and the
+// middle of the scene means "float": dropping a panel there is the only way to
+// get one off the edges, exactly as dragging a dock out of a Unity window does.
+PanelZone Editor::zoneAt(float x, float y) const {
+    const float edge = std::fmin(200.0f, (float)fbWidth_ * 0.25f);
+    if (x <= edge) return PanelZone::Left;
+    if (x >= (float)fbWidth_ - edge) return PanelZone::Right;
+
+    const float strip = std::fmin(160.0f, (float)fbHeight_ * 0.28f);
+    if (y >= (float)fbHeight_ - strip) return PanelZone::Bottom;
+    return PanelZone::Float;
+}
+
+void Editor::commitPanelDrop() {
+    if (dragPanel_ < 0) return;
+    Panel& moving = panels_[dragPanel_];
+    const PanelZone target = dropZone_;
+
+    if (target == PanelZone::Float) {
+        // Kept inside the window: a panel dragged half off screen is a panel the
+        // user has to drag back to find.
+        Rect rect = dragRect_;
+        rect.width = std::fmin(rect.width, (float)fbWidth_ - 120.0f);
+        rect.height = std::fmin(rect.height, (float)fbHeight_ - 80.0f);
+        rect.x = clampf(rect.x, 0.0f, std::fmax(0.0f, (float)fbWidth_ - rect.width));
+        rect.y = clampf(rect.y, (float)theme::menuBarHeight,
+                        std::fmax(0.0f, (float)fbHeight_ - rect.height));
+        moving.zone = PanelZone::Float;
+        moving.floatRect = rect;
+    } else {
+        // Whoever is on the target edge goes where the dragged panel came from -
+        // a swap, which is what makes the edges feel like three places and not
+        // three slots.
+        for (int i = 0; i < kPanelCount; ++i) {
+            if (i == dragPanel_ || panels_[i].zone != target) continue;
+            if (moving.zone == PanelZone::Float) panels_[i].floatRect = moving.floatRect;
+            panels_[i].zone = moving.zone;
+        }
+        moving.zone = target;
+    }
+}
+
+void Editor::handlePanelDrag(PhysicsWorld& world) {
+    const float px = ui_.pointerX();
+    const float py = ui_.pointerY();
+
+    // --- resizing an edge, which is the other half of "move the panels" -----
+    if (resizePanel_ >= 0) {
+        if (ui_.pointerDown()) {
+            const PanelZone zone = panels_[resizePanel_].zone;
+            if (zone == PanelZone::Left)
+                leftWidth_ = clampf(resizeStartSize_ + (px - resizeStartPointer_), 180.0f,
+                                    520.0f);
+            else if (zone == PanelZone::Right)
+                rightWidth_ = clampf(resizeStartSize_ - (px - resizeStartPointer_), 180.0f,
+                                     520.0f);
+            else if (zone == PanelZone::Bottom)
+                bottomHeight_ = clampf(resizeStartSize_ - (py - resizeStartPointer_), 80.0f,
+                                       (float)fbHeight_ * 0.7f);
+        } else {
+            resizePanel_ = -1;
+        }
+        return;
+    }
+    if (ui_.pointerPressed()) {
+        for (int i = 0; i < kPanelCount; ++i) {
+            if (ui_.hovered(panelHeader((PanelId)i))) {
+                dragPanel_ = i;
+                const Rect header = panelHeader((PanelId)i);
+                dragGrabX_ = px - header.x;
+                dragGrabY_ = py - header.y;
+                dragRect_ = panelRect((PanelId)i);
+                dropZone_ = panels_[i].zone;
+                return;
+            }
+        }
+    }
+    if (dragPanel_ < 0) {
+        // Nothing grabbed: a press within a few pixels of a dock's inner edge
+        // starts a resize instead.
+        constexpr float kGrip = 5.0f;
+        for (int i = 0; i < kPanelCount; ++i) {
+            const PanelZone zone = panels_[i].zone;
+            if (zone == PanelZone::Float) continue;
+            const Rect panel = panelRect((PanelId)i);
+            const bool inside = px >= panel.x && px <= panel.x + panel.width &&
+                                py >= panel.y + kPanelHeaderHeight && py <= panel.y + panel.height;
+            if (!inside) continue;
+            if (zone == PanelZone::Left && std::fabs(px - (panel.x + panel.width)) <= kGrip) {
+                resizePanel_ = i;
+            } else if (zone == PanelZone::Right &&
+                       std::fabs(px - panel.x) <= kGrip) {
+                resizePanel_ = i;
+            } else if (zone == PanelZone::Bottom &&
+                       std::fabs(py - panel.y) <= kGrip) {
+                resizePanel_ = i;
+            }
+            if (resizePanel_ >= 0) {
+                resizeStartPointer_ = (zone == PanelZone::Bottom) ? py : px;
+                resizeStartSize_ = zone == PanelZone::Left  ? leftWidth_
+                                 : zone == PanelZone::Right ? rightWidth_
+                                                             : bottomHeight_;
+                return;
+            }
+        }
+        return;
+    }
+
+    // --- dragging ---------------------------------------------------------
+    dragRect_.x = px - dragGrabX_;
+    dragRect_.y = py - dragGrabY_;
+    dropZone_ = zoneAt(px, py);
+    if (ui_.pointerReleased()) {
+        commitPanelDrop();
+        dragPanel_ = -1;
+    }
+    (void)world;
+}
+
+// The grip in a panel's header, and the shadow under a floating one. Drawn by the
+// editor rather than by each panel so all three handles look the same and only
+// one thing has to change if that ever stops being true.
+void Editor::drawPanelChrome(UiRenderer& ui, PanelId id) {
+    const Rect header = panelHeader(id);
+    const bool floating = panels_[(int)id].zone == PanelZone::Float;
+
+    // Six dots in two columns: the grip every draggable window has.
+    for (int i = 0; i < 6; ++i) {
+        const float x = header.x + 7.0f + (float)(i % 2) * 4.0f;
+        const float y = header.y + header.height * 0.5f - 4.0f + (float)(i / 2) * 4.0f;
+        ui.fillRect(x, y, 1.5f, 1.5f, theme::textDim.scaled(0.7f));
+    }
+    if (floating) {
+        const Rect panel = panelRect(id);
+        // A border and a one-pixel shadow: without them a floating panel reads as
+        // a hole in the layout rather than a window over the scene. Edges only -
+        // filling the panel would paint over everything it just drew.
+        ui.fillRect(panel.x, panel.y, panel.width, 1.0f, theme::separator);
+        ui.fillRect(panel.x, panel.y + panel.height - 1.0f, panel.width, 1.0f,
+                    theme::separator);
+        ui.fillRect(panel.x, panel.y, 1.0f, panel.height, theme::separator);
+        ui.fillRect(panel.x + panel.width - 1.0f, panel.y, 1.0f, panel.height,
+                    theme::separator);
+        ui.fillRect(panel.x + 2.0f, panel.y + panel.height, panel.width, 2.0f,
+                    Color{0.0f, 0.0f, 0.0f, 0.35f});
+        ui.fillRect(panel.x + panel.width, panel.y + 2.0f, 2.0f, panel.height,
+                    Color{0.0f, 0.0f, 0.0f, 0.35f});
+    }
+}
+
+// Where a panel would land: the whole target zone washed with the accent, or the
+// panel itself following the pointer when it is about to float.
+void Editor::drawPanelDragFeedback(UiRenderer& ui) {
+    if (dragPanel_ >= 0) {
+        if (dropZone_ == PanelZone::Float) {
+            const Rect ghost = dragRect_;
+            ui.fillRect(ghost.x, ghost.y, ghost.width, ghost.height,
+                        Color{0.10f, 0.13f, 0.18f, 0.85f});
+            ui.fillRect(ghost.x, ghost.y, ghost.width, kPanelHeaderHeight, theme::accentDim);
+            ui.text(ghost.x + 10.0f, ghost.y + 5.0f,
+                    panelTitle((PanelId)dragPanel_), theme::text);
+            ui.fillRect(ghost.x, ghost.y, ghost.width, 1.0f, theme::accent);
+        } else {
+            const Rect zone = zoneRect(dropZone_);
+            ui.fillRect(zone.x, zone.y, zone.width, zone.height,
+                        Color{0.30f, 0.55f, 0.97f, 0.16f});
+            ui.fillRect(zone.x, zone.y, zone.width, 1.0f, theme::accent);
+            ui.fillRect(zone.x, zone.y + zone.height - 1.0f, zone.width, 1.0f, theme::accent);
+        }
+    }
+    // The resize handle: a two-pixel column on the edge that takes the drag, so it
+    // is findable without a hint.
+    if (resizePanel_ >= 0) {
+        const PanelZone zone = panels_[resizePanel_].zone;
+        const Rect panel = panelRect((PanelId)resizePanel_);
+        const bool hovered = std::fabs(ui_.pointerX() - (zone == PanelZone::Right ? panel.x
+                                                                  : panel.x + panel.width)) < 6.0f;
+        const Color tint = hovered ? theme::accent : theme::separator;
+        if (zone == PanelZone::Bottom)
+            ui.fillRect(panel.x, panel.y - 1.0f, panel.width, 2.0f, tint);
+        else if (zone == PanelZone::Left)
+            ui.fillRect(panel.x + panel.width - 1.0f, panel.y, 2.0f, panel.height, tint);
+        else
+            ui.fillRect(panel.x, panel.y, 2.0f, panel.height, tint);
+    }
+}
+
 void Editor::recomputeLayout(int fbWidth, int fbHeight) {
+    fbWidth_ = fbWidth;
+    fbHeight_ = fbHeight;
     const float width = (float)fbWidth;
     const float height = (float)fbHeight;
 
-    const float consoleH = std::fmin(kConsoleHeight, height * 0.34f);
-
     layout_.menuBar = Rect{0.0f, 0.0f, width, theme::menuBarHeight};
 
-    // The console spans the viewport and the inspector, not the whole window: the
-    // left column keeps its full height, which is what the sketch shows, and the
-    // console reaches the bottom of the window because there is no status bar under
-    // it any more.
-    const float consoleY = height - consoleH;
-    layout_.console = Rect{theme::leftDockWidth, consoleY,
-                           std::fmax(0.0f, width - theme::leftDockWidth), consoleH};
+    // Which edges are occupied decides the scene: a floating inspector gives its
+    // space back to the viewport, and an empty left edge moves the scene to x=0.
+    bool leftTaken = false, rightTaken = false, bottomTaken = false;
+    for (int i = 0; i < kPanelCount; ++i) {
+        switch (panels_[i].zone) {
+        case PanelZone::Left: leftTaken = true; break;
+        case PanelZone::Right: rightTaken = true; break;
+        case PanelZone::Bottom: bottomTaken = true; break;
+        case PanelZone::Float: break;
+        }
+    }
 
+    const float sceneLeft = leftTaken ? leftWidth_ : 0.0f;
+    const float sceneRight = rightTaken ? rightWidth_ : 0.0f;
     const float columnTop = theme::menuBarHeight;
-    const float columnH = std::fmax(0.0f, consoleY - columnTop);
+    const float sceneBottom = bottomTaken ? height - bottomHeight_ : height;
 
-    layout_.leftDock = Rect{0.0f, columnTop, theme::leftDockWidth, columnH};
-    layout_.rightDock = Rect{std::fmax(0.0f, width - theme::rightDockWidth), columnTop,
-                             theme::rightDockWidth, columnH};
-
-    const float viewX = theme::leftDockWidth;
-    const float viewW = std::fmax(kMinViewportSize,
-                                  width - theme::leftDockWidth - theme::rightDockWidth);
     const float headerH = kSceneHeaderHeight;
+    const float viewX = sceneLeft;
+    const float viewW = std::fmax(kMinViewportSize, width - sceneLeft - sceneRight);
     layout_.sceneHeader = Rect{viewX, columnTop, viewW, headerH};
-    layout_.viewport =
-        Rect{viewX, columnTop + headerH, viewW,
-             std::fmax(kMinViewportSize, consoleY - columnTop - headerH)};
+    layout_.viewport = Rect{viewX, columnTop + headerH, viewW,
+                            std::fmax(kMinViewportSize, sceneBottom - columnTop - headerH)};
     layout_.viewportTools = Rect{layout_.viewport.x + 4.0f, layout_.viewport.y + 4.0f,
                                  kToolStripWidth, 0.0f};
     layout_.viewportTools.height = std::max(0.0f, layout_.viewport.height - 8.0f);
@@ -189,6 +449,7 @@ void Editor::handleInput(PhysicsWorld& world, Camera& camera, Window& window, in
     viewRay_.valid = false;
     recomputeLayout(fbWidth, fbHeight);
     handleHotkeys(world, window);
+    handlePanelDrag(world);
     handleViewport(world, camera, window);
 }
 
@@ -328,8 +589,18 @@ void Editor::applyGizmoDrag(PhysicsWorld& world, Camera& camera) {
     float axisT = 0.0f, rayT = 0.0f;
     picking::closestOnAxis(rayOrigin, rayDir, dragOrigin_, axes[dragAxis_], axisT, rayT);
 
-    if (mode == gizmo::Mode::Move) {
-        body->position = dragOrigin_ + axes[dragAxis_] * (axisT - dragStartAxisT_);
+if (mode == gizmo::Mode::Move) {
+        Vec3 moved = dragOrigin_ + axes[dragAxis_] * (axisT - dragStartAxisT_);
+        // Snap on all three axes, not just the dragged one: a half-way position
+        // that rounds on the axis the hand is on and not on the others is the kind
+        // of thing that looks like a bug and is.
+        if (snapEnabled_) {
+            constexpr float kSnap = 0.25f;
+            moved.x = std::round(moved.x / kSnap) * kSnap;
+            moved.y = std::round(moved.y / kSnap) * kSnap;
+            moved.z = std::round(moved.z / kSnap) * kSnap;
+        }
+        body->position = moved;
     } else {
         float factor =
             std::fabs(dragStartAxisT_) < 1e-3f ? 1.0f : axisT / dragStartAxisT_;
@@ -351,6 +622,26 @@ void Editor::applyGizmoDrag(PhysicsWorld& world, Camera& camera) {
         }
     }
     body->wake();
+}
+
+// A five-pointed star, built from small squares along five rays.
+//
+// There is no star glyph in the atlas (ASCII and Cyrillic only) and the batcher
+// cannot rotate a rectangle, so the rays are walked one dot at a time: five rays
+// of four dots, which at row height is what a star has to look like anyway.
+void Editor::drawStar(UiRenderer& ui, float cx, float cy, float radius, const Color& tint) {
+    constexpr int kRays = 5;
+    constexpr int kDots = 5;
+    for (int ray = 0; ray < kRays; ++ray) {
+        // Straight up first, then every 72 degrees clockwise.
+        const float angle = -kPi * 0.5f + (float)ray * (2.0f * kPi / (float)kRays);
+        for (int dot = 1; dot <= kDots; ++dot) {
+            const float t = (float)dot / (float)kDots;
+            ui.fillRect(cx + std::cos(angle) * radius * t - 0.8f,
+                        cy + std::sin(angle) * radius * t - 0.8f, 1.7f, 1.7f, tint);
+        }
+    }
+    ui.fillRect(cx - 1.2f, cy - 1.2f, 2.4f, 2.4f, tint);
 }
 
 void Editor::handleViewport(PhysicsWorld& world, Camera& camera, Window& window) {
@@ -518,19 +809,58 @@ void Editor::renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Windo
     ui.begin(fbWidth, fbHeight);
 
     drawTopBar(ui, world, camera, window, fbWidth);
-    drawLeftColumn(ui, world, camera, window, fbWidth);
-    drawInspectorDock(ui, world, window, fbWidth, fbHeight);
-    drawSceneHeader(ui, world, camera);
+    drawSceneHeader(ui, world, camera, window);
     drawViewportTools(ui, camera);
-    drawConsolePanel(ui);
+    drawDockedPanels(ui, world, window);
+    // Floating panels go over everything that is docked: that is what floating
+    // means, and the drag that put one there is still in progress underneath.
+    drawFloatingPanels(ui, world, window);
     // Overlays last, and after a flush: the dropdowns hang over the panels below
     // the top bar, and the batcher emits every rectangle before any text, so
     // without the flush their background would land under their neighbours' labels.
     ui.flush();
     drawTopBarOverlay(ui, world, camera, window, fbWidth, fbHeight);
+    // Above even the overlays: it belongs to the pointer, not to the layout.
+    drawPanelDragFeedback(ui);
 
     ui.end();
     pruneSelection(world);
 }
 
+// The docked panels, in the order the eye meets them: the tree on the left, the
+// inspector on the right, the console under both. A panel that is floating is not
+// drawn here - it is drawn again over the scene, which is the only thing that
+// makes floating look different from docking.
+void Editor::drawDockedPanels(UiRenderer& ui, PhysicsWorld& world, Window& window) {
+    for (int i = 0; i < kPanelCount; ++i) {
+        if (panels_[i].zone == PanelZone::Float) continue;
+        drawPanelById(ui, world, window, (PanelId)i);
+    }
+}
+
+void Editor::drawFloatingPanels(UiRenderer& ui, PhysicsWorld& world, Window& window) {
+    for (int i = 0; i < kPanelCount; ++i) {
+        if (panels_[i].zone != PanelZone::Float) continue;
+        // While it is being dragged the ghost is drawn instead, so the panel does
+        // not run ahead of the pointer.
+        if (dragPanel_ == i) continue;
+        drawPanelById(ui, world, window, (PanelId)i);
+        drawPanelChrome(ui, (PanelId)i);
+    }
+}
+
+void Editor::drawPanelById(UiRenderer& ui, PhysicsWorld& world, Window& window, PanelId id) {
+    const Rect panel = panelRect(id);
+    ui.fillRect(panel.x, panel.y, panel.width, panel.height, theme::panel);
+    switch (id) {
+    case PanelId::Hierarchy: drawHierarchyDock(ui, world, window, panel); break;
+    case PanelId::Inspector: drawInspectorDock(ui, world, window, panel); break;
+    case PanelId::Console: drawConsolePanel(ui, panel); break;
+    case PanelId::PanelCount: break;
+    }
+    drawPanelChrome(ui, id);
+}
+
 } // namespace s3d
+
+
