@@ -157,21 +157,6 @@ void Editor::drawSceneHeader(UiRenderer& ui, PhysicsWorld& world, Camera& camera
         drawViewIcon(ui, rect, ViewIcon::Frame, theme::textDim);
     }
 
-    // The field of view is the one button that is a number rather than a mark, and
-    // showing the number is the point: it cycles through the three the manifest
-    // can hold.
-    static const float kFovValues[3] = {60.0f, 70.0f, 90.0f};
-    char fovLabel[8];
-    std::snprintf(fovLabel, sizeof(fovLabel), "%d", (int)kFovValues[perspectiveIndex_]);
-    const float fovWidth = std::fmax(kBarSize, ui.textWidth(fovLabel) + 12.0f);
-    {
-        const Rect rect = button(kSceneHeader + 43, fovWidth);
-        if (ui_.button(ui, kSceneHeader + 43, rect.x, rect.y, rect.width, rect.height, fovLabel)) {
-            perspectiveIndex_ = (perspectiveIndex_ + 1) % 3;
-            camera.fovDeg = kFovValues[perspectiveIndex_];
-        }
-    }
-
     {
         const Rect rect = button(kSceneHeader + 44, kBarSize);
         if (ui_.button(ui, kSceneHeader + 44, rect.x, rect.y, rect.width, rect.height, "",

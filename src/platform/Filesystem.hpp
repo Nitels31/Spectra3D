@@ -12,6 +12,11 @@ namespace fs {
 // Absolute directory containing the running executable ("" when unknown).
 const std::string& executableDir();
 
+// Full path of the running executable itself. "Build" stages this file, so it has
+// to be the real one and not a name guessed from the directory.
+const std::string& executablePath();
+
+
 // Makes the process working directory point at `exeDir/assets`, so runtime
 // files (logs, scenes) are written next to the binary instead of wherever the
 // user happened to launch it from.
@@ -46,6 +51,12 @@ std::vector<std::string> listFilesByExtension(const std::string& dir,
 bool readFile(const std::string& path, std::string& out);
 // Text mode, so line endings are native to the platform.
 bool writeFile(const std::string& path, const std::string& contents);
+
+// Copies `src` (a file or a whole directory) to `dst`, creating directories as
+// needed and overwriting what is there. The engine's "Build" is exactly this: the
+// player IS this executable, so a build is the binary plus its runtime files plus
+// the project, laid out somewhere the user can ship.
+bool copyTree(const std::string& src, const std::string& dst);
 
 // Deletes `path` and, when it is a directory, everything inside it, depth first.
 // Returns false when something could not be removed. Read-only files and
