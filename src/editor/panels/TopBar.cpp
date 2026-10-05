@@ -3,6 +3,7 @@
 #include "../../core/Log.hpp"
 #include "../../core/Project.hpp"
 #include "../../core/Str.hpp"
+#include "../../platform/Filesystem.hpp"
 #include "../../scene/BodyFactory.hpp"
 #include "../../ui/Theme.hpp"
 
@@ -136,9 +137,15 @@ void Editor::buildMenuRows() {
     auto close = [&](int menu) { menuFirst_[menu + 1] = at; };
 
     open(kMenuFile);
+    add(Action::NewScene, 0, text("file.newScene"));
+    add(Action::OpenScene, 0, text("file.openScene"));
     add(Action::Save, 0, text("file.save"));
-    add(Action::Load, 0, text("file.load"));
-    add(Action::Reload, 0, text("file.reload"));
+    add(Action::SaveAs, 0, text("file.saveAs"));
+    add(Action::NewProject, 0, text("file.newProject"));
+    add(Action::OpenProject, 0, text("file.openProject"));
+    add(Action::SaveProject, 0, text("file.saveProject"));
+    add(Action::BuildSettings, 0, text("file.buildSettings"));
+    add(Action::BuildRun, 0, text("file.buildRun"));
     add(Action::None, 0, nullptr, false, true);
     add(Action::Exit, 0, text("file.exit"));
     close(kMenuFile);
@@ -146,6 +153,7 @@ void Editor::buildMenuRows() {
     open(kMenuEdit);
     add(Action::Duplicate, 0, text("edit.duplicate"));
     add(Action::Delete, 0, text("edit.delete"));
+    add(Action::ToggleFavorite, 0, text("edit.favorite"));
     add(Action::None, 0, nullptr, false, true);
     add(Action::ClearSelection, 0, text("edit.clearSelection"));
     add(Action::Wake, 0, text("edit.wake"));
@@ -160,6 +168,11 @@ void Editor::buildMenuRows() {
     add(Action::None, 0, nullptr, false, true);
     add(Action::FrameSelection, 0, text("view.frame"));
     add(Action::ResetCamera, 0, text("view.resetCamera"));
+    add(Action::None, 0, nullptr, false, true);
+    // Which panels are on screen. Closed with the X in a panel's header, reopened
+    // from here - so "I do not need this panel" is one click and not a restart.
+    for (int i = 0; i < kPanelCount; ++i)
+        add(Action::TogglePanel, i, panelTitle((PanelId)i), panels_[i].open);
     close(kMenuView);
 
     open(kMenuCreate);
@@ -257,21 +270,102 @@ void Editor::frameSelection(PhysicsWorld& world, Camera& camera) {
     viewRay_.valid = false;
 }
 
+std::string Editor::projectDir() const {
+    // The scene path is "<projectDir>/scene.txt", so the directory is known without
+    // asking the application for the project.
+    const size_t slash = scenePath_.find_last_of("/\\");
+    return slash == std::string::npos ? std::string(".") : scenePath_.substr(0, slash);
+}
+
+void Editor::openModal(Modal dialog) {
+    modal_ = dialog;
+    modalRow_ = 0;
+    modalFiles_.clear();
+    switch (dialog) {
+    case Modal::NewScene:
+        modalField_.clear();
+        break;
+    case Modal::OpenScene:
+        // Every scene file in the project, so the dialog is a choice rather than a
+        // spelling test.
+        modalFiles_ = fs::listFilesByExtension(projectDir(), {".txt"});
+        modalField_.set("scene.txt");
+        break;
+    case Modal::SaveAs:
+        modalField_.set("scene.txt");
+        break;
+    case Modal::BuildSettings:
+        modalField_.set(str::join(projectDir(), "build").c_str());
+        break;
+    case Modal::SaveFirst:
+    case Modal::None:
+        break;
+    }
+}
+
+// Three of these commands throw the current scene away. With unsaved work in it,
+// the question comes first - and it is the whole point of asking: there is no
+// autosave here, and "New Scene" is one stray click away from an afternoon.
+void Editor::requestSceneChange(Modal dialog, PhysicsWorld& world) {
+    (void)world;
+    if (!sceneDirty_) {
+        openModal(dialog);
+        return;
+    }
+    switch (dialog) {
+    case Modal::NewScene: pendingAction_ = Pending::NewScene; break;
+    case Modal::OpenScene: pendingAction_ = Pending::OpenScene; break;
+    default: pendingAction_ = Pending::NewScene; break;
+    }
+    openModal(Modal::SaveFirst);
+}
+
+
+
 void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& camera,
                        Window& window) {
     switch (action) {
     case Action::None:
         break;
+    case Action::NewScene:
+        requestSceneChange(Modal::NewScene, world);
+        break;
+    case Action::OpenScene:
+        requestSceneChange(Modal::OpenScene, world);
+        break;
     case Action::Save:
         saveScene(world);
         break;
-    case Action::Load:
-        loadScene(world);
+    case Action::SaveAs:
+        openModal(Modal::SaveAs);
+        break;
+    case Action::NewProject:
+    case Action::OpenProject: {
+        // Unsaved work first, then back to the launcher, which owns the project
+        // list and the project settings.
+        const ShellRequest leave =
+            action == Action::NewProject ? ShellRequest::NewProject : ShellRequest::OpenProject;
+        if (sceneDirty_) {
+            pendingAction_ = Pending::LeaveProject;
+            pendingShell_ = leave;
+            openModal(Modal::SaveFirst);
+        } else {
+            shellRequest_ = leave;
+        }
+        break;
+    }
+    case Action::SaveProject:
+        shellRequest_ = ShellRequest::SaveProject;
+        break;
+    case Action::BuildSettings:
+        openModal(Modal::BuildSettings);
+        break;
+    case Action::BuildRun:
+        // No dialog: the path is the one the dialog would have shown, and "Build
+        // and Run" in Unity is the same button as Build plus a launch.
+        shellRequest_ = ShellRequest::BuildRun;
         break;
     case Action::Reload:
-        // Scene from disk and the model list from disk: both are "reload", and a
-        // model that was replaced underneath the editor is the case where a stale
-        // list is worse than a stale scene.
         assets_.refresh();
         loadScene(world);
         break;
@@ -290,6 +384,7 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         copy.velocity = {};
         copy.angularVelocity = {};
         world.bodies.push_back(copy);
+        markSceneDirty();
         const int index = (int)world.bodies.size() - 1;
         activeBody_ = index;
         selectedBodies_.assign(1, index);
@@ -305,6 +400,28 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         break;
     case Action::Wake:
         if (RigidBody* body = world.find(activeBody_)) body->wake();
+        break;
+    case Action::ToggleFavorite:
+        if (RigidBody* body = world.find(activeBody_)) {
+            body->favorite = !body->favorite;
+            markSceneDirty();
+        }
+        break;
+    case Action::TogglePanel:
+        if (param >= 0 && param < kPanelCount) {
+            Panel& panel = panels_[param];
+            panel.open = !panel.open;
+            // Reopening into an edge another open panel already holds would put two
+            // panels on one edge, so this one comes back floating instead - with the
+            // size and place it had when it was closed.
+            if (panel.open && panel.zone != PanelZone::Float) {
+                for (int i = 0; i < kPanelCount; ++i)
+                    if (i != param && panels_[i].open && panels_[i].zone == panel.zone) {
+                        panel.zone = PanelZone::Float;
+                        break;
+                    }
+            }
+        }
         break;
     case Action::Grid:
         showGrid_ = !showGrid_;

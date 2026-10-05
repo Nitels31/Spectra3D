@@ -7,14 +7,45 @@ menu.create=Створити
 menu.help=Довідка
 
 file.save=Зберегти сцену
+file.newScene=Нова сцена
+file.openScene=Відкрити сцену
+file.saveAs=Зберегти як...
+file.newProject=Новий проєкт...
+file.openProject=Відкрити проєкт...
+file.saveProject=Зберегти проєкт
+file.buildSettings=Параметри збірки...
+file.buildRun=Зібрати та запустити
 file.load=Завантажити сцену
 file.reload=Перечитати з диска
 file.exit=Вийти
 
 edit.duplicate=Дублювати об'єкт
 edit.delete=Видалити об'єкт
+edit.favorite=В обрані / прибрати з обраного
 edit.clearSelection=Зняти вибір
 edit.wake=Пробудити об'єкт
+
+modal.newScene=Нова сцена
+modal.newSceneHint=Поточна сцена буде очищена. Об'єкти, збережені на диску, залишаться.
+modal.openScene=Відкрити сцену
+modal.openSceneHint=Файли сцен у каталозі проєкту:
+modal.saveAs=Зберегти як
+modal.saveAsHint=Ім'я файлу в каталозі проєкту. Без розширення буде додано .txt.
+modal.saveFirst=Є незбережені зміни
+modal.saveFirstHint=Зберегти сцену перед тим, як продовжити?
+modal.buildSettings=Параметри збірки
+modal.buildHint=Збірка копіює виконуваний файл, бібліотеки та ресурси у вказаний каталог разом із проєктом.
+modal.buildStages=Що копіюється: програма, glfw3.dll, assets/ (мови й моделі), каталог проєкту.
+modal.file=Файл
+modal.buildPath=Каталог збірки
+modal.noScenes=У каталозі проєкту немає файлів сцен
+
+btn.open=Відкрити
+btn.save=Зберегти
+btn.dontSave=Не зберігати
+btn.build=Зібрати
+btn.cancel=Скасувати
+btn.create=Створити
 
 view.grid=Сітка
 view.vectors=Вектори

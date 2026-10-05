@@ -7,14 +7,45 @@ menu.create=Create
 menu.help=Help
 
 file.save=Save scene
+file.newScene=New Scene
+file.openScene=Open Scene
+file.saveAs=Save As...
+file.newProject=New Project...
+file.openProject=Open Project...
+file.saveProject=Save Project
+file.buildSettings=Build Settings...
+file.buildRun=Build and Run
 file.load=Load scene
 file.reload=Reload from disk
 file.exit=Exit
 
 edit.duplicate=Duplicate object
 edit.delete=Delete object
+edit.favorite=Favorite / unfavorite
 edit.clearSelection=Clear selection
 edit.wake=Wake object
+
+modal.newScene=New Scene
+modal.newSceneHint=The current scene will be emptied. What is already on disk stays there.
+modal.openScene=Open Scene
+modal.openSceneHint=Scene files in the project folder:
+modal.saveAs=Save As
+modal.saveAsHint=File name inside the project folder. .txt is added when missing.
+modal.saveFirst=Unsaved changes
+modal.saveFirstHint=Save the scene before going on?
+modal.buildSettings=Build Settings
+modal.buildHint=A build copies the executable, its runtime files and the assets into the folder below, together with the project.
+modal.buildStages=Staged: the program, glfw3.dll, assets/ (languages and models), the project folder.
+modal.file=File
+modal.buildPath=Build folder
+modal.noScenes=No scene files in the project folder
+
+btn.open=Open
+btn.save=Save
+btn.dontSave=Don't Save
+btn.build=Build
+btn.cancel=Cancel
+btn.create=Create
 
 view.grid=Grid
 view.vectors=Vectors

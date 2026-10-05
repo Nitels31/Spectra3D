@@ -3,7 +3,9 @@
 #include "../../core/Log.hpp"
 #include "../../core/Project.hpp"
 #include "../../core/Str.hpp"
+#include "../../platform/Filesystem.hpp"
 #include "../../render/GlInfo.hpp"
+#include "../../scene/SceneSerializer.hpp"
 #include "../../ui/Theme.hpp"
 
 #include <algorithm>
@@ -25,6 +27,56 @@ constexpr float kHelpLineHeight = 22.0f;
 
 constexpr int kMaxLayerRows = 12;
 constexpr int kMaxSearchRows = 8;
+
+// Dialogs: one centred panel, a title, fields, and two buttons at the bottom
+// right. Sized here rather than per dialog so every one of them has the same
+// frame and the same button positions.
+constexpr float kModalWidth = 460.0f;
+constexpr float kModalRowHeight = 22.0f;
+constexpr int kModalButton = 1700;
+
+// A dialog's explanation has to fit its dialog. One line that runs off the edge is
+// a sentence whose last words - usually the ones saying what is about to happen -
+// are the ones nobody reads, so the words wrap and the box below makes room.
+// Word wrapping, measured twice: once to learn how tall the text will be (the
+// dialog has to be sized before it can be drawn) and once to draw it. Both passes
+// walk the same words with the same widths, so they cannot disagree.
+const std::vector<std::string> wrapWords(const UiRenderer& ui, float maxWidth,
+                                         const char* utf8) {
+    std::vector<std::string> lines;
+    std::string line;
+    size_t at = 0;
+    const std::string_view all(utf8);
+    while (at <= all.size()) {
+        const size_t space = all.find(' ', at);
+        const std::string_view word = all.substr(
+            at, space == std::string_view::npos ? std::string_view::npos : space - at);
+        const std::string candidate =
+            line.empty() ? std::string(word) : line + " " + std::string(word);
+        if (!line.empty() && ui.textWidth(candidate.c_str()) > maxWidth) {
+            lines.push_back(line);
+            line = std::string(word);
+        } else {
+            line = candidate;
+        }
+        if (space == std::string_view::npos) break;
+        at = space + 1;
+    }
+    if (!line.empty()) lines.push_back(line);
+    return lines;
+}
+
+float wrappedHeight(const UiRenderer& ui, float maxWidth, const char* utf8) {
+    return (float)wrapWords(ui, maxWidth, utf8).size() * ((float)theme::textLineHeight + 4.0f);
+}
+
+float drawWrapped(UiRenderer& ui, float x, float y, float maxWidth, const char* utf8,
+                  const Color& tint) {
+    const std::vector<std::string> lines = wrapWords(ui, maxWidth, utf8);
+    for (size_t i = 0; i < lines.size(); ++i)
+        ui.text(x, y + (float)i * ((float)theme::textLineHeight + 4.0f), lines[i].c_str(), tint);
+    return (float)lines.size() * ((float)theme::textLineHeight + 4.0f);
+}
 
 // The two small toggles in a layers row. Drawn rather than typed: there is no
 // dependable glyph for an eye or a padlock, and a shape cannot go missing from
@@ -326,7 +378,7 @@ void Editor::drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& came
         }
     }
 
-    // --- search results -----------------------------------------------------
+// --- search results -----------------------------------------------------
     if (!toolbarSearch_.empty()) {
         MenuHit hits[kMaxSearchRows];
         const int found = findMenuRows(toolbarSearch_.text(), hits, kMaxSearchRows);
@@ -395,6 +447,225 @@ void Editor::drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& came
         closeOverlays();
         toolbarSearch_.clear();
     }
+}
+
+// --- dialogs ---------------------------------------------------------------
+//
+// Unity's File menu is mostly dialogs, so these are dialogs too rather than
+// messages that only say "ok": each one has the fields its command needs, and
+// its primary button does the command instead of acknowledging it.
+void Editor::drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int fbWidth,
+                       int fbHeight) {
+    if (modal_ == Modal::None) return;
+
+    const int listed = std::min(8, (int)modalFiles_.size());
+    // Heights are measured, not guessed: the wrapped hints differ between the two
+    // languages, and a dialog sized for one of them clips the other. Each case
+    // adds up what it draws and every case adds the same button strip below.
+    constexpr float kModalTop = 38.0f;       // title
+    constexpr float kModalButtons = 48.0f;  // button row plus the air above it
+    constexpr float kModalField = 44.0f;    // a labelled text field
+    const float wrapWidth = kModalWidth - 28.0f;
+    const auto hintHeight = [&](const char* key) { return wrappedHeight(ui, wrapWidth, text(key)); };
+
+    float height = kModalTop + kModalButtons;
+    std::string title, primary, secondary;
+    switch (modal_) {
+    case Modal::NewScene:
+        title = text("modal.newScene");
+        height += hintHeight("modal.newSceneHint");
+        break;
+    case Modal::OpenScene:
+        title = text("modal.openScene");
+        height += hintHeight("modal.openSceneHint") + (float)listed * kModalRowHeight + 16.0f +
+                  kModalField;
+        break;
+    case Modal::SaveAs:
+        title = text("modal.saveAs");
+        height += hintHeight("modal.saveAsHint") + kModalField;
+        break;
+    case Modal::BuildSettings:
+        title = text("modal.buildSettings");
+        height += hintHeight("modal.buildHint") + kModalField + hintHeight("modal.buildStages");
+        break;
+    case Modal::SaveFirst:
+        title = text("modal.saveFirst");
+        height += hintHeight("modal.saveFirstHint");
+        break;
+    case Modal::None:
+        return;
+    }
+
+    const float width = kModalWidth;
+    const Rect panel{(float)fbWidth * 0.5f - width * 0.5f, (float)fbHeight * 0.5f - height * 0.5f,
+                     width, height};
+    // The editor behind it is dimmed, not blocked by the pixels: a dialog that does
+    // not look modal is one the user keeps clicking past.
+    ui.fillRect(0.0f, 0.0f, (float)fbWidth, (float)fbHeight, Color{0.0f, 0.0f, 0.0f, 0.32f});
+    ui.fillRect(panel.x, panel.y, panel.width, panel.height, theme::panel);
+    ui.fillRect(panel.x, panel.y, panel.width, 1.0f, theme::accent);
+    ui.fillRect(panel.x, panel.y + panel.height - 1.0f, panel.width, 1.0f, theme::separator);
+    ui.text(panel.x + 14.0f, panel.y + 12.0f, title.c_str(), theme::accent);
+
+    float y = panel.y + kModalTop;
+    bool accept = false, cancel = false, discard = false;
+
+    // Label over an editable box: the same field the inspector uses, so typing,
+    // paste and caret behaviour are identical everywhere.
+    auto field = [&](const char* label) {
+        ui.text(panel.x + 14.0f, y + 2.0f, label, theme::textDim);
+        const Rect box{panel.x + 14.0f, y + 18.0f, panel.width - 28.0f, theme::fieldHeight};
+        ui_.pumpTextField(window, modalField_, ui_.hovered(box));
+        ui.fillRect(box.x, box.y, box.width, box.height,
+                    modalField_.editing ? theme::accent.scaled(0.3f) : theme::field);
+        ui.textFit(box.x + 6.0f, box.y + (box.height - theme::textLineHeight) * 0.5f,
+                   box.width - 12.0f, modalField_.text(), theme::text);
+        y += 44.0f;
+    };
+
+    const float textWidth = panel.width - 28.0f;
+    switch (modal_) {
+    case Modal::NewScene:
+        y += drawWrapped(ui, panel.x + 14.0f, y, textWidth, text("modal.newSceneHint"),
+                         theme::textDim);
+        primary = text("btn.create");
+        break;
+    case Modal::OpenScene: {
+        y += drawWrapped(ui, panel.x + 14.0f, y, textWidth, text("modal.openSceneHint"),
+                         theme::textDim);
+        for (int i = 0; i < listed; ++i) {
+            const std::string& path = modalFiles_[(size_t)i];
+            const Rect row{panel.x + 14.0f, y, panel.width - 28.0f, kModalRowHeight};
+            const bool hovered = ui_.hovered(row);
+            if (hovered) ui.fillRect(row.x, row.y, row.width, row.height, theme::header);
+            ui.textFit(row.x + 6.0f, row.y + 2.0f, row.width - 12.0f,
+                       str::fileNameView(path).data(), theme::text);
+            // Choosing a file fills the field and marks the row; opening it is the
+            // button, so a mis-click cannot replace the scene.
+            if (hovered && ui_.pointerPressed()) {
+                modalField_.set(str::fileName(path).c_str());
+                modalRow_ = i;
+            }
+            y += kModalRowHeight;
+        }
+        if (modalFiles_.empty())
+            ui.text(panel.x + 14.0f, y, text("modal.noScenes"), theme::textDim);
+        y += 16.0f;
+        field(text("modal.file"));
+        primary = text("btn.open");
+        break;
+    }
+    case Modal::SaveAs:
+        y += drawWrapped(ui, panel.x + 14.0f, y, textWidth, text("modal.saveAsHint"),
+                         theme::textDim);
+        field(text("modal.file"));
+        primary = text("btn.save");
+        break;
+    case Modal::BuildSettings:
+        y += drawWrapped(ui, panel.x + 14.0f, y, textWidth, text("modal.buildHint"),
+                         theme::textDim);
+        field(text("modal.buildPath"));
+        drawWrapped(ui, panel.x + 14.0f, y, textWidth, text("modal.buildStages"), theme::textDim);
+        primary = text("btn.build");
+        break;
+    case Modal::SaveFirst:
+        drawWrapped(ui, panel.x + 14.0f, y, textWidth, text("modal.saveFirstHint"),
+                    theme::textDim);
+        primary = text("btn.save");
+        secondary = text("btn.dontSave");
+        break;
+    case Modal::None:
+        return;
+    }
+
+    if (window.takeKeyPress(GLFW_KEY_ENTER)) accept = true;
+    if (window.takeKeyPress(GLFW_KEY_ESCAPE)) cancel = true;
+
+    const float buttonY = panel.y + panel.height - 32.0f;
+    if (!secondary.empty()) {
+        const Rect no{panel.x + panel.width - 226.0f, buttonY, 100.0f, 24.0f};
+        if (ui_.button(ui, kModalButton + 2, no.x, no.y, no.width, no.height, secondary.c_str()))
+            discard = true;
+    } else if (ui_.button(ui, kModalButton, panel.x + 14.0f, buttonY, 96.0f, 24.0f,
+                          text("btn.cancel"))) {
+        cancel = true;
+    }
+    const Rect ok{panel.x + panel.width - 112.0f, buttonY, 96.0f, 24.0f};
+    if (ui_.button(ui, kModalButton + 1, ok.x, ok.y, ok.width, ok.height, primary.c_str()))
+        accept = true;
+
+    if (cancel) {
+        modal_ = Modal::None;
+        return;
+    }
+    if (!accept && !discard) return;
+
+    switch (modal_) {
+    case Modal::NewScene:
+        world.clear();
+        activeBody_ = -1;
+        selectedBodies_.clear();
+        sceneDirty_ = true;
+        Log::info("Scene: new and empty");
+        break;
+    case Modal::OpenScene: {
+        std::string name = modalField_.text();
+        if (name.empty() && listed > 0) name = str::fileName(modalFiles_[(size_t)modalRow_]);
+        if (name.empty()) break;
+        scenePath_ = str::join(projectDir(), name);
+        loadScene(world);
+        break;
+    }
+    case Modal::SaveAs: {
+        std::string name = modalField_.text();
+        const size_t slash = name.find_last_of("/\\");
+        if (slash != std::string::npos) name = name.substr(slash + 1);
+        if (name.empty()) name = "scene.txt";
+        if (str::extensionView(name).empty()) name += ".txt";
+        // A name, not a path: "Save As" that could write outside the project is a
+        // way to lose a file, not a way to find one.
+        scenePath_ = str::join(projectDir(), name);
+        saveScene(world);
+        break;
+    }
+    case Modal::BuildSettings:
+        // Remembered, so the shell can stage the build wherever this dialog said.
+        buildFolder_ = modalField_.text();
+        shellRequest_ = ShellRequest::Build;
+        break;
+case Modal::SaveFirst: {
+        // Save and "Don't save" both mean "go ahead with what you asked"; they
+        // differ only in whether the scene reaches the disk on the way out.
+        const bool wanted = !discard;
+        if (wanted && !scenes::save(world, meshes_, scenePath()))
+            Log::error("Cannot write '%s' - going ahead anyway", scenePath());
+        if (wanted)
+            sceneDirty_ = false;
+
+        const Pending what = pendingAction_;
+        modal_ = Modal::None;
+        switch (what) {
+        case Pending::NewScene:
+            world.clear();
+            activeBody_ = -1;
+            selectedBodies_.clear();
+            sceneDirty_ = true;
+            Log::info("Scene: new and empty");
+            break;
+        case Pending::OpenScene:
+            openModal(Modal::OpenScene);
+            break;
+        case Pending::LeaveProject:
+            shellRequest_ = pendingShell_;
+            pendingShell_ = ShellRequest::None;
+            break;
+        }
+return;
+    }
+    case Modal::None:
+        break;
+    }
+    modal_ = Modal::None;
 }
 
 } // namespace s3d

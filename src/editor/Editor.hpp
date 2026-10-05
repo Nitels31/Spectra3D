@@ -104,6 +104,23 @@ public:
         return scenePath_.empty() ? "scene.txt" : scenePath_.c_str();
     }
 
+    // Saved the scene since it was last loaded or written. New Scene, Open Scene
+    // and New Project all ask about it first, because there is no autosave and
+    // nothing else stands between a stray click and an afternoon of work.
+    bool sceneDirty() const { return sceneDirty_; }
+    // The application owns gravity (it sets it from the manifest), so a keyboard
+    // axis change there has to be able to say "this is an edit".
+    void markSceneDirty() { sceneDirty_ = true; }
+    // The application owns the launcher, the manifest and the build, so the editor
+    // asks for those through this one-shot request instead of reaching for them.
+    enum class ShellRequest { None, NewProject, OpenProject, SaveProject, Build, BuildRun };
+    ShellRequest consumeShellRequest() {
+        return std::exchange(shellRequest_, ShellRequest::None);
+    }
+    // Where Build Settings says the build should go. Staging it is not the
+    // editor's business, so it only reports the folder and asks.
+    const std::string& buildFolder() const { return buildFolder_; }
+
     bool showVectors() const { return showVectors_; }
     bool showGrid() const { return showGrid_; }
     const EditorLayout& layout() const { return layout_; }
@@ -130,6 +147,28 @@ private:
     void recomputeLayout(int fbWidth, int fbHeight);
     void pruneSelection(const PhysicsWorld& world);
     void deleteSelection(PhysicsWorld& world);
+
+    // --- the dialogs Unity's File menu hangs off ---------------------------
+    // One modal at a time, drawn centred over the scene like the help pages. Each
+    // is a real command with a real result, not a message box that only says "ok".
+    enum class Modal { None, NewScene, OpenScene, SaveAs, BuildSettings, SaveFirst };
+    Modal modal_ = Modal::None;
+    // What a pending "save first?" is about to do once the answer is known.
+    enum class Pending { NewScene, OpenScene, LeaveProject };
+    Pending pendingAction_ = Pending::NewScene;
+    // Which way out was asked for when the answer to "save first?" arrives. Both
+    // New Project and Open Project leave for the launcher, but they are different
+    // commands and only one of them can be told apart again afterwards.
+    ShellRequest pendingShell_ = ShellRequest::None;
+    TextField modalField_;
+    // Scene files offered by the Open Scene dialog, snapshotted when it opens so
+    // the list cannot change under the click that is reading it.
+    std::vector<std::string> modalFiles_;
+    int modalRow_ = 0;
+
+    bool sceneDirty_ = false;
+    std::string buildFolder_;
+    ShellRequest shellRequest_ = ShellRequest::None;
 
     // Framebuffer size of the last layout pass: the drag code asks "is the pointer
     // near the left edge" and needs the window, not the panels.
@@ -202,10 +241,18 @@ private:
     // parameter and applying it is a single switch in one place.
     enum class Action {
         None,
+        // File, in the order Unity lists them.
+        NewScene,
+        OpenScene,
         Save,
-        Load,
-        Reload,
+        SaveAs,
+        NewProject,
+        OpenProject,
+        SaveProject,
+        BuildSettings,
+        BuildRun,
         Exit,
+        Reload,
         Duplicate,
         Delete,
         ClearSelection,
@@ -223,6 +270,11 @@ private:
         LayerSelect,
         LayerVisible,
         LayerLocked,
+        // Edit: the star, both from the row and from here, because a click on a
+        // 16 pixel target is not the only way a person should be able to say it.
+        ToggleFavorite,
+        // View: which panels are on screen at all.
+        TogglePanel,
     };
 
     // One row of a dropdown. `text` is borrowed: every label comes either from the
@@ -263,6 +315,14 @@ private:
 
     void runAction(Action action, int param, PhysicsWorld& world, Camera& camera, Window& window);
     void closeOverlays();
+    // Opens the modal for an action, or asks about unsaved work first when there is
+    // any: New Scene, Open Scene and New Project all throw the current scene away.
+    void requestSceneChange(Modal dialog, PhysicsWorld& world);
+    void openModal(Modal dialog);
+    
+    // The directory a Build writes to and the name a scene file gets, both derived
+    // from the open project so the defaults are right before the user types.
+    std::string projectDir() const;
     // Points the camera at the selection, far enough back that it fits.
     void frameSelection(PhysicsWorld& world, Camera& camera);
 
@@ -285,6 +345,9 @@ private:
     struct Panel {
         PanelZone zone = PanelZone::Left;
         Rect floatRect;
+        // Closed panels are not drawn and take no edge. The View menu brings them
+        // back: a panel that cannot be reopened is a panel that cannot be closed.
+        bool open = true;
     };
     Panel panels_[kPanelCount];
 
@@ -295,6 +358,10 @@ private:
     // overlap the panels below.
     void drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
                            int fbWidth, int fbHeight);
+    // The centred dialogs: New Scene, Open Scene, Save As, Build Settings and the
+    // "unsaved work" question they all ask first.
+    void drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int fbWidth,
+                   int fbHeight);
     void drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Window& window, const Rect& dock);
     void drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& window, const Rect& dock);
     void drawConsolePanel(UiRenderer& ui, const Rect& panel);
@@ -306,6 +373,7 @@ private:
     // preview is anchored to.
     Rect panelHeader(PanelId id) const;
     Rect panelRect(PanelId id) const;
+    Rect panelCloseRect(PanelId id) const;
     void drawPanelChrome(UiRenderer& ui, PanelId id);
     void handlePanelDrag(PhysicsWorld& world);
     void drawPanelDragFeedback(UiRenderer& ui);

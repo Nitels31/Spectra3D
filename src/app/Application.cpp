@@ -329,16 +329,138 @@ void Application::runProjectScripts() {
 void Application::runEditorFrame(float dt) {
     updateCameraInput(window_, dt);
 
+// Gravity is part of what gets saved with the scene, so picking an axis is an
+    // edit to the document, not a view setting.
     for (int i = 0; i < 6; ++i)
-        if (window_.takeKeyPress(GLFW_KEY_1 + i)) world_.setGravity(kGravityAxes[i]);
+        if (window_.takeKeyPress(GLFW_KEY_1 + i)) {
+            world_.setGravity(kGravityAxes[i]);
+            editor_->markSceneDirty();
+        }
 
-    editor_->handleInput(world_, camera_, window_, window_.framebufferWidth(),
+editor_->handleInput(world_, camera_, window_, window_.framebufferWidth(),
                          window_.framebufferHeight());
+
+    // File > New Project / Open Project hand the window back to the launcher,
+    // which is where a project list lives. Anything the editor cannot do by
+    // itself - leaving itself, writing a manifest, starting a process - is asked
+    // for here and answered by the shell around it.
+    switch (editor_->consumeShellRequest()) {
+    case Editor::ShellRequest::None:
+        break;
+    case Editor::ShellRequest::NewProject:
+    case Editor::ShellRequest::OpenProject:
+        closeProject();
+        break;
+    case Editor::ShellRequest::SaveProject:
+        if (!launcher_.projects().writeManifest(project_))
+            Log::error("Project: cannot write the manifest");
+        else
+            Log::info("Project '%s' saved", project_.name.c_str());
+        break;
+    case Editor::ShellRequest::Build:
+        stageBuild(editor_->buildFolder(), false);
+        break;
+    case Editor::ShellRequest::BuildRun:
+        stageBuild(editor_->buildFolder(), true);
+        break;
+    }
+
     if (editor_->consumeTimeReset()) simulationTime_ = 0.0;
     if (editor_->consumePlayStarted()) runProjectScripts();
 
     updateSimulation(dt);
     renderScene();
+}
+
+// A build of a project that ships itself: the running program, the runtime files
+// it needs beside it, the assets it loads, and the project itself. There is no
+// separate player binary to look for - this file IS the player - so "build" is a
+// staging folder that can be copied to another machine and run from there.
+bool Application::stageBuild(const std::string& target, bool alsoRun) {
+    if (target.empty()) {
+        Log::error("Build: no folder chosen");
+        return false;
+    }
+    const std::string exeDir = fs::executableDir();
+    if (exeDir.empty()) {
+        Log::error("Build: cannot locate the program folder");
+        return false;
+    }
+
+    // The program itself. copyTree handles a file as well as a folder, so the
+    // same call stages both without a second copy routine.
+    int copied = 0;
+    const std::string exe = fs::executablePath();
+    if (!exe.empty() && fs::copyTree(exe, str::join(target, str::fileName(exe)))) copied++;
+
+    // Whatever sits beside the program that is not a folder: the DLLs it loads at
+    // startup. Copying the listing rather than a hardcoded list keeps a new
+    // dependency from silently missing from the build. Only DLLs - a .txt next to
+    // the binary belongs to the build system, not to a build.
+    std::vector<fs::DirEntry> beside;
+    fs::listDirectoryEx(exeDir, beside);
+    for (const fs::DirEntry& entry : beside) {
+        if (entry.isDir) continue;
+        if (!str::equalsIgnoreAscii(str::extensionView(entry.name), ".dll")) continue;
+        if (fs::copyTree(str::join(exeDir, entry.name), str::join(target, entry.name))) copied++;
+    }
+
+    // Assets travel with the build: a build that starts and then finds no models
+    // and no language is a build that cannot be used.
+    const std::string assets = str::join(exeDir, "assets");
+    if (fs::isDirectory(assets) && fs::copyTree(assets, str::join(target, "assets"))) copied++;
+
+    // The project, entry by entry rather than as one tree, and into
+    // "<build>/project/<name>". The folder name is not decoration: a built program
+    // starts by asking the same "where are my projects" question the editor asks,
+    // and the answer it expects is "project" next to the binary. Copy the project
+    // anywhere else and the build runs to an empty launcher.
+    //
+    // Entry by entry because the default build folder is inside the project, so
+    // copying it wholesale would copy the build into itself - and each rebuild
+    // would double the size of the last one.
+    if (!project_.path.empty()) {
+        const std::string into = str::join(str::join(target, "project"), project_.name);
+        const std::string buildName = str::fileName(target);
+        std::vector<fs::DirEntry> entries;
+        if (fs::listDirectoryEx(project_.path, entries)) {
+            bool ok = true;
+            for (const fs::DirEntry& entry : entries) {
+                if (str::equalsIgnoreAscii(entry.name, buildName)) continue;
+                ok = fs::copyTree(str::join(project_.path, entry.name),
+                                  str::join(into, entry.name)) &&
+                     ok;
+            }
+            if (ok) copied++;
+        }
+    }
+
+    Log::info("Build: %d item(s) staged in '%s'", copied, target.c_str());
+
+    if (!alsoRun) return true;
+
+#if defined(_WIN32)
+    const std::string run = str::join(target, str::fileName(exe));
+    STARTUPINFOA si{};
+    PROCESS_INFORMATION pi{};
+    si.cb = sizeof(si);
+    std::string command = "\"" + run + "\"";
+    if (CreateProcessA(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, target.c_str(),
+                       &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        Log::info("Build: started '%s'", run.c_str());
+        return true;
+    }
+    Log::error("Build: cannot start '%s' (%lu)", run.c_str(), GetLastError());
+    return false;
+#else
+    // Elsewhere a shell does the same job; no window to steal focus from either.
+    const std::string run = str::join(target, str::fileName(exe));
+    if (std::system(("chmod +x '" + run + "' && '" + run + "' &").c_str()) == 0) return true;
+    Log::error("Build: cannot start '%s'", run.c_str());
+    return false;
+#endif
 }
 
 void Application::updateCameraInput(Window& window, float dt) {

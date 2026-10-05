@@ -58,6 +58,12 @@ private:
     // starts so scripts see a live world.
     void runProjectScripts();
 
+    // --- what File > Build does ---------------------------------------------
+    // The editor decides where the build goes; copying the program, its runtime
+    // files and the project into that folder, and starting the copy, is the
+    // shell's job. Returns false with the reason in the log when it cannot.
+    bool stageBuild(const std::string& target, bool alsoRun);
+
     Window window_;
     PhysicsWorld world_;
     MeshRegistry meshes_;

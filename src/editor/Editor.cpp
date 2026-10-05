@@ -79,9 +79,10 @@ Rect Editor::zoneRect(PanelZone zone) const {
 
     // Occupancy, not identity: an edge is only as tall as it can be because of
     // what else is docked. Asking "is anything in the bottom strip" is what keeps
-    // a right dock from running under the console.
+    // a right dock from running under the console. Closed panels are not there.
     bool leftTaken = false, bottomTaken = false;
     for (int i = 0; i < kPanelCount; ++i) {
+        if (!panels_[i].open) continue;
         if (panels_[i].zone == PanelZone::Left) leftTaken = true;
         else if (panels_[i].zone == PanelZone::Bottom) bottomTaken = true;
     }
@@ -106,12 +107,20 @@ Rect Editor::zoneRect(PanelZone zone) const {
 
 Rect Editor::panelRect(PanelId id) const {
     const Panel& panel = panels_[(int)id];
+    if (!panel.open) return Rect{};
     return panel.zone == PanelZone::Float ? panel.floatRect : zoneRect(panel.zone);
 }
 
 Rect Editor::panelHeader(PanelId id) const {
     const Rect panel = panelRect(id);
     return Rect{panel.x, panel.y, panel.width, kPanelHeaderHeight};
+}
+
+// The X in a panel's title bar. Both the drawing and the drag test ask the same
+// rectangle, so a click that closes a panel can never also start moving it.
+Rect Editor::panelCloseRect(PanelId id) const {
+    const Rect header = panelHeader(id);
+    return Rect{header.x + header.width - 22.0f, header.y + 2.0f, 20.0f, 20.0f};
 }
 
 const char* Editor::panelTitle(PanelId id) const {
@@ -190,6 +199,9 @@ void Editor::handlePanelDrag(PhysicsWorld& world) {
     }
     if (ui_.pointerPressed()) {
         for (int i = 0; i < kPanelCount; ++i) {
+            if (!panels_[i].open) continue;
+            // The X closes; anything else in the header drags.
+            if (ui_.hovered(panelCloseRect((PanelId)i))) continue;
             if (ui_.hovered(panelHeader((PanelId)i))) {
                 dragPanel_ = i;
                 const Rect header = panelHeader((PanelId)i);
@@ -207,7 +219,7 @@ void Editor::handlePanelDrag(PhysicsWorld& world) {
         constexpr float kGrip = 5.0f;
         for (int i = 0; i < kPanelCount; ++i) {
             const PanelZone zone = panels_[i].zone;
-            if (zone == PanelZone::Float) continue;
+            if (zone == PanelZone::Float || !panels_[i].open) continue;
             const Rect panel = panelRect((PanelId)i);
             const bool inside = px >= panel.x && px <= panel.x + panel.width &&
                                 py >= panel.y + kPanelHeaderHeight && py <= panel.y + panel.height;
@@ -248,7 +260,8 @@ void Editor::handlePanelDrag(PhysicsWorld& world) {
 // one thing has to change if that ever stops being true.
 void Editor::drawPanelChrome(UiRenderer& ui, PanelId id) {
     const Rect header = panelHeader(id);
-    const bool floating = panels_[(int)id].zone == PanelZone::Float;
+    const Panel& panel = panels_[(int)id];
+    const bool floating = panel.zone == PanelZone::Float;
 
     // Six dots in two columns: the grip every draggable window has.
     for (int i = 0; i < 6; ++i) {
@@ -256,20 +269,35 @@ void Editor::drawPanelChrome(UiRenderer& ui, PanelId id) {
         const float y = header.y + header.height * 0.5f - 4.0f + (float)(i / 2) * 4.0f;
         ui.fillRect(x, y, 1.5f, 1.5f, theme::textDim.scaled(0.7f));
     }
+
+    // The X that closes the panel. Closing it is one click, and the View menu
+    // brings it back, so "this panel is in the way" is not a layout problem.
+    const Rect close = panelCloseRect(id);
+    const bool closeHovered = ui_.hovered(close);
+    const Color tint = closeHovered ? theme::error : theme::textDim;
+    for (int i = 0; i < 5; ++i) {
+        const float o = 3.0f + (float)i * 2.6f;
+        ui.fillRect(close.x + o, close.y + o, 1.8f, 1.8f, tint);
+        ui.fillRect(close.x + 12.0f - o + 2.0f, close.y + o, 1.8f, 1.8f, tint);
+    }
+    if (closeHovered && ui_.pointerPressed()) {
+        panels_[(int)id].open = false;
+        return;
+    }
+
     if (floating) {
-        const Rect panel = panelRect(id);
+        const Rect rect = panelRect(id);
         // A border and a one-pixel shadow: without them a floating panel reads as
         // a hole in the layout rather than a window over the scene. Edges only -
         // filling the panel would paint over everything it just drew.
-        ui.fillRect(panel.x, panel.y, panel.width, 1.0f, theme::separator);
-        ui.fillRect(panel.x, panel.y + panel.height - 1.0f, panel.width, 1.0f,
+        ui.fillRect(rect.x, rect.y, rect.width, 1.0f, theme::separator);
+        ui.fillRect(rect.x, rect.y + rect.height - 1.0f, rect.width, 1.0f, theme::separator);
+        ui.fillRect(rect.x, rect.y, 1.0f, rect.height, theme::separator);
+        ui.fillRect(rect.x + rect.width - 1.0f, rect.y, 1.0f, rect.height,
                     theme::separator);
-        ui.fillRect(panel.x, panel.y, 1.0f, panel.height, theme::separator);
-        ui.fillRect(panel.x + panel.width - 1.0f, panel.y, 1.0f, panel.height,
-                    theme::separator);
-        ui.fillRect(panel.x + 2.0f, panel.y + panel.height, panel.width, 2.0f,
+        ui.fillRect(rect.x + 2.0f, rect.y + rect.height, rect.width, 2.0f,
                     Color{0.0f, 0.0f, 0.0f, 0.35f});
-        ui.fillRect(panel.x + panel.width, panel.y + 2.0f, 2.0f, panel.height,
+        ui.fillRect(rect.x + rect.width, rect.y + 2.0f, 2.0f, rect.height,
                     Color{0.0f, 0.0f, 0.0f, 0.35f});
     }
 }
@@ -323,6 +351,7 @@ void Editor::recomputeLayout(int fbWidth, int fbHeight) {
     // space back to the viewport, and an empty left edge moves the scene to x=0.
     bool leftTaken = false, rightTaken = false, bottomTaken = false;
     for (int i = 0; i < kPanelCount; ++i) {
+        if (!panels_[i].open) continue;
         switch (panels_[i].zone) {
         case PanelZone::Left: leftTaken = true; break;
         case PanelZone::Right: rightTaken = true; break;
@@ -367,8 +396,9 @@ void Editor::deleteSelection(PhysicsWorld& world) {
             Log::info("Body %d is locked", index);
             continue;
         }
-        Log::info("Deleted body %d", index);
+Log::info("Deleted body %d", index);
         world.remove(index);
+        markSceneDirty();
     }
     selectedBodies_.clear();
     activeBody_ = -1;
@@ -709,8 +739,11 @@ const Rect viewport = layout_.viewport;
         }
     }
 
-    if (ui_.pointerDown() && dragAxis_ >= 0 && world.find(activeBody_)) {
+if (ui_.pointerDown() && dragAxis_ >= 0 && world.find(activeBody_)) {
         applyGizmoDrag(world, camera);
+        // Every frame the hand is moving the body is a frame the scene has changed:
+        // this flag is what makes New Scene ask about the work before dropping it.
+        markSceneDirty();
         if (ui_.pointerReleased()) dragAxis_ = -1;
         return;
     }
@@ -764,8 +797,10 @@ void Editor::exitPlayMode(PhysicsWorld& world) {
 }
 
 void Editor::saveScene(const PhysicsWorld& world) {
-    if (scenes::save(world, meshes_, scenePath()))
+    if (scenes::save(world, meshes_, scenePath())) {
+        sceneDirty_ = false;
         Log::info(text("log.saved"), (int)world.bodies.size());
+    }
 }
 
 void Editor::loadScene(PhysicsWorld& world) {
@@ -773,6 +808,7 @@ void Editor::loadScene(PhysicsWorld& world) {
         return;
     activeBody_ = -1;
     selectedBodies_.clear();
+    sceneDirty_ = false;
     Log::info(text("log.loaded"), (int)world.bodies.size());
 }
 
@@ -820,7 +856,10 @@ void Editor::renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Windo
     // without the flush their background would land under their neighbours' labels.
     ui.flush();
     drawTopBarOverlay(ui, world, camera, window, fbWidth, fbHeight);
-    // Above even the overlays: it belongs to the pointer, not to the layout.
+    // A dialog is modal over everything, including the dropdowns: it is the only
+    // way to be sure the click that opened it cannot also land on the editor.
+    drawModal(ui, world, window, fbWidth, fbHeight);
+    // Above even the dialogs: it belongs to the pointer, not to the layout.
     drawPanelDragFeedback(ui);
 
     ui.end();
@@ -833,19 +872,18 @@ void Editor::renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Windo
 // makes floating look different from docking.
 void Editor::drawDockedPanels(UiRenderer& ui, PhysicsWorld& world, Window& window) {
     for (int i = 0; i < kPanelCount; ++i) {
-        if (panels_[i].zone == PanelZone::Float) continue;
+        if (!panels_[i].open || panels_[i].zone == PanelZone::Float) continue;
         drawPanelById(ui, world, window, (PanelId)i);
     }
 }
 
 void Editor::drawFloatingPanels(UiRenderer& ui, PhysicsWorld& world, Window& window) {
     for (int i = 0; i < kPanelCount; ++i) {
-        if (panels_[i].zone != PanelZone::Float) continue;
+        if (panels_[i].zone != PanelZone::Float || !panels_[i].open) continue;
         // While it is being dragged the ghost is drawn instead, so the panel does
         // not run ahead of the pointer.
         if (dragPanel_ == i) continue;
         drawPanelById(ui, world, window, (PanelId)i);
-        drawPanelChrome(ui, (PanelId)i);
     }
 }
 

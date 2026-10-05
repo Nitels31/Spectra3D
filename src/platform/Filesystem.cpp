@@ -36,6 +36,8 @@ namespace {
 
 std::string g_exeDir;
 std::string g_assetRoot;
+// The module path as the OS reported it, before the directory was cut off it.
+std::string g_exePath;
 
 #if defined(_WIN32)
 std::string wideToUtf8(const wchar_t* w, size_t len) {
@@ -102,12 +104,15 @@ void discoverAssetRoot() {
 
 const std::string& executableDir() { return g_exeDir; }
 
+const std::string& executablePath() { return g_exePath; }
+
 void adoptAssetWorkingDir() {
 #if defined(_WIN32)
     wchar_t buf[MAX_PATH];
     const DWORD len = GetModuleFileNameW(nullptr, buf, MAX_PATH);
     if (len > 0) {
-        g_exeDir = wideToUtf8(buf, len);
+        g_exePath = wideToUtf8(buf, len);
+        g_exeDir = g_exePath;
         const size_t slash = g_exeDir.find_last_of("/\\");
         if (slash != std::string::npos) g_exeDir = g_exeDir.substr(0, slash);
     }
@@ -117,7 +122,8 @@ void adoptAssetWorkingDir() {
     const ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (len > 0) {
         buf[len] = '\0';
-        g_exeDir = buf;
+        g_exePath = buf;
+        g_exeDir = g_exePath;
         const size_t slash = g_exeDir.find_last_of('/');
         if (slash != std::string::npos) g_exeDir = g_exeDir.substr(0, slash);
     }
@@ -257,6 +263,86 @@ bool writeFile(const std::string& path, const std::string& contents) {
     file.write(contents.data(), (std::streamsize)contents.size());
     file.flush();
     return (bool)file;
+}
+
+namespace {
+
+// Creates one directory level. Every level is created by hand because the OS calls
+// differ in whether they create the whole path or only the last component: the
+// Windows one creates only the leaf, and on a path that does not exist yet it
+// fails. A build target is normally asked for as "project/build", where "project"
+// exists - but a typed path does not have to.
+void makeDirectory(const std::string& path) {
+#if defined(_WIN32)
+    CreateDirectoryA(path.c_str(), nullptr);
+#else
+    mkdir(path.c_str(), 0777);
+#endif
+}
+
+bool hasParent(const std::string& path) {
+    const size_t slash = path.find_last_of("/\\");
+    return slash != std::string::npos && slash > 0;
+}
+
+// Every directory above `path`, created from the top down. Files cannot be written
+// into a folder that is not there, and a copy has to be able to reach the leaf
+// whether or not the user spelled out the path to it.
+void makeParents(const std::string& path) {
+    for (size_t slash = path.find_first_of("/\\"); slash != std::string::npos;
+         slash = path.find_first_of("/\\", slash + 1)) {
+        const std::string prefix = path.substr(0, slash);
+        if (prefix.empty() || isDirectory(prefix)) continue;
+        makeParents(prefix);
+        makeDirectory(prefix);
+    }
+}
+
+// One level of the copy: a file, or a directory and everything under it.
+bool copyEntry(const std::string& src, const std::string& dst, bool isDir) {
+    if (isDir && !isDirectory(dst)) {
+        makeParents(dst);
+        makeDirectory(dst);
+        if (!isDirectory(dst)) return false;
+    }
+    if (!isDir) {
+        // The destination folder has to exist even when src is a single file: a
+        // build target that has never been written to is not there yet.
+        makeParents(dst);
+#if defined(_WIN32)
+        if (CopyFileA(src.c_str(), dst.c_str(), FALSE) != 0) return true;
+        // A file already open for writing cannot be overwritten in place. It is
+        // copied aside and the original is replaced, which is what a rebuild of a
+        // folder that holds the running program needs.
+        const std::string aside = dst + ".new";
+        if (CopyFileA(src.c_str(), aside.c_str(), FALSE) == 0) return false;
+        if (!MoveFileExA(aside.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+            DeleteFileA(aside.c_str());
+            return false;
+        }
+        return true;
+#else
+        std::ifstream in(src, std::ios::binary);
+        if (!in) return false;
+        std::ofstream outFile(dst, std::ios::binary);
+        if (!outFile) return false;
+        outFile << in.rdbuf();
+        return (bool)outFile;
+#endif
+    }
+    std::vector<DirEntry> entries;
+    if (!listDirectoryEx(src, entries)) return false;
+    bool ok = true;
+    for (const DirEntry& entry : entries)
+        ok = copyEntry(str::join(src, entry.name), str::join(dst, entry.name), entry.isDir) && ok;
+    return ok;
+}
+
+} // namespace
+
+bool copyTree(const std::string& src, const std::string& dst) {
+    if (src.empty() || dst.empty() || !exists(src)) return false;
+    return copyEntry(src, dst, isDirectory(src));
 }
 
 namespace {
