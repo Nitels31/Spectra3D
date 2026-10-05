@@ -1,6 +1,7 @@
 #include "Window.hpp"
 
 #include "../core/Log.hpp"
+#include "../core/Project.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -114,6 +115,46 @@ HICON makeMarkIcon(int size) {
     // CreateIconIndirect copied what it needs; the source bitmap is ours to drop.
     DeleteObject(bitmap);
     return icon;
+}
+
+// The icon the build ships: `icon.ico` next to the binary, one file for the
+// window, the task bar and the exe.
+//
+// Built wide, from the running module's own path, and loaded with LoadImageW.
+// LoadImageW is the one icon loader whose prototype is the same everywhere, and
+// the wide path is what keeps a project folder with a non-ASCII name from being
+// the reason the window has no icon.
+//
+// Returns null when the file is missing, unreadable or not an icon. That is not
+// an error: makeMarkIcon() below is the fallback, which is why the mark is still
+// drawn here instead of being dropped in favour of the file.
+HICON loadShippedIcon(int width, int height) {
+    wchar_t path[MAX_PATH] = {};
+    const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return nullptr;
+
+    // Cut the file name off the module path, then append the icon's. The name
+    // comes from kAppIconFile so there is one literal for it; it is ASCII, which
+    // is what makes the widening below a cast instead of a conversion.
+    size_t at = 0;
+    for (size_t i = length; i > 0; --i) {
+        const wchar_t c = path[i - 1];
+        if (c != L'\\' && c != L'/') continue;
+        at = i;
+        break;
+    }
+    if (at == 0) return nullptr;  // no directory to put the icon in
+    const char* name = kAppIconFile;
+    for (const char* c = name; *c; ++c) {
+        if (at >= MAX_PATH - 1) return nullptr;
+        path[at++] = (wchar_t)(unsigned char)*c;
+    }
+    path[at] = L'\0';
+
+    // width and height are the size being asked for, and the loader hands back
+    // the entry closest to it - the shipped file carries 16, 32, 64, 128 and 256.
+    return static_cast<HICON>(LoadImageW(nullptr, path, IMAGE_ICON, width, height,
+                                        LR_LOADFROMFILE));
 }
 #endif  // _WIN32
 
@@ -231,8 +272,18 @@ void Window::applyIcon() {
     // Both sizes: the title bar asks for 16, the task bar button and Alt-Tab for
     // 32, and letting the shell stretch one bitmap into the other is what makes a
     // mark look blurry at one size and blocky at the other.
-    HICON small = makeMarkIcon(GetSystemMetrics(SM_CXSMICON) > 0 ? GetSystemMetrics(SM_CXSMICON) : 16);
-    HICON big = makeMarkIcon(GetSystemMetrics(SM_CXICON) > 0 ? GetSystemMetrics(SM_CXICON) : 32);
+    const int smallSize =
+        GetSystemMetrics(SM_CXSMICON) > 0 ? GetSystemMetrics(SM_CXSMICON) : 16;
+    const int bigSize = GetSystemMetrics(SM_CXICON) > 0 ? GetSystemMetrics(SM_CXICON) : 32;
+
+    // The shipped file first, the drawn mark as the fallback, per size: a file
+    // that is there but unreadable leaves the window with the mark instead of no
+    // icon at all, which is the whole reason both paths exist.
+    HICON small = loadShippedIcon(smallSize, smallSize);
+    HICON big = loadShippedIcon(bigSize, bigSize);
+    if (!small) small = makeMarkIcon(smallSize);
+    if (!big) big = makeMarkIcon(bigSize);
+
     if (small) {
         SendMessageW(handle, WM_SETICON, ICON_SMALL, (LPARAM)small);
         // Deliberately never destroyed: the shell keeps drawing these for the life

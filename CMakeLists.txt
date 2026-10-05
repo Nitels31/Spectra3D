@@ -91,7 +91,28 @@ endif()
 # Engine
 # ---------------------------------------------------------------------------
 
+# The application icon goes into the executable as well, so the .exe carries it in
+# Explorer and in the task bar before the window exists. That needs a resource
+# compiler, which not every toolchain has, so it is optional: where there is none
+# the window still gets the icon at runtime, and the file is still staged next to
+# the binary either way.
+set(SPECTRA_ICON "${CMAKE_CURRENT_SOURCE_DIR}/icon.ico")
+set(SPECTRA_ICON_RC "")
+if(WIN32 AND EXISTS "${SPECTRA_ICON}")
+    include(CheckLanguage)
+    check_language(RC)
+    if(CMAKE_RC_COMPILER)
+        enable_language(RC)
+        # Generated rather than kept in the tree: the only thing in it is the path
+        # to the icon, and a path belongs to the machine that built it.
+        file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/spectra.rc"
+             CONTENT "IDI_APP_ICON ICON \"${SPECTRA_ICON}\"\n")
+        set(SPECTRA_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/spectra.rc")
+    endif()
+endif()
+
 add_executable(spectra3d
+    ${SPECTRA_ICON_RC}
     src/app/main.cpp
     src/app/Application.cpp
     src/app/Launcher.cpp
@@ -195,6 +216,15 @@ endif()
 add_custom_command(TARGET spectra3d POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${SPECTRA_ASSETS}" "$<TARGET_FILE_DIR:spectra3d>/assets"
     COMMENT "Staging assets")
+
+# The icon is read from next to the binary at runtime (Window::applyIcon), so it
+# has to be there for a build that was moved or copied without its source tree.
+if(WIN32 AND EXISTS "${SPECTRA_ICON}")
+    add_custom_command(TARGET spectra3d POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SPECTRA_ICON}"
+                "$<TARGET_FILE_DIR:spectra3d>/icon.ico"
+        COMMENT "Staging the application icon")
+endif()
 
 # ---------------------------------------------------------------------------
 # Tools

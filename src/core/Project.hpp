@@ -25,6 +25,10 @@ inline constexpr const char* kProjectModelsDir = "models";
 // are two workspaces.
 inline constexpr const char* kEditorLayoutFile = "editorlayout.txt";
 inline constexpr const char* kSettingsFileName = "settings.ini";
+// The application icon, shipped next to the binary like settings.ini: one file
+// for the window, the task bar and the executable itself. A build that does not
+// have it still gets an icon - Window::applyIcon() draws one.
+inline constexpr const char* kAppIconFile = "icon.ico";
 
 // Languages a project can be tagged with. Deliberately not i18n::Language:
 // core must not depend on the localisation layer, so the launcher is the one
