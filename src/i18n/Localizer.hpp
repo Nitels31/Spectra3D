@@ -7,7 +7,7 @@
 namespace s3d {
 namespace i18n {
 
-enum class Language { English = 0, Ukrainian = 1 };
+enum class Language { English = 0, Ukrainian = 1, German = 2, French = 3 };
 
 // Byte-wise FNV-1a, used for both the stored keys and the `const char*` probes so
 // the two can never hash differently: std::hash is not specified to agree
@@ -35,8 +35,9 @@ using TextTable = std::unordered_map<std::string, std::string, TextHash, std::eq
 // reachable without going through that reference.
 class Localizer {
 public:
-    // Loads `assets/lang/en.lang` and `assets/lang/uk.lang` from the detected
-    // asset root. Missing files are reported and skipped.
+    // Loads every bundle in `assets/lang` (en, uk, de, fr) from the detected asset
+    // root. Missing files are reported and skipped, and the application keeps
+    // running in whatever it has.
     void loadBundles();
 
     void setLanguage(Language language);

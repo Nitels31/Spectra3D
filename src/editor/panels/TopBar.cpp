@@ -27,10 +27,6 @@ const char* const kShapeLabels[] = {"Box",      "Sphere",   "Cylinder", "Capsule
 constexpr int kShapeCount = (int)(sizeof(kShapeLabels) / sizeof(kShapeLabels[0]));
 static_assert(kShapeCount == 7, "one label per primitive in Shape, before Mesh");
 
-const float kPerspectiveValues[3] = {60.0f, 70.0f, 90.0f};
-const char* const kPerspectiveKeys[3] = {"vp.perspective60", "vp.perspective70",
-                                         "vp.perspective90"};
-
 // Case-insensitive substring test, `needle` folded once by the caller and
 // `haystack` folded here as it walks. An empty needle never matches, so an empty
 // search takes its own path instead of this one.
@@ -163,9 +159,10 @@ void Editor::buildMenuRows() {
     add(Action::Grid, 0, text("view.grid"), showGrid_);
     add(Action::Vectors, 0, text("view.vectors"), showVectors_);
     add(Action::None, 0, nullptr, false, true);
-    for (int i = 0; i < 3; ++i)
-        add(Action::Fov, i, text(kPerspectiveKeys[i]), perspectiveIndex_ == i);
-    add(Action::None, 0, nullptr, false, true);
+    // No field of view here, on purpose. It is a property of a game camera, and
+    // the editor camera has one job: look at the scene. Camera::fovDeg still
+    // exists, the project manifest still stores it and engine::setCameraFov still
+    // sets it for a game - none of that needs a button in a level editor.
     add(Action::FrameSelection, 0, text("view.frame"));
     add(Action::ResetCamera, 0, text("view.resetCamera"));
     add(Action::None, 0, nullptr, false, true);
@@ -431,12 +428,6 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         break;
     case Action::Vectors:
         showVectors_ = !showVectors_;
-        break;
-    case Action::Fov:
-        if (param >= 0 && param < 3) {
-            perspectiveIndex_ = param;
-            camera.fovDeg = kPerspectiveValues[param];
-        }
         break;
     case Action::FrameSelection:
         frameSelection(world, camera);

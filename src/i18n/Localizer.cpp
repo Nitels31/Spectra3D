@@ -15,7 +15,10 @@ struct Bundle {
     const char* fileName;
 };
 
-const Bundle kBundles[] = {{Language::English, "en.lang"}, {Language::Ukrainian, "uk.lang"}};
+const Bundle kBundles[] = {
+    {Language::English, "en.lang"}, {Language::Ukrainian, "uk.lang"},
+    {Language::German, "de.lang"}, {Language::French, "fr.lang"},
+};
 
 } // namespace
 
@@ -66,10 +69,20 @@ const char* Localizer::get(const char* key) const {
     return it == active_->end() ? key : it->second.c_str();
 }
 
+// The name in its own language, which is what a list of languages is for: a user
+// looking for their language looks for the word they call it by.
 const std::string& Localizer::languageName() const {
     static const std::string kEnglish = "English";
-    static const std::string kUkrainian = "Ukrainian";
-    return language_ == Language::Ukrainian ? kUkrainian : kEnglish;
+    static const std::string kUkrainian = "Українська";
+    static const std::string kGerman = "Deutsch";
+    static const std::string kFrench = "Français";
+    switch (language_) {
+    case Language::Ukrainian: return kUkrainian;
+    case Language::German: return kGerman;
+    case Language::French: return kFrench;
+    case Language::English:
+    default: return kEnglish;
+    }
 }
 
 } // namespace i18n

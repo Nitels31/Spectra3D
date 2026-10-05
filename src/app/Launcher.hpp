@@ -76,8 +76,6 @@ private:
         kBrowseButton = 1005,
         kApplyButton = 1006,
         kResetButton = 1007,
-        kLangEnglishButton = 1008,
-        kLangUkrainianButton = 1009,
         kRescanButton = 1010,
         kQuitButton = 1011,
         kPickerCancelButton = 1012,
@@ -86,6 +84,7 @@ private:
         kNewProjectButton = 1015,
         kThemeSelect = 1040,
         kFrameCapSelect = 1041,
+        kLanguageSelect = 1042,
 
         // Sidebar and tab strip are not clickable in the row sense, so they get
         // ids below kRowIdBase.

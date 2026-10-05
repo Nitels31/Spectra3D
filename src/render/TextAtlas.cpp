@@ -37,6 +37,18 @@ const unsigned kExtraCodePoints[8] = {0x404, 0x454, 0x406, 0x456,
                                       0x407, 0x457, 0x490, 0x491};
 constexpr int kFirstExtraSlot = 162;
 
+// Latin-1, appended after the Cyrillic blocks: German umlauts and the sharp s,
+// every French vowel and the cedilla. U+00C0..U+00FF is one contiguous run, so
+// it costs a pair of lines instead of another hand-written list.
+constexpr unsigned kLatin1FirstCp = 0xC0;
+constexpr unsigned kLatin1LastCp = 0xFF;
+constexpr int kLatin1FirstSlot = 170;
+
+// Outside Latin-1 and still inside what a UI sets in those two languages: the
+// French guillemets and the oe ligature, both capital and small.
+const unsigned kExtraLatin[4] = {0xAB, 0xBB, 0x152, 0x153};
+constexpr int kExtraLatinSlot = 234;
+
 } // namespace
 
 int TextAtlas::glyphIndex(unsigned cp) {
@@ -46,6 +58,10 @@ int TextAtlas::glyphIndex(unsigned cp) {
     if (cp >= 0x410 && cp <= 0x44F) return 96 + (int)(cp - 0x410);
     for (int i = 0; i < 8; ++i)
         if (cp == kExtraCodePoints[i]) return kFirstExtraSlot + i;
+    if (cp >= kLatin1FirstCp && cp <= kLatin1LastCp)
+        return kLatin1FirstSlot + (int)(cp - kLatin1FirstCp);
+    for (int i = 0; i < 4; ++i)
+        if (cp == kExtraLatin[i]) return kExtraLatinSlot + i;
     return -1;
 }
 
@@ -53,7 +69,10 @@ unsigned TextAtlas::codepointAt(int index) const {
     if (index < 96) return (unsigned)(32 + index);
     if (index == 160) return 0x401;
     if (index == 161) return 0x451;
-    if (index >= kFirstExtraSlot) return kExtraCodePoints[index - kFirstExtraSlot];
+    if (index >= kFirstExtraSlot && index < kLatin1FirstSlot)
+        return kExtraCodePoints[index - kFirstExtraSlot];
+    if (index >= kExtraLatinSlot) return kExtraLatin[index - kExtraLatinSlot];
+    if (index >= kLatin1FirstSlot) return kLatin1FirstCp + (unsigned)(index - kLatin1FirstSlot);
     return 0x410u + (unsigned)(index - 96);
 }
 

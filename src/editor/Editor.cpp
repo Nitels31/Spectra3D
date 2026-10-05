@@ -726,11 +726,16 @@ bool Editor::tryGizmoGrip(PhysicsWorld& world, Camera& camera) {
     gizmo::axesFor(*body, mode, axes);
 
     if (mode == gizmo::Mode::Rotate) {
-        // Remember where the pointer sat on the ring, in the ring's own frame, so
-        // the drag is a delta from that and not an absolute angle.
+        // Remember the orientation and the axis, and take the pointer's angle as
+        // the reference the first steps are measured from. The rings turn about
+        // world axes (see gizmo::axesFor), so `axes[dragAxis_]` stays put for the
+        // whole drag - which is what makes the steps below add up to a turn and
+        // not to a wander.
         dragStartOrientation_ = body->orientation;
-        rotateStartAngle_ = pointerAngleOnRing(rayOrigin, rayDir, *body, axes[dragAxis_],
-                                               pointerX, pointerY, camera);
+        rotateAxis_ = axes[dragAxis_];
+        rotateAccumulated_ = 0.0f;
+        rotateAngleValid_ =
+            ringScreenAngle(body->position, camera, rotateLastScreenAngle_);
         return true;
     }
 
@@ -740,31 +745,45 @@ bool Editor::tryGizmoGrip(PhysicsWorld& world, Camera& camera) {
     return true;
 }
 
-// Where the pointer ray crosses the plane the ring lies in, as an angle around
-// `axis`. Returns 0 when the ray is too close to parallel to that plane to give a
-// meaningful answer, which leaves the body where it was instead of spinning it.
-float Editor::pointerAngleOnRing(const Vec3& rayOrigin, const Vec3& rayDir,
-                                 const RigidBody& body, const Vec3& axis, float pointerX,
-                                 float pointerY, const Camera& camera) {
-    const float denominator = rayDir.x * axis.x + rayDir.y * axis.y + rayDir.z * axis.z;
-    if (std::fabs(denominator) < 1e-3f) return 0.0f;
+// Where the pointer stands on a ring, in screen space.
+//
+// Three bugs came out of measuring this in the world instead - the pointer ray
+// crossed against the ring's plane and the angle was read from there:
+//
+//   * atan2 wraps at +/-180 degrees, so a pointer that went round the far side of
+//     the ring produced a difference of a full turn and the body span once;
+//   * a ray almost parallel to that plane has no answer, and the answer it got
+//     was zero - the body jumped to whatever "zero degrees" meant;
+//   * near the edge of the ring a pixel of hand movement moved the intersection a
+//     long way, and the rotation jumped or stopped instead of following.
+//
+// Reading the angle on screen has none of those: the centre is a projection, the
+// angle is atan2 around it, and each frame contributes the shortest way round.
+// What is left - a ring seen exactly edge-on - is a line instead of a circle, and
+// that is what every editor does with it.
+bool Editor::ringScreenAngle(const Vec3& centre, const Camera& camera, float& angleOut) const {
+    const Rect viewport = layout_.viewport;
+    float cx = 0.0f, cy = 0.0f;
+    if (!picking::projectToViewport(centre, camera.position, viewRay_.forward, viewRay_.right,
+                                    viewRay_.up, viewRay_.tanX, viewRay_.tanY, viewport.width,
+                                    viewport.height, cx, cy))
+        return false;
 
-    const Vec3 toPlane = body.position - rayOrigin;
-    const float t = (toPlane.x * axis.x + toPlane.y * axis.y + toPlane.z * axis.z) / denominator;
-    if (t <= 0.0f) return 0.0f;
+    const float px = ui_.pointerX() - viewport.x;
+    const float py = ui_.pointerY() - viewport.y;
+    // Standing on the centre: the angle there is noise, and noise reads as a body
+    // that twitches while the hand is perfectly still.
+    if (std::fabs(px - cx) < 4.0f && std::fabs(py - cy) < 4.0f) return false;
 
-    const Vec3 hit = rayOrigin + rayDir * t - body.position;
-    Vec3 u, v;
-    gizmo::ringFrame(axis, u, v);
-    return std::atan2(hit.x * v.x + hit.y * v.y + hit.z * v.z,
-                      hit.x * u.x + hit.y * u.y + hit.z * u.z);
+    // Counter-clockwise positive, hence the flipped y: screen y grows downwards.
+    angleOut = std::atan2(cy - py, px - cx);
+    return true;
 }
 
 void Editor::applyGizmoDrag(PhysicsWorld& world, Camera& camera) {
     RigidBody* body = world.find(activeBody_);
     if (!body) return;
 
-    const Rect viewport = layout_.viewport;
     const Vec3 rayOrigin = camera.position;
     const Vec3 rayDir = viewportRay(camera);
 
@@ -775,15 +794,31 @@ void Editor::applyGizmoDrag(PhysicsWorld& world, Camera& camera) {
     gizmo::axesFor(*body, mode, axes);
 
     if (mode == gizmo::Mode::Rotate) {
-        // The pointer's angle around the axis now, minus where it started: a delta
-        // applied to the orientation the body had when the ring was grabbed.
-        const float angle = pointerAngleOnRing(rayOrigin, rayDir, *body, axes[dragAxis_],
-                                               ui_.pointerX() - viewport.x,
-                                               ui_.pointerY() - viewport.y, camera);
-        const float delta = angle - rotateStartAngle_;
-        if (std::fabs(delta) < 1e-4f) return;
+        float angle = 0.0f;
+        if (!ringScreenAngle(body->position, camera, angle)) return;  // no answer: hold still
+        float step = 0.0f;
+        if (rotateAngleValid_) {
+            // The hand went round the far side of the ring and the difference came
+            // out as a whole turn. Folded to the shortest way round, which is what
+            // "keep turning" means.
+            step = std::remainder(angle - rotateLastScreenAngle_, 2.0f * kPi);
+        }
+        rotateLastScreenAngle_ = angle;
+        rotateAngleValid_ = true;
+        if (std::fabs(step) < 1e-5f) return;
+
+        // Which way round depends on which way the axis faces. Looking down the
+        // +Z axis from the front, a positive turn is counter-clockwise on screen;
+        // looking at it from behind, the same turn is clockwise. The pointer's
+        // angle is measured counter-clockwise, so the two cases are one sign flip:
+        // an axis pointing away from the camera (into the screen, where the
+        // camera-to-object vector agrees with it) turns the other way round.
+        if (dot(rotateAxis_, body->position - camera.position) > 0.0f) step = -step;
+
+        rotateAccumulated_ += step;
         body->orientation =
-            (Quat::axisAngle(axes[dragAxis_], delta) * dragStartOrientation_).normalized();
+            (Quat::axisAngle(rotateAxis_, rotateAccumulated_) * dragStartOrientation_)
+                .normalized();
         body->wake();
         return;
     }

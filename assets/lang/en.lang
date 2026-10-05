@@ -147,10 +147,6 @@ console.warnings=Warnings
 console.errors=Errors
 console.info=Info
 
-vp.perspective60=FOV 60
-vp.perspective70=FOV 70
-vp.perspective90=FOV 90
-
 log.play=Entering play mode with %d bodies
 log.stop=Exited play mode
 log.saved=Scene saved with %d bodies
@@ -214,7 +210,9 @@ settings.browse=Browse...
 settings.apply=Apply
 settings.reset=Reset to default
 settings.languageEnglish=English
-settings.languageUkrainian=Ukrainian
+settings.languageUkrainian=Українська
+settings.languageGerman=Deutsch
+settings.languageFrench=Français
 settings.rescan=Rescan
 settings.chooseFolder=Choose projects folder
 settings.chooseHere=Use this folder

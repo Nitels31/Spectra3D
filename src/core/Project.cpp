@@ -137,7 +137,10 @@ bool containsTrailingSpaceOrDot(const std::string& name) {
 } // namespace
 
 LanguageTag languageFromCode(const std::string& code) {
-    return code == "uk" ? LanguageTag::Ukrainian : LanguageTag::English;
+    if (code == "uk") return LanguageTag::Ukrainian;
+    if (code == "de") return LanguageTag::German;
+    if (code == "fr") return LanguageTag::French;
+    return LanguageTag::English;
 }
 
 ThemeTag themeTagFromCode(const std::string& code) {

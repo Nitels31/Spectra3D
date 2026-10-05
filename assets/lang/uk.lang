@@ -147,10 +147,6 @@ console.warnings=Попередження
 console.errors=Помилки
 console.info=Інформація
 
-vp.perspective60=FOV 60
-vp.perspective70=FOV 70
-vp.perspective90=FOV 90
-
 log.play=Режим гри з %d тілами
 log.stop=Вихід з режиму гри
 log.saved=Сцену збережено з %d тілами
@@ -215,6 +211,8 @@ settings.apply=Застосувати
 settings.reset=Скинути
 settings.languageEnglish=Англійська
 settings.languageUkrainian=Українська
+settings.languageGerman=Deutsch
+settings.languageFrench=Français
 settings.rescan=Оновити
 settings.chooseFolder=Вибір папки проєктів
 settings.chooseHere=Взяти цю папку

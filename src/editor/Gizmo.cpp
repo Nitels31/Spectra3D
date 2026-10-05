@@ -25,7 +25,15 @@ constexpr float kRingPickRadius = 12.0f;
 
 void axesFor(const RigidBody& body, Mode mode, Vec3 out[3]) {
     for (int i = 0; i < 3; ++i) out[i] = kWorldAxes[i];
-    if (mode == Mode::Scale || mode == Mode::Rotate)
+    // Scale handles follow the body - scaling in the body's own frame is what you
+    // want, and a non-uniform body must be scaled along its own axes.
+    //
+    // Rotate rings do NOT. The axis a ring turns about has to be the same one
+    // before the drag, during it and after it: with local axes the ring swung
+    // around with the body, the angle was re-read in a frame that moved under the
+    // pointer, and the object turned the wrong way as soon as it was no longer
+    // axis-aligned. World axes, like the move handles.
+    if (mode == Mode::Scale)
         for (int i = 0; i < 3; ++i) out[i] = rotate(body.orientation, kWorldAxes[i]);
 }
 

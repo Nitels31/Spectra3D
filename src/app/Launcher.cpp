@@ -185,10 +185,17 @@ void Launcher::applySettings() {
     }
     projects_.setRoot(root);
 
-    // The one place the two language enums meet.
-    const i18n::Language language = settings_.language == LanguageTag::Ukrainian
-                                        ? i18n::Language::Ukrainian
-                                        : i18n::Language::English;
+    // The one place the two language enums meet. A switch, not a comparison per
+    // language: the lists are the same length by hand, and a missing case would
+    // show up as a silent fallback to English rather than as a compile error.
+    i18n::Language language = i18n::Language::English;
+    switch (settings_.language) {
+    case LanguageTag::Ukrainian: language = i18n::Language::Ukrainian; break;
+    case LanguageTag::German: language = i18n::Language::German; break;
+    case LanguageTag::French: language = i18n::Language::French; break;
+    case LanguageTag::English:
+    default: language = i18n::Language::English; break;
+    }
     if (loc_.language() != language) loc_.setLanguage(language);
 
     // ...and the one place the two theme enums meet.
@@ -696,21 +703,20 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
                    text("settings.reset")))
         applyRoot(Settings::defaultProjectRoot());
 
-    // Row 3: language.
+    // Row 3: language. A list, like the theme below it, because there are four of
+    // them now and a row of buttons would have to shrink the names to nothing.
     rowY += kRowHeight + 6.0f;
-    const bool ukrainian = settings_.language == LanguageTag::Ukrainian;
-    const float langW = buttonWidth(body.width, 0.32f, 120.0f);
-    const Rect english{body.x, rowY, langW, kRowHeight};
-    const Rect ukrainianButton{english.x + langW + 6.0f, rowY,
-                               std::fmax(0.0f, std::fmin(langW, body.width - langW - 6.0f)),
-                               kRowHeight};
-    if (ctx.button(ui, kLangEnglishButton, english.x, english.y, english.width, english.height,
-                   text("settings.languageEnglish"), !ukrainian))
-        setLanguage(LanguageTag::English);
-    if (ctx.button(ui, kLangUkrainianButton, ukrainianButton.x, ukrainianButton.y,
-                   ukrainianButton.width, ukrainianButton.height,
-                   text("settings.languageUkrainian"), ukrainian))
-        setLanguage(LanguageTag::Ukrainian);
+    const SelectItem languages[] = {
+        {text("settings.languageEnglish"), (int)LanguageTag::English},
+        {text("settings.languageUkrainian"), (int)LanguageTag::Ukrainian},
+        {text("settings.languageGerman"), (int)LanguageTag::German},
+        {text("settings.languageFrench"), (int)LanguageTag::French},
+    };
+    const int language = drawSelect(ui, ctx,
+                                    Rect{body.x, rowY, std::fmin(240.0f, body.width), kRowHeight},
+                                    text("settings.language"), languages, 4,
+                                    (int)settings_.language, kLanguageSelect, fbWidth);
+    if (language >= 0) setLanguage((LanguageTag)language);
 
     // Row 4: rescan + the root actually in use.
     rowY += kRowHeight + 6.0f;

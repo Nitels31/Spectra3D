@@ -6,12 +6,13 @@
 
 namespace s3d {
 
-// FreeType-backed glyph atlas for the editor UI. Covers printable ASCII plus the
-// Cyrillic range the localisation files need, which keeps the atlas at a fixed
-// 1024x1024 single page.
+// FreeType-backed glyph atlas for the editor UI. Covers printable ASCII, the
+// Cyrillic range the localisations need, and Latin-1 for German and French -
+// umlauts, accents, the cedilla, the guillemets - which keeps the atlas at a
+// fixed 1024x1024 single page.
 class TextAtlas {
 public:
-    static constexpr int kGlyphCount = 170;
+    static constexpr int kGlyphCount = 238;
     static constexpr int kPixelSize = 18;
 
     struct Glyph {

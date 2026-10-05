@@ -142,11 +142,12 @@ private:
     // --- input phases -------------------------------------------------------
     void handleHotkeys(PhysicsWorld& world, Window& window);
     void handleViewport(PhysicsWorld& world, Camera& camera, Window& window);
-    bool tryGizmoGrip(PhysicsWorld& world, Camera& camera);
-    // The pointer ray's angle around `axis` in the plane the rotate ring lies in.
-    float pointerAngleOnRing(const Vec3& rayOrigin, const Vec3& rayDir, const RigidBody& body,
-                             const Vec3& axis, float pointerX, float pointerY,
-                             const Camera& camera);
+        bool tryGizmoGrip(PhysicsWorld& world, Camera& camera);
+    // The pointer's angle around a ring, in screen space, measured about the ring's
+    // projected centre. False when there is no answer this frame - the centre is
+    // behind the camera, or the pointer is standing on it - which the caller reads
+    // as "no movement" and never as "no angle".
+    bool ringScreenAngle(const Vec3& centre, const Camera& camera, float& angleOut) const;
     void applyGizmoDrag(PhysicsWorld& world, Camera& camera);
     bool tryNavigationGizmo(Camera& camera);
     void handleSelectionClick(PhysicsWorld& world, const Vec3& rayOrigin,
@@ -297,7 +298,6 @@ private:
         Wake,
         Grid,
         Vectors,
-        Fov,
         FrameSelection,
         ResetCamera,
         Shape,
@@ -319,7 +319,7 @@ private:
     // localisation table or from the file list, and both outlive the frame.
     struct MenuRow {
         Action action = Action::None;
-        int param = 0;        // shape index, fov index, model index, body index
+        int param = 0;        // shape index, model index, body index
         const char* text = nullptr;
         bool checked = false;
         bool separator = false;
@@ -471,7 +471,6 @@ private:
     // Snap while dragging: the position lands on a quarter of a unit instead of
     // wherever the ray happened to hit. The magnet in the viewport toolbar.
     bool snapEnabled_ = false;
-    int perspectiveIndex_ = 1;
     // Console lives under the viewport and the inspector now, so it is always
     // there; these three are its level filters.
     bool consoleWarn_ = true;
@@ -508,10 +507,15 @@ private:
     Vec3 dragOrigin_;
     float dragStartAxisT_ = 0.0f;
     float dragStartScale_ = 1.0f;
-    // Rotate: the orientation and the pointer's angle around the axis when the
-    // grip was taken, so the body follows the ring instead of jumping to it.
+    // Rotate: the orientation the body had when the ring was grabbed, the axis it is
+    // turning about, and where the pointer stood on the ring. The turn is then
+    // built from screen-space steps, not from one absolute angle re-read every
+    // frame - see Editor::ringScreenAngle() for what that buys.
     Quat dragStartOrientation_;
-    float rotateStartAngle_ = 0.0f;
+    Vec3 rotateAxis_;
+    float rotateAccumulated_ = 0.0f;
+    float rotateLastScreenAngle_ = 0.0f;
+    bool rotateAngleValid_ = false;
     // Pan: the pointer and camera positions when the drag began.
     Vec3 panStartPointer_;
     Vec3 panStartCamera_;
