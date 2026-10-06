@@ -209,6 +209,7 @@ settings.projectRoot=Carpeta de proyectos
 settings.browse=Examinar...
 settings.apply=Aplicar
 settings.reset=Restablecer
+settings.language=Idioma
 settings.languageEnglish=English
 settings.languageUkrainian=Українська
 settings.languageGerman=Deutsch

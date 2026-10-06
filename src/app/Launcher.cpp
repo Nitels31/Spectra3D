@@ -595,11 +595,21 @@ void Launcher::drawNewProject(UiRenderer& ui, UiContext& ctx, Window& window, in
         setView(View::Projects);
 }
 
-int Launcher::drawSelect(UiRenderer& ui, UiContext& ctx, const Rect& rect, const char* caption,
-                         const SelectItem* items, int count, int current, int id, int fbWidth) {
+// The closed half of a dropdown: caption, current value, the arrow, and the hit
+// test that opens it. Drawn among the other rows; the list comes later.
+Launcher::SelectPaint Launcher::drawSelectField(UiRenderer& ui, UiContext& ctx, const Rect& rect,
+                                               const char* caption, const SelectItem* items,
+                                               int count, int current, int id, int fbWidth) {
     textClipRight_ = rect.x + rect.width;
     const Rect field{rect.x, rect.y + kTextHeight + 4.0f, rect.width, kFieldHeight + 6.0f};
-    if (field.width <= 0.0f || field.height <= 0.0f) return -1;
+
+    SelectPaint paint;
+    paint.field = field;
+    paint.items = items;
+    paint.count = count;
+    paint.current = current;
+    if (field.width <= 0.0f || field.height <= 0.0f) return paint;
+    paint.id = id;
 
     if (caption) drawText(ui, field.x, rect.y, caption, theme::textDim, fbWidth);
 
@@ -628,34 +638,50 @@ int Launcher::drawSelect(UiRenderer& ui, UiContext& ctx, const Rect& rect, const
         ui.fillRect(arrowX + 0.9f - inset, arrowY + (float)row * 1.2f, 1.8f + inset * 2.0f, 1.2f,
                     openSelect_ == id ? theme::text : theme::textDim);
     }
+    return paint;
+}
 
-    if (openSelect_ != id) return -1;
+// The open half, drawn after every row of the panel and after a flush: the batcher
+// emits every rectangle before any text, so without the flush the list's own
+// background would land under the labels drawn before it.
+int Launcher::drawSelectList(UiRenderer& ui, UiContext& ctx, const SelectPaint& paint,
+                             const Rect& bounds, int fbWidth) {
+    if (paint.id < 0 || openSelect_ != paint.id || paint.count <= 0) return -1;
 
     const float rowH = kRowHeight + 2.0f;
-    const Rect list{field.x, field.y + field.height + 2.0f, field.width, rowH * (float)count};
+    const float height = rowH * (float)paint.count;
+    const float below = paint.field.y + paint.field.height + 2.0f;
+    const float above = paint.field.y - 2.0f - height;
+    // Down when it fits, up when it does not. Six languages on a short panel do fit
+    // below; a long list near the bottom of the window does not, and one that runs
+    // off the screen edge is a list you cannot scroll to.
+    float y = below;
+    if (below + height > bounds.y + bounds.height && above >= bounds.y) y = above;
+    y = clampf(y, bounds.y, std::fmax(bounds.y, bounds.y + bounds.height - height));
+
+    const Rect list{paint.field.x, y, paint.field.width, height};
     ui.fillRect(list.x, list.y, list.width, list.height, theme::panel);
-    for (int i = 0; i < count; ++i) {
+    for (int i = 0; i < paint.count; ++i) {
         const Rect row{list.x, list.y + (float)i * rowH, list.width, rowH - 1.0f};
         const bool hovered = ctx.hovered(row);
-        const bool selected = items[i].value == current;
+        const bool selected = paint.items[i].value == paint.current;
         if (hovered) {
             ui.fillRect(row.x, row.y, row.width, row.height, theme::buttonHover);
-            ctx.markHovered(id + 100 + i);
+            ctx.markHovered(paint.id + 100 + i);
         }
         const Color color = selected ? theme::accent : theme::text;
-        drawText(ui, row.x + 8.0f, row.y + (row.height - kTextHeight) * 0.5f, items[i].label,
-                 color, fbWidth);
-        if (selected)
-            ui.fillRect(row.x + 2.0f, row.y, 2.0f, row.height, theme::accent);
+        drawText(ui, row.x + 8.0f, row.y + (row.height - kTextHeight) * 0.5f,
+                 paint.items[i].label, color, fbWidth);
+        if (selected) ui.fillRect(row.x + 2.0f, row.y, 2.0f, row.height, theme::accent);
 
         if (hovered && ctx.pointerPressed()) {
             openSelect_ = -1;
-            return items[i].value;
+            return paint.items[i].value;
         }
     }
 
     // A click outside the list closes it without choosing anything.
-    if (ctx.pointerPressed() && !ctx.hovered(list) && !fieldHovered) openSelect_ = -1;
+    if (ctx.pointerPressed() && !ctx.hovered(list) && !ctx.hovered(paint.field)) openSelect_ = -1;
     return -1;
 }
 
@@ -716,12 +742,11 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
         {text("settings.languageItalian"), (int)LanguageTag::Italian},
         {text("settings.languageSpanish"), (int)LanguageTag::Spanish},
     };
-    const int language = drawSelect(ui, ctx,
-                                    Rect{body.x, rowY, std::fmin(240.0f, body.width), kRowHeight},
-                                    text("settings.language"), languages,
-                                    (int)(sizeof(languages) / sizeof(languages[0])),
-                                    (int)settings_.language, kLanguageSelect, fbWidth);
-    if (language >= 0) setLanguage((LanguageTag)language);
+    const SelectPaint languagePaint =
+        drawSelectField(ui, ctx, Rect{body.x, rowY, std::fmin(240.0f, body.width), kRowHeight},
+                        text("settings.language"), languages,
+                        (int)(sizeof(languages) / sizeof(languages[0])),
+                        (int)settings_.language, kLanguageSelect, fbWidth);
 
     // Row 4: rescan + the root actually in use.
     rowY += kRowHeight + 6.0f;
@@ -738,19 +763,20 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
     const float selectW = std::fmin(220.0f, body.width);
     rowY += kRowHeight + 6.0f;
 
+    SelectPaint themePaint;
     const SelectItem themes[] = {
         {text("settings.themeDark"), (int)ThemeTag::Dark},
         {text("settings.themeLight"), (int)ThemeTag::Light},
         {text("settings.themeContrast"), (int)ThemeTag::Contrast},
     };
     if (rowY + kFieldHeight * 2.0f + 30.0f < body.y + body.height) {
-        const Rect rect{body.x, rowY, selectW, 0.0f};
-        const int chosen = drawSelect(ui, ctx, rect, text("settings.theme"), themes, 3,
-                                      (int)settings_.theme, kThemeSelect, fbWidth);
-        if (chosen >= 0) setTheme((theme::ThemeId)chosen);
+        themePaint = drawSelectField(ui, ctx, Rect{body.x, rowY, selectW, 0.0f},
+                                     text("settings.theme"), themes, 3, (int)settings_.theme,
+                                     kThemeSelect, fbWidth);
         rowY += kFieldHeight + kTextHeight + 16.0f;
     }
 
+    SelectPaint capPaint;
     const SelectItem caps[] = {
         {text("settings.fps30"), 30},
         {text("settings.fps60"), 60},
@@ -758,25 +784,36 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
         {text("settings.fpsOff"), 0},
     };
     if (rowY + kFieldHeight * 2.0f + 30.0f < body.y + body.height) {
-        const Rect rect{body.x, rowY, selectW, 0.0f};
-        const int chosen =
-            drawSelect(ui, ctx, rect, text("settings.frameCap"), caps, 4, settings_.frameRateCap,
-                       kFrameCapSelect, fbWidth);
-        if (chosen >= 0) setFrameRateCap(chosen);
+        capPaint = drawSelectField(ui, ctx, Rect{body.x, rowY, selectW, 0.0f},
+                                   text("settings.frameCap"), caps, 4,
+                                   settings_.frameRateCap, kFrameCapSelect, fbWidth);
         rowY += kFieldHeight + kTextHeight + 16.0f;
     }
     // Row 6: how many projects the current root yields, so an empty list has a
     // number attached to it instead of looking broken.
-    // The summary is below the selects and would paint straight over an open list,
-    // so it stays out of the way while one is showing.
     rowY += 6.0f;
-    if (openSelect_ < 0 && rowY + kRowHeight < body.y + body.height) {
+    if (rowY + kRowHeight < body.y + body.height) {
         char buffer[128];
         std::snprintf(buffer, sizeof(buffer), text("launcher.settingsSummary"),
                       (int)projects_.projects().size(), (int)settings_.recentProjects.size());
         drawText(ui, body.x, rowY + (kRowHeight - kTextHeight) * 0.5f, buffer, theme::textDim,
                  fbWidth);
     }
+
+    // The open list, last: over every row above it, and after a flush. Only one
+    // select can be open, so at most one of these draws anything.
+    const auto paintOpen = [&](const SelectPaint& paint) {
+        if (paint.id < 0 || openSelect_ != paint.id) return;
+        ui.flush();
+        const int chosen = drawSelectList(ui, ctx, paint, body, fbWidth);
+        if (chosen < 0) return;
+        if (paint.id == kLanguageSelect) setLanguage((LanguageTag)chosen);
+        else if (paint.id == kThemeSelect) setTheme((theme::ThemeId)chosen);
+        else if (paint.id == kFrameCapSelect) setFrameRateCap(chosen);
+    };
+    paintOpen(languagePaint);
+    paintOpen(themePaint);
+    paintOpen(capPaint);
 }
 
 void Launcher::drawAccount(UiRenderer& ui, UiContext& ctx, int fbWidth) {

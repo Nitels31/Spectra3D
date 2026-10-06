@@ -171,8 +171,27 @@ void toggleFavorite(int index);
         const char* label;
         int value;
     };
-    int drawSelect(UiRenderer& ui, UiContext& ctx, const Rect& rect, const char* caption,
-                   const SelectItem* items, int count, int current, int id, int fbWidth);
+
+    // A dropdown is drawn in two halves, and the split is not cosmetic. Drawn in
+    // one pass, the open list is painted where the row is and every row below it
+    // lands on top: a list with the theme and the frame-cap labels showing
+    // through it is a list nobody can click. So the field goes with the rest of
+    // the panel, and the list goes after all of it, with a flush.
+    struct SelectPaint {
+        Rect field;
+        const SelectItem* items = nullptr;  // borrowed; the caller keeps them alive
+        int count = 0;
+        int current = 0;
+        int id = -1;  // -1 when the row was not drawn at all
+    };
+    SelectPaint drawSelectField(UiRenderer& ui, UiContext& ctx, const Rect& rect,
+                                const char* caption, const SelectItem* items, int count,
+                                int current, int id, int fbWidth);
+    // The open list, over everything. Returns the chosen value or -1, and opens
+    // upwards when there is no room below - a list that runs off the bottom of
+    // the window cannot be reached with the mouse at all.
+    int drawSelectList(UiRenderer& ui, UiContext& ctx, const SelectPaint& paint,
+                       const Rect& bounds, int fbWidth);
 
     void setView(View view);
     const char* nameHint() const;

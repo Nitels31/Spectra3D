@@ -209,6 +209,7 @@ settings.projectRoot=Папка проєктів
 settings.browse=Оглянути...
 settings.apply=Застосувати
 settings.reset=Скинути
+settings.language=Мова
 settings.languageEnglish=Англійська
 settings.languageUkrainian=Українська
 settings.languageGerman=Deutsch

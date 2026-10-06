@@ -209,6 +209,7 @@ settings.projectRoot=Dossier des projets
 settings.browse=Parcourir...
 settings.apply=Appliquer
 settings.reset=Réinitialiser
+settings.language=Langue
 settings.languageEnglish=English
 settings.languageUkrainian=Українська
 settings.languageGerman=Deutsch
