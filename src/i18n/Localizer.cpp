@@ -18,6 +18,7 @@ struct Bundle {
 const Bundle kBundles[] = {
     {Language::English, "en.lang"}, {Language::Ukrainian, "uk.lang"},
     {Language::German, "de.lang"}, {Language::French, "fr.lang"},
+    {Language::Italian, "it.lang"}, {Language::Spanish, "es.lang"},
 };
 
 } // namespace
@@ -76,10 +77,14 @@ const std::string& Localizer::languageName() const {
     static const std::string kUkrainian = "Українська";
     static const std::string kGerman = "Deutsch";
     static const std::string kFrench = "Français";
+    static const std::string kItalian = "Italiano";
+    static const std::string kSpanish = "Español";
     switch (language_) {
     case Language::Ukrainian: return kUkrainian;
     case Language::German: return kGerman;
     case Language::French: return kFrench;
+    case Language::Italian: return kItalian;
+    case Language::Spanish: return kSpanish;
     case Language::English:
     default: return kEnglish;
     }

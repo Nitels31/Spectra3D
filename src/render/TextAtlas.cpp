@@ -44,9 +44,10 @@ constexpr unsigned kLatin1FirstCp = 0xC0;
 constexpr unsigned kLatin1LastCp = 0xFF;
 constexpr int kLatin1FirstSlot = 170;
 
-// Outside Latin-1 and still inside what a UI sets in those two languages: the
-// French guillemets and the oe ligature, both capital and small.
-const unsigned kExtraLatin[4] = {0xAB, 0xBB, 0x152, 0x153};
+// Outside Latin-1 and still inside what a UI sets in those languages: the French
+// guillemets, the oe ligature (both cases), and the Spanish opening marks - all
+// of which live below U+00C0 and would otherwise be one more range each.
+const unsigned kExtraLatin[6] = {0xAB, 0xBB, 0x152, 0x153, 0xA1, 0xBF};
 constexpr int kExtraLatinSlot = 234;
 
 } // namespace
@@ -60,7 +61,7 @@ int TextAtlas::glyphIndex(unsigned cp) {
         if (cp == kExtraCodePoints[i]) return kFirstExtraSlot + i;
     if (cp >= kLatin1FirstCp && cp <= kLatin1LastCp)
         return kLatin1FirstSlot + (int)(cp - kLatin1FirstCp);
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 6; ++i)
         if (cp == kExtraLatin[i]) return kExtraLatinSlot + i;
     return -1;
 }

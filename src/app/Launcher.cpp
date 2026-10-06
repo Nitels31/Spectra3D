@@ -193,6 +193,8 @@ void Launcher::applySettings() {
     case LanguageTag::Ukrainian: language = i18n::Language::Ukrainian; break;
     case LanguageTag::German: language = i18n::Language::German; break;
     case LanguageTag::French: language = i18n::Language::French; break;
+    case LanguageTag::Italian: language = i18n::Language::Italian; break;
+    case LanguageTag::Spanish: language = i18n::Language::Spanish; break;
     case LanguageTag::English:
     default: language = i18n::Language::English; break;
     }
@@ -703,7 +705,7 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
                    text("settings.reset")))
         applyRoot(Settings::defaultProjectRoot());
 
-    // Row 3: language. A list, like the theme below it, because there are four of
+    // Row 3: language. A list, like the theme below it, because there are six of
     // them now and a row of buttons would have to shrink the names to nothing.
     rowY += kRowHeight + 6.0f;
     const SelectItem languages[] = {
@@ -711,10 +713,13 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
         {text("settings.languageUkrainian"), (int)LanguageTag::Ukrainian},
         {text("settings.languageGerman"), (int)LanguageTag::German},
         {text("settings.languageFrench"), (int)LanguageTag::French},
+        {text("settings.languageItalian"), (int)LanguageTag::Italian},
+        {text("settings.languageSpanish"), (int)LanguageTag::Spanish},
     };
     const int language = drawSelect(ui, ctx,
                                     Rect{body.x, rowY, std::fmin(240.0f, body.width), kRowHeight},
-                                    text("settings.language"), languages, 4,
+                                    text("settings.language"), languages,
+                                    (int)(sizeof(languages) / sizeof(languages[0])),
                                     (int)settings_.language, kLanguageSelect, fbWidth);
     if (language >= 0) setLanguage((LanguageTag)language);
 

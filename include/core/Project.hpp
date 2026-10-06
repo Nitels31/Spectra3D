@@ -33,13 +33,15 @@ inline constexpr const char* kAppIconFile = "icon.ico";
 // Languages a project can be tagged with. Deliberately not i18n::Language:
 // core must not depend on the localisation layer, so the launcher is the one
 // place that translates between the two.
-enum class LanguageTag { English, Ukrainian, German, French };
+enum class LanguageTag { English, Ukrainian, German, French, Italian, Spanish };
 
 inline const char* languageCode(LanguageTag tag) {
     switch (tag) {
         case LanguageTag::Ukrainian: return "uk";
         case LanguageTag::German: return "de";
         case LanguageTag::French: return "fr";
+        case LanguageTag::Italian: return "it";
+        case LanguageTag::Spanish: return "es";
         case LanguageTag::English:
         default: return "en";
     }

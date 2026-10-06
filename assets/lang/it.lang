@@ -1,0 +1,236 @@
+# Spectra3D Italian UI strings
+
+menu.file=File
+menu.edit=Modifica
+menu.view=Visualizza
+menu.create=Crea
+menu.help=Aiuto
+
+file.save=Salva scena
+file.newScene=Nuova scena
+file.openScene=Apri scena
+file.saveAs=Salva come...
+file.newProject=Nuovo progetto...
+file.openProject=Apri progetto...
+file.saveProject=Salva progetto
+file.buildSettings=Impostazioni build...
+file.buildRun=Compila ed esegui
+file.load=Carica scena
+file.reload=Ricarica dal disco
+file.exit=Esci
+
+edit.duplicate=Duplica oggetto
+edit.delete=Elimina oggetto
+edit.favorite=Preferito / rimuovi dai preferiti
+edit.clearSelection=Annulla selezione
+edit.wake=Sveglia oggetto
+
+modal.newScene=Nuova scena
+modal.newSceneHint=La scena attuale verrà svuotata. Ciò che è già su disco resta lì.
+modal.openScene=Apri scena
+modal.openSceneHint=File di scena nella cartella del progetto:
+modal.saveAs=Salva come
+modal.saveAsHint=Nome del file nella cartella del progetto. Viene aggiunto .txt se manca.
+modal.saveFirst=Modifiche non salvate
+modal.saveFirstHint=Salvare la scena prima di continuare?
+modal.buildSettings=Impostazioni build
+modal.buildHint=Una build copia l'eseguibile, i suoi file di esecuzione e le risorse nella cartella qui sotto, insieme al progetto.
+modal.buildStages=Comprende: il programma, glfw3.dll, assets/ (lingue e modelli), la cartella del progetto.
+modal.file=File
+modal.buildPath=Cartella della build
+modal.noScenes=Nessun file di scena nella cartella del progetto
+
+btn.open=Apri
+btn.save=Salva
+btn.dontSave=Non salvare
+btn.build=Compila
+btn.cancel=Annulla
+btn.create=Crea
+
+view.grid=Griglia
+view.vectors=Vettori
+view.frame=Inquadra selezione
+view.resetCamera=Reimposta camera
+
+toolbar.search=Cerca comandi...
+toolbar.layers=Livelli
+toolbar.noMatches=Nessun comando di questo tipo
+
+layers.empty=La scena è vuota
+
+help.controls=Tastiera e mouse
+help.about=Informazioni
+help.close=Chiudi
+help.sceneFile=File di scena
+help.language=Lingua
+help.key.move=W A S D
+help.key.up=Spazio / C
+help.key.boost=Maiusc
+help.key.look=Tasto destro
+help.key.gravity=1 .. 6
+help.key.select=Tasto sinistro
+help.key.tools=Colonna sinistra
+help.desc.move=Volo: avanti, sinistra, destra, indietro
+help.desc.up=Salire e scendere
+help.desc.boost=Vola più veloce
+help.desc.look=Tieni premuto per guardarti intorno
+help.desc.gravity=Gravità lungo ogni asse
+help.desc.select=Seleziona un oggetto, Ctrl aggiunge alla selezione
+help.desc.tools=Seleziona, sposta, ruota, scala, panoramica
+
+btn.wake=Sveglia
+btn.delete_=Elimina
+
+tab.hierarchy=Gerarchia
+tab.inspector=Inspector
+tab.node=Nodo
+tab.console=Console
+tab.favorites=Preferiti
+tab.scene=Scena
+hierarchy.search=Cerca oggetti
+hierarchy.noMatches=Nessun risultato per il filtro
+favorites.empty=Ancora nessun preferito
+favorites.hint=Metti una stella su una riga della gerarchia per aggiungerla qui
+
+hier.sceneRoot=Root della scena
+sec.create=Crea
+sec.transform=Trasformazione
+sec.shape=Forma
+sec.material=Materiale
+sec.flags=Flag
+sec.anchor=Ancora
+sec.state=Stato
+
+assets.import=Importa modelli
+assets.noModels=Nessun modello trovato
+
+node.signals=Segnali
+node.onBodyEntered=All'ingresso di un corpo
+node.onSleepChanged=Al cambio di sonno
+node.noNode=Nessun nodo selezionato
+
+filter.placeholder=Filtro...
+
+inspector.nothing=Nessuna selezione
+inspector.click=Fai clic su un oggetto per esaminarlo
+
+prop.posX=Posizione X
+prop.posY=Posizione Y
+prop.posZ=Posizione Z
+prop.sx=Dimensione X
+prop.sy=Dimensione Y
+prop.sz=Dimensione Z
+prop.radius=Raggio
+prop.height=Altezza
+prop.baseRadius=Raggio base
+prop.sides=Lati
+prop.mass=Massa
+prop.friction=Attrito
+prop.bounce=Rimbalzo
+prop.density=Densità
+
+flag.static_=Statico
+flag.visible=Visibile
+flag.locked=Bloccato
+
+anchor.pinPosition=Fissa la posizione
+anchor.pinRotation=Fissa la rotazione
+anchor.spring=Molla
+anchor.setAtBody=Mettilo sul corpo
+
+state.velocity=Velocità
+state.sleeping=Addormentato
+state.active=Attivo
+
+bar.consoleEmpty=Console vuota
+console.warnings=Avvisi
+console.errors=Errori
+console.info=Info
+
+log.play=Ingresso in modalità play con %d corpi
+log.stop=Modalità play terminata
+log.saved=Scena salvata con %d corpi
+log.loaded=Scena caricata con %d corpi
+log.resumed=Ripreso
+log.paused_=In pausa
+
+launcher.newProject=Nuovo progetto
+launcher.create=Crea
+launcher.namePlaceholder=Nome del progetto
+launcher.nameHint=Da 3 a 48 caratteri: lettere, cifre, spazi, trattini
+launcher.nameTooShort=Almeno 3 caratteri
+launcher.nameTooLong=Al massimo 48 caratteri
+launcher.nameBadChars=Niente barre, punti o caratteri riservati
+launcher.nameTaken=Esiste già un progetto con questo nome
+launcher.nameOk=Pronto da creare
+launcher.openProject=Apri progetto
+launcher.projectCount=%d progetti
+launcher.noProjects=Nessun progetto in %s
+launcher.noProjectsHint=Creane uno a sinistra o indica un'altra cartella nelle impostazioni
+launcher.listTruncated=Scorri per altro
+launcher.hintList=Su/Giù seleziona, Invio apre
+launcher.open=Apri
+launcher.recent=Recenti
+launcher.noRecent=Non è stato aperto ancora nulla
+launcher.recentDropped=Rimosso un progetto recente che non esiste più
+launcher.settings=Impostazioni
+launcher.quit=Esci
+launcher.hints=Esc esce
+launcher.createFailed=Impossibile creare il progetto, vedi il log
+launcher.missingProject=Questo progetto non esiste più
+launcher.tabAll=Tutti
+launcher.tabFavorites=Preferiti
+launcher.navProjects=Progetti
+launcher.navAccount=Account
+launcher.cancel=Annulla
+launcher.delete=Elimina
+launcher.emptyTitle=Nessun progetto in %s
+launcher.emptyHint=Usa «Nuovo progetto» per crearne uno o scegli un'altra cartella nelle impostazioni
+launcher.noFavorites=Nessun progetto preferito
+launcher.noFavoritesHint=Segna un progetto con l'anello a sinistra per aggiungerlo qui
+launcher.deleteTitle=Elimina progetto
+launcher.deleteQuestion=Vuoi eliminare il progetto « %s »?
+launcher.deleteIrreversible=L'operazione è irreversibile.
+launcher.deleteOk=Ok
+launcher.deleteReturn=Torna
+launcher.deleteFailed=Impossibile eliminare il progetto, vedi il log
+launcher.hintNewProject=Invio crea, Esc torna indietro
+launcher.settingsSummary=%d progetti, %d recenti
+launcher.accountName=Utente
+launcher.accountLocal=Utente locale
+launcher.accountType=Sessione
+launcher.accountOffline=Offline, su questo computer
+launcher.accountEngine=Motore
+launcher.accountProjects=Progetti trovati
+launcher.accountRoot=Cartella dei progetti
+launcher.accountNote=Spectra3D funziona senza account: nulla viene caricato da nessuna parte.
+
+settings.projectRoot=Cartella dei progetti
+settings.browse=Sfoglia...
+settings.apply=Applica
+settings.reset=Reimposta
+settings.languageEnglish=English
+settings.languageUkrainian=Українська
+settings.languageGerman=Deutsch
+settings.languageFrench=Français
+settings.languageItalian=Italiano
+settings.languageSpanish=Español
+settings.rescan=Riesegui la scansione
+settings.chooseFolder=Scegli la cartella dei progetti
+settings.chooseHere=Usa questa cartella
+settings.chooseHereHint=Invio
+settings.cancel=Annulla
+settings.folderUnreadable=Questa cartella non può essere letta
+settings.folderTop=Sei già in cima
+settings.rootEmpty=Inserisci prima una cartella
+settings.rootChanged=La cartella è cambiata - applicala prima di creare
+settings.folderNoDialog=Questo sistema non ha una finestra di scelta delle cartelle, si usa il browser integrato
+settings.frameCap=Limite di fotogrammi
+settings.fps30=30 fps
+settings.fps60=60 fps
+settings.fps120=120 fps
+settings.fpsOff=Senza limite
+settings.theme=Tema
+settings.themeDark=Scuro
+settings.themeLight=Chiaro
+settings.themeContrast=Contrasto

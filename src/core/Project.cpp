@@ -140,6 +140,8 @@ LanguageTag languageFromCode(const std::string& code) {
     if (code == "uk") return LanguageTag::Ukrainian;
     if (code == "de") return LanguageTag::German;
     if (code == "fr") return LanguageTag::French;
+    if (code == "it") return LanguageTag::Italian;
+    if (code == "es") return LanguageTag::Spanish;
     return LanguageTag::English;
 }
 
