@@ -3,7 +3,7 @@
 
 #include <GL/gl.h>
 
-#include "../core/Math.hpp"
+#include "core/Math.hpp"
 
 namespace s3d {
 

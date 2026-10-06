@@ -1,7 +1,7 @@
-#include "TextAtlas.hpp"
+#include "render/TextAtlas.hpp"
 
-#include "../core/Log.hpp"
-#include "../core/Str.hpp"
+#include "core/Log.hpp"
+#include "core/Str.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H

@@ -1,8 +1,8 @@
 #pragma once
 #include <cstdint>
 
-#include "../core/Math.hpp"
-#include "Material.hpp"
+#include "core/Math.hpp"
+#include "physics/Material.hpp"
 
 namespace s3d {
 

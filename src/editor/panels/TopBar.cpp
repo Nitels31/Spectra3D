@@ -1,11 +1,11 @@
-#include "../Editor.hpp"
+#include "editor/Editor.hpp"
 
-#include "../../core/Log.hpp"
-#include "../../core/Project.hpp"
-#include "../../core/Str.hpp"
-#include "../../platform/Filesystem.hpp"
-#include "../../scene/BodyFactory.hpp"
-#include "../../ui/Theme.hpp"
+#include "core/Log.hpp"
+#include "core/Project.hpp"
+#include "core/Str.hpp"
+#include "platform/Filesystem.hpp"
+#include "scene/BodyFactory.hpp"
+#include "ui/Theme.hpp"
 
 #include <algorithm>
 #include <cmath>

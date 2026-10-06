@@ -1,8 +1,8 @@
-#include "../Editor.hpp"
+#include "editor/Editor.hpp"
 
-#include "../../core/Log.hpp"
-#include "../../core/Str.hpp"
-#include "../../ui/Theme.hpp"
+#include "core/Log.hpp"
+#include "core/Str.hpp"
+#include "ui/Theme.hpp"
 
 #include <algorithm>
 #include <cmath>

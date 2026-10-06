@@ -2,19 +2,19 @@
 #include <memory>
 #include <string>
 
-#include "../assets/MeshRegistry.hpp"
-#include "../core/Project.hpp"
-#include "../editor/Editor.hpp"
-#include "../i18n/Localizer.hpp"
-#include "../physics/PhysicsWorld.hpp"
-#include "../platform/Window.hpp"
-#include "../render/Camera.hpp"
-#include "../render/SceneRenderer.hpp"
-#include "../render/UiRenderer.hpp"
-#include "../script/ScriptHost.hpp"
-#include "../ui/UiContext.hpp"
-#include "FixedClock.hpp"
-#include "Launcher.hpp"
+#include "assets/MeshRegistry.hpp"
+#include "core/Project.hpp"
+#include "editor/Editor.hpp"
+#include "i18n/Localizer.hpp"
+#include "physics/PhysicsWorld.hpp"
+#include "platform/Window.hpp"
+#include "render/Camera.hpp"
+#include "render/SceneRenderer.hpp"
+#include "render/UiRenderer.hpp"
+#include "script/ScriptHost.hpp"
+#include "ui/UiContext.hpp"
+#include "app/FixedClock.hpp"
+#include "app/Launcher.hpp"
 
 namespace s3d {
 

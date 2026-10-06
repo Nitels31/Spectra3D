@@ -1,4 +1,4 @@
-#include "RigidBody.hpp"
+#include "physics/RigidBody.hpp"
 
 namespace s3d {
 

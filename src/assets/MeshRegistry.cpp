@@ -1,8 +1,8 @@
-#include "MeshRegistry.hpp"
+#include "assets/MeshRegistry.hpp"
 
-#include "../core/Log.hpp"
-#include "../core/Str.hpp"
-#include "MeshImport.hpp"
+#include "core/Log.hpp"
+#include "core/Str.hpp"
+#include "assets/MeshImport.hpp"
 
 namespace s3d {
 namespace {

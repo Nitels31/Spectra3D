@@ -1,6 +1,6 @@
-#include "SceneRenderer.hpp"
+#include "render/SceneRenderer.hpp"
 
-#include "../core/Math.hpp"
+#include "core/Math.hpp"
 
 #include <algorithm>
 

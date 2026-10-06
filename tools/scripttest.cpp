@@ -8,12 +8,12 @@
 // internals are poked at, so a passing run says the public contract holds rather
 // than that a particular private helper was reached.
 
-#include "../src/script/ScriptHost.hpp"
+#include "script/ScriptHost.hpp"
 
-#include "../src/assets/MeshRegistry.hpp"
-#include "../src/core/Log.hpp"
-#include "../src/physics/PhysicsWorld.hpp"
-#include "../src/render/Camera.hpp"
+#include "assets/MeshRegistry.hpp"
+#include "core/Log.hpp"
+#include "physics/PhysicsWorld.hpp"
+#include "render/Camera.hpp"
 
 #include <cstdio>
 #include <cstring>

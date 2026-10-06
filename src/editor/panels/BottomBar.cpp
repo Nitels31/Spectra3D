@@ -1,7 +1,7 @@
-#include "../Editor.hpp"
+#include "editor/Editor.hpp"
 
-#include "../../core/Log.hpp"
-#include "../../ui/Theme.hpp"
+#include "core/Log.hpp"
+#include "ui/Theme.hpp"
 
 #include <algorithm>
 #include <cstdio>

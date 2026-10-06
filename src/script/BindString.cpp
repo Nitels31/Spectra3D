@@ -1,6 +1,6 @@
-#include "Bindings.hpp"
+#include "script/Bindings.hpp"
 
-#include "BindString.hpp"
+#include "script/BindString.hpp"
 
 #if SPECTRA_SCRIPTING
 

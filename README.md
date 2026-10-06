@@ -14,14 +14,13 @@ ARCHITECTURE.md       шари, правила залежностей, випр�
 build_windows.bat     обгортка cmake
 build_linux.sh        обгортка cmake
 
-src/                 власний код, поділений за шарами
+src/                 реалізація (.cpp), поділена за шарами
   core/              Log, Str, Math, Project (Settings, ProjectLibrary, ProjectInfo)
   platform/          Window (GLFW + стан клавіатури/миші + очікування кадру),
                      Filesystem (в т.ч. removeTree і системний вибір папки)
   physics/           RigidBody, Material, PhysicsWorld (broadphase, солвер, сон)
-  assets/            MeshAsset, MeshRegistry, MeshImport, MeshUtil, loaders/{glb,obj,ply,fbx}
-  render/            Camera, Color, PrimitiveCache, TextAtlas, UiRenderer, SceneRenderer,
-                     GlInfo (запитана версія GL і версія драйвера)
+  assets/            MeshRegistry, MeshImport, loaders/{glb,obj,ply,fbx}
+  render/            SceneRenderer, UiRenderer, TextAtlas, PrimitiveCache, Camera
   ui/                Theme (палітри), UiContext
   scene/             BodyFactory, SceneSerializer
   i18n/              Localizer
@@ -29,16 +28,22 @@ src/                 власний код, поділений за шарами
   script/            ScriptHost, Bindings, BindEngine, BindScene, BindCamera, BindString
   app/               Application, Launcher, FixedClock, main
 
+include/             усі заголовки рушія, та сама розкладка шарів + json/
+  <шар>/*.hpp        Log.hpp, Camera.hpp, Editor.hpp, ... (усі .cpp пишуть
+                     #include "core/Log.hpp" - без ../)
+  json/json.hpp      header-only nlohmann/json, ціль spectra_json
+
 third_party/         glfw, cgltf, rapidobj, miniply, ufbx, freetype, angelscript
 assets/              lang/*.lang, models/*.{glb,obj,ply,fbx}
 tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp — окремі утиліти:
                       читання ассетів і перевірка скриптового шару (46 перевірок)
-build/               весь вивід: spectra3d.exe, glfw3.dll, engine.log, settings.ini,
-                     project/, копія assets/  (каталог у .gitignore)
+build/               весь вивід: spectra3d.exe, glfw3.dll, icon.ico, engine.log,
+                     settings.ini, project/, копія assets/  (каталог у .gitignore)
 ```
 
-Каталогу `include/` на верхньому рівні **немає**: усі заголовки лежать поруч із
-своїм `.cpp` у `src/`, а `#include` — відносні (`../core/Log.hpp`).
+У `include path` додається корінь `include/`, тому один і той самий заголовок
+пишеться однаково з будь-якого шару, з панелі редактора і з `tools/`, і жоден
+`#include` не ламається, коли файл переїжджає.
 
 `ARCHITECTURE.md` описує шари і правило залежностей. Коротко: залежності йдуть
 лише вгору — `core` ← `platform` ← `physics` ← `assets` ← `render`/`ui` ←

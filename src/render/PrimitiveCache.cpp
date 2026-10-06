@@ -1,4 +1,4 @@
-#include "PrimitiveCache.hpp"
+#include "render/PrimitiveCache.hpp"
 
 namespace s3d {
 namespace {

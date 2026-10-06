@@ -1,11 +1,11 @@
-#include "Application.hpp"
+#include "app/Application.hpp"
 
-#include "../core/Log.hpp"
-#include "../core/Str.hpp"
-#include "../platform/Filesystem.hpp"
-#include "../render/GlInfo.hpp"
-#include "../scene/SceneSerializer.hpp"
-#include "../ui/Theme.hpp"
+#include "core/Log.hpp"
+#include "core/Str.hpp"
+#include "platform/Filesystem.hpp"
+#include "render/GlInfo.hpp"
+#include "scene/SceneSerializer.hpp"
+#include "ui/Theme.hpp"
 
 #include <GL/gl.h>
 
@@ -16,6 +16,12 @@
 #include <thread>
 
 #if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 

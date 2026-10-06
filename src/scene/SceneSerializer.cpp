@@ -1,9 +1,9 @@
-#include "SceneSerializer.hpp"
+#include "scene/SceneSerializer.hpp"
 
-#include "../assets/MeshImport.hpp"
-#include "../core/Log.hpp"
-#include "../core/Str.hpp"
-#include "../platform/Filesystem.hpp"
+#include "assets/MeshImport.hpp"
+#include "core/Log.hpp"
+#include "core/Str.hpp"
+#include "platform/Filesystem.hpp"
 
 #include <algorithm>
 #include <cstdio>

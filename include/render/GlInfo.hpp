@@ -4,7 +4,7 @@
 
 #include <string>
 
-#include "../platform/Window.hpp"
+#include "platform/Window.hpp"
 
 namespace s3d {
 namespace gl {

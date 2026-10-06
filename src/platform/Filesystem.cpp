@@ -1,7 +1,7 @@
-#include "Filesystem.hpp"
+#include "platform/Filesystem.hpp"
 
-#include "../core/Log.hpp"
-#include "../core/Str.hpp"
+#include "core/Log.hpp"
+#include "core/Str.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -278,11 +278,6 @@ void makeDirectory(const std::string& path) {
 #else
     mkdir(path.c_str(), 0777);
 #endif
-}
-
-bool hasParent(const std::string& path) {
-    const size_t slash = path.find_last_of("/\\");
-    return slash != std::string::npos && slash > 0;
 }
 
 // Every directory above `path`, created from the top down. Files cannot be written

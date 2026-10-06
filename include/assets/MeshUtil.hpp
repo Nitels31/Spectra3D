@@ -1,5 +1,5 @@
 #pragma once
-#include "MeshAsset.hpp"
+#include "assets/MeshAsset.hpp"
 
 namespace s3d {
 

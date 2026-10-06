@@ -1,12 +1,22 @@
-#include "Window.hpp"
+#include "platform/Window.hpp"
 
-#include "../core/Log.hpp"
-#include "../core/Project.hpp"
+#include "core/Log.hpp"
+#include "core/Project.hpp"
 
 #include <cstdio>
 #include <cstring>
 
 #if defined(_WIN32)
+// windows.h trimmed here rather than from the command line: rapidobj.hpp defines
+// both macros unconditionally, and a -DNOMINMAX from the build is a different
+// definition of the same name - the build then warns about a header that is not
+// ours. Filesystem.cpp does the same around its own windows.h.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 // Ask for the native handle: glfw3native.h only declares glfwGetWin32Window - and
 // only pulls in windows.h - when this is defined before the include.
 #define GLFW_EXPOSE_NATIVE_WIN32

@@ -3,9 +3,9 @@
 
 #include <GL/gl.h>
 
-#include "Camera.hpp"
-#include "Color.hpp"
-#include "TextAtlas.hpp"
+#include "render/Camera.hpp"
+#include "render/Color.hpp"
+#include "render/TextAtlas.hpp"
 
 namespace s3d {
 

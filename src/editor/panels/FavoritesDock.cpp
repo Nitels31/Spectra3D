@@ -1,6 +1,6 @@
-#include "../Editor.hpp"
+#include "editor/Editor.hpp"
 
-#include "../../ui/Theme.hpp"
+#include "ui/Theme.hpp"
 
 #include <algorithm>
 #include <cstdio>

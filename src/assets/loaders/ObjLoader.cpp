@@ -1,9 +1,22 @@
-#include "../MeshImport.hpp"
+#include "assets/MeshImport.hpp"
 
-#include "../MeshUtil.hpp"
+#include "assets/MeshUtil.hpp"
 
 #include <utility>
 #include <vector>
+
+#if defined(_WIN32)
+// rapidobj.hpp includes windows.h and defines both macros unconditionally. MinGW's
+// libstdc++ has already defined NOMINMAX as 1, so that redefinition is the one
+// warning the build used to print about a header that is not ours. Dropping it
+// first makes the two definitions agree, and the macro stays defined either way -
+// which is all windows.h looks at when it decides whether to define min/max.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#undef NOMINMAX
+#define NOMINMAX
+#endif
 
 #include <rapidobj.hpp>
 

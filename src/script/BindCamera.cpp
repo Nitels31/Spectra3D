@@ -1,7 +1,7 @@
-#include "Bindings.hpp"
+#include "script/Bindings.hpp"
 
-#include "../core/Math.hpp"
-#include "../render/Camera.hpp"
+#include "core/Math.hpp"
+#include "render/Camera.hpp"
 
 #if SPECTRA_SCRIPTING
 

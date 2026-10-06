@@ -1,6 +1,6 @@
 #pragma once
-#include "../physics/PhysicsWorld.hpp"
-#include "../render/Camera.hpp"
+#include "physics/PhysicsWorld.hpp"
+#include "render/Camera.hpp"
 
 namespace s3d {
 

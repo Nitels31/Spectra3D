@@ -3,11 +3,11 @@
 
 #include <GL/gl.h>
 
-#include "../assets/MeshRegistry.hpp"
-#include "../physics/PhysicsWorld.hpp"
-#include "Camera.hpp"
-#include "Color.hpp"
-#include "PrimitiveCache.hpp"
+#include "assets/MeshRegistry.hpp"
+#include "physics/PhysicsWorld.hpp"
+#include "render/Camera.hpp"
+#include "render/Color.hpp"
+#include "render/PrimitiveCache.hpp"
 
 namespace s3d {
 

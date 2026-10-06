@@ -1,7 +1,7 @@
 #pragma once
 #include <cstddef>
 
-#include "../render/SceneRenderer.hpp"
+#include "render/SceneRenderer.hpp"
 
 namespace s3d {
 namespace theme {

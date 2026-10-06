@@ -1,6 +1,6 @@
-#include "BodyFactory.hpp"
+#include "scene/BodyFactory.hpp"
 
-#include "../core/Log.hpp"
+#include "core/Log.hpp"
 
 namespace s3d {
 namespace {

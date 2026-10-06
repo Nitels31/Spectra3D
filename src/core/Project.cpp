@@ -1,8 +1,8 @@
-#include "Project.hpp"
+#include "core/Project.hpp"
 
-#include "../core/Log.hpp"
-#include "../core/Str.hpp"
-#include "../platform/Filesystem.hpp"
+#include "core/Log.hpp"
+#include "core/Str.hpp"
+#include "platform/Filesystem.hpp"
 
 #include <algorithm>
 #include <cmath>

@@ -53,20 +53,23 @@
    тому єдиний активний `ScriptState` публікується через `activeState()`.
    Інстанс лише один: другий `Host::initialize()` відмовляє.
 3. **Жодних `namespace`- глобальних імен.** Увесь код у просторі `s3d`.
-4. **Власні заголовки поруч із кодом.** Каталогу `include/` на верхньому рівні
-   немає вже давно: `.hpp` лежить у тому ж каталозі, що й його `.cpp`, а всі
-   `#include` — відносні (`../core/Log.hpp`). У `include path` додається лише
-   корінь `src`, щоб можна було писати `core/Log.hpp`.
+4. **Заголовки — в `include/`, реалізація — в `src/`.** Каталог `include/` має
+   ту саму розкладку, що й `src/`: `include/core/Log.hpp` до
+   `src/core/Log.cpp`. У `include path` додається **корінь `include/`**, тому
+   будь-який файл пише `#include "core/Log.hpp"` — однаковий шлях з
+   `.cpp`, з іншого шару і з `tools/`, і жодних `../`, які ламаються, коли
+   файл переїжджає. Третє стороннє — `include/json/json.hpp` (header-only
+   nlohmann, ціль `spectra_json`), там самої.
 5. **Сторонні бібліотеки — в `third_party/`, дані — в `assets/`.** Корінь
    репозиторію тримає лише `CMakeLists.txt`, `README.md`, `ARCHITECTURE.md`,
-   `build_windows.bat`, `build_linux.sh`, `.gitignore` та каталоги `src/
-   third_party/ assets/ tools/ build/`. Каталог `build/` створює CMake і він
-   же у `.gitignore`.
+   `build_windows.bat`, `build_linux.sh`, `.gitignore`, `icon.ico` та каталоги
+   `src/ include/ third_party/ assets/ tools/ build/`. Каталог `build/` створює
+   CMake і він же у `.gitignore`.
 6. **`CMakeLists.txt` — єдине джерело правди для збірки.** `bat`/`sh` лише
    викликають CMake. Список файлів движка не дублюється; окремо лише
    `third_party/angelscript/source/*.cpp` береться `file(GLOB)`, бо там
    близько сотні файлів. Опції: `SPECTRA_SCRIPTING` (ON) і
-   `SPECTRA_BUILD_TOOLS` (ON).
+   `SPECTRA_BUILD_TOOLS` (OFF).
 
 ## Шари
 
@@ -76,7 +79,7 @@
 розширення) і `Project` (`Settings`, `ProjectLibrary`, `ProjectInfo`,
 константи назв файлів проєкту). Не залежать ні від чого, крім стандартної
 бібліотеки. `Project.cpp` — єдине місце, де `core` дозволяє собі `#include
-"../platform/Filesystem.hpp"`: перелік директорій і шлях до виконуваного файлу
+"platform/Filesystem.hpp"`: перелік директорій і шлях до виконуваного файлу
 потрібні і скануванню проєктів, і читанню/запису файлів.
 
 ### `platform`

@@ -2,8 +2,8 @@
 #include <cstdio>
 #include <cstring>
 
-#include "../platform/Window.hpp"
-#include "../render/UiRenderer.hpp"
+#include "platform/Window.hpp"
+#include "render/UiRenderer.hpp"
 
 namespace s3d {
 

@@ -1,7 +1,7 @@
 #pragma once
-#include "../core/Math.hpp"
-#include "../physics/RigidBody.hpp"
-#include "../render/Camera.hpp"
+#include "core/Math.hpp"
+#include "physics/RigidBody.hpp"
+#include "render/Camera.hpp"
 
 namespace s3d {
 namespace gizmo {

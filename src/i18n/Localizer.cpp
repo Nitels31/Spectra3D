@@ -1,8 +1,8 @@
-#include "Localizer.hpp"
+#include "i18n/Localizer.hpp"
 
-#include "../core/Log.hpp"
-#include "../core/Str.hpp"
-#include "../platform/Filesystem.hpp"
+#include "core/Log.hpp"
+#include "core/Str.hpp"
+#include "platform/Filesystem.hpp"
 
 #include <fstream>
 

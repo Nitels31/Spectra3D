@@ -1,7 +1,7 @@
-#include "../MeshImport.hpp"
+#include "assets/MeshImport.hpp"
 
-#include "../../core/Log.hpp"
-#include "../MeshUtil.hpp"
+#include "core/Log.hpp"
+#include "assets/MeshUtil.hpp"
 
 // cgltf is a single-header library: exactly one translation unit defines the
 // implementation, and it must be this one.

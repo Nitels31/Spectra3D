@@ -2,9 +2,9 @@
 #include <string>
 #include <vector>
 
-#include "../assets/MeshRegistry.hpp"
-#include "../physics/PhysicsWorld.hpp"
-#include "../render/Camera.hpp"
+#include "assets/MeshRegistry.hpp"
+#include "physics/PhysicsWorld.hpp"
+#include "render/Camera.hpp"
 
 namespace s3d {
 

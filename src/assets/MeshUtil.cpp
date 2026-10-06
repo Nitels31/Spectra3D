@@ -1,4 +1,4 @@
-#include "MeshUtil.hpp"
+#include "assets/MeshUtil.hpp"
 
 #include <algorithm>
 

@@ -1,9 +1,9 @@
-#include "Bindings.hpp"
+#include "script/Bindings.hpp"
 
-#include "../core/Log.hpp"
-#include "../physics/PhysicsWorld.hpp"
-#include "../scene/BodyFactory.hpp"
-#include "BindString.hpp"
+#include "core/Log.hpp"
+#include "physics/PhysicsWorld.hpp"
+#include "scene/BodyFactory.hpp"
+#include "script/BindString.hpp"
 
 #if SPECTRA_SCRIPTING
 

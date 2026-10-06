@@ -3,6 +3,14 @@ project(Spectra3D LANGUAGES C CXX)
 
 # Single source of truth for the build. build_windows.bat / build_linux.sh are
 # thin wrappers around this file.
+#
+# Layout the targets rely on:
+#   src/       implementation (.cpp), one layer per directory
+#   include/   every header the engine owns, one layer per directory, so a header
+#              is reached as "layer/Name.hpp" from anywhere
+#   third_party/ vendored libraries, each its own target below
+#   assets/    language files and models, staged next to the binary
+#   tools/     developer executables, off by default
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,6 +20,8 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
+# One binary per build tree, in build/ itself, for single- and multi-config
+# generators alike - otherwise a Visual Studio build drops it into build/Debug.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${config} ${CMAKE_BINARY_DIR})
@@ -23,6 +33,7 @@ endforeach()
 option(SPECTRA_BUILD_TOOLS "Build the standalone asset inspection tools" OFF)
 option(SPECTRA_SCRIPTING "Build the AngelScript runtime" ON)
 
+set(SPECTRA_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set(SPECTRA_THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 set(SPECTRA_ASSETS ${CMAKE_CURRENT_SOURCE_DIR}/assets)
 
@@ -71,6 +82,16 @@ target_include_directories(spectra_ufbx PUBLIC third_party/ufbx)
 
 add_library(spectra_miniply STATIC third_party/miniply/miniply.cpp)
 target_include_directories(spectra_miniply PUBLIC third_party/miniply)
+
+# ---------------------------------------------------------------------------
+# JSON
+# ---------------------------------------------------------------------------
+# Header-only, one file: include/json/json.hpp. An interface target, because
+# there is nothing to compile - only the directory to add. Anything that reads or
+# writes JSON links this and writes `#include "json/json.hpp"`, so the one
+# megabyte header is reached through the same name as every other dependency.
+add_library(spectra_json INTERFACE)
+target_include_directories(spectra_json INTERFACE ${SPECTRA_INCLUDE})
 
 # ---------------------------------------------------------------------------
 # Scripting (AngelScript 2.38.0)
@@ -158,7 +179,7 @@ add_executable(spectra3d
     src/editor/panels/BottomBar.cpp
 )
 target_include_directories(spectra3d PRIVATE
-    src
+    ${SPECTRA_INCLUDE}
     third_party/glfw/include
     third_party/freetype/include
     third_party/cgltf
@@ -167,7 +188,7 @@ target_include_directories(spectra3d PRIVATE
     third_party/ufbx
 )
 target_compile_definitions(spectra3d PRIVATE SPECTRA_ASSET_DIR="${SPECTRA_ASSETS}")
-target_link_libraries(spectra3d PRIVATE spectra_freetype spectra_ufbx spectra_miniply)
+target_link_libraries(spectra3d PRIVATE spectra_freetype spectra_ufbx spectra_miniply spectra_json)
 if(SPECTRA_SCRIPTING)
     target_compile_definitions(spectra3d PRIVATE SPECTRA_SCRIPTING=1)
     target_link_libraries(spectra3d PRIVATE spectra_angelscript)
@@ -181,7 +202,11 @@ else()
 endif()
 
 if(WIN32)
-    target_compile_definitions(spectra3d PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    # windows.h is trimmed per file instead of from here: rapidobj.hpp redefines
+    # both macros unconditionally, and a command-line -DNOMINMAX (which CMake
+    # writes as -DNOMINMAX="") is a *different* definition, so the build warns
+    # about a header that is not ours. Application.cpp, Filesystem.cpp, Window.cpp
+    # and ObjLoader.cpp guard the same two defines around their windows.h include.
     target_link_libraries(spectra3d PRIVATE opengl32 gdi32 user32 kernel32)
     # Native folder dialog: ole32 for COM, shell32 for the shell item factory,
     # uuid for CLSID_FileOpenDialog / IID_IFileDialog. winmm for the 1 ms timer
@@ -264,7 +289,7 @@ tools/scripttest.cpp
             src/render/Camera.cpp
         )
         target_include_directories(scripttest PRIVATE
-            src
+            ${SPECTRA_INCLUDE}
             third_party/cgltf
             third_party/rapidobj
             third_party/miniply

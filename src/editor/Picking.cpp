@@ -1,6 +1,6 @@
-#include "Picking.hpp"
+#include "editor/Picking.hpp"
 
-#include "../render/Camera.hpp"
+#include "render/Camera.hpp"
 
 namespace s3d {
 namespace picking {

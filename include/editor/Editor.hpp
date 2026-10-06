@@ -4,15 +4,15 @@
 #include <utility>
 #include <vector>
 
-#include "../assets/MeshRegistry.hpp"
-#include "../i18n/Localizer.hpp"
-#include "../physics/PhysicsWorld.hpp"
-#include "../render/Camera.hpp"
-#include "../render/SceneRenderer.hpp"
-#include "../render/UiRenderer.hpp"
-#include "../ui/UiContext.hpp"
-#include "AssetBrowser.hpp"
-#include "Gizmo.hpp"
+#include "assets/MeshRegistry.hpp"
+#include "i18n/Localizer.hpp"
+#include "physics/PhysicsWorld.hpp"
+#include "render/Camera.hpp"
+#include "render/SceneRenderer.hpp"
+#include "render/UiRenderer.hpp"
+#include "ui/UiContext.hpp"
+#include "editor/AssetBrowser.hpp"
+#include "editor/Gizmo.hpp"
 
 namespace s3d {
 

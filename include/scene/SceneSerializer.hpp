@@ -1,8 +1,8 @@
 #pragma once
 #include <string>
 
-#include "../assets/MeshRegistry.hpp"
-#include "../physics/PhysicsWorld.hpp"
+#include "assets/MeshRegistry.hpp"
+#include "physics/PhysicsWorld.hpp"
 
 namespace s3d {
 

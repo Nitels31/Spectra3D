@@ -1,4 +1,4 @@
-#include "Camera.hpp"
+#include "render/Camera.hpp"
 
 namespace s3d {
 

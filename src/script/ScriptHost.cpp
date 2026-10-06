@@ -1,8 +1,8 @@
-#include "ScriptHost.hpp"
+#include "script/ScriptHost.hpp"
 
-#include "Bindings.hpp"
-#include "../core/Log.hpp"
-#include "../core/Str.hpp"
+#include "script/Bindings.hpp"
+#include "core/Log.hpp"
+#include "core/Str.hpp"
 
 #if SPECTRA_SCRIPTING
 #include <angelscript.h>

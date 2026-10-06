@@ -1,6 +1,6 @@
-#include "UiContext.hpp"
+#include "ui/UiContext.hpp"
 
-#include "Theme.hpp"
+#include "ui/Theme.hpp"
 
 #include <algorithm>
 #include <cmath>

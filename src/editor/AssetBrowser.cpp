@@ -1,9 +1,9 @@
-#include "AssetBrowser.hpp"
+#include "editor/AssetBrowser.hpp"
 
-#include "../assets/MeshImport.hpp"
-#include "../core/Log.hpp"
-#include "../core/Str.hpp"
-#include "../platform/Filesystem.hpp"
+#include "assets/MeshImport.hpp"
+#include "core/Log.hpp"
+#include "core/Str.hpp"
+#include "platform/Filesystem.hpp"
 
 #include <algorithm>
 

@@ -1,6 +1,6 @@
-#include "Gizmo.hpp"
+#include "editor/Gizmo.hpp"
 
-#include "Picking.hpp"
+#include "editor/Picking.hpp"
 
 #include <cmath>
 

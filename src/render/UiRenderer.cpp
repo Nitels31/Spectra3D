@@ -1,6 +1,6 @@
-#include "UiRenderer.hpp"
+#include "render/UiRenderer.hpp"
 
-#include "../core/Math.hpp"
+#include "core/Math.hpp"
 
 #include <algorithm>
 

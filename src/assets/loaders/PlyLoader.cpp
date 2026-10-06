@@ -1,6 +1,6 @@
-#include "../MeshImport.hpp"
+#include "assets/MeshImport.hpp"
 
-#include "../MeshUtil.hpp"
+#include "assets/MeshUtil.hpp"
 
 #include <miniply.h>
 

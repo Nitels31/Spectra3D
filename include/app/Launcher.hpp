@@ -3,14 +3,14 @@
 #include <string>
 #include <vector>
 
-#include "../core/Project.hpp"
-#include "../i18n/Localizer.hpp"
-#include "../platform/Filesystem.hpp"
-#include "../platform/Window.hpp"
-#include "../render/Camera.hpp"
-#include "../render/UiRenderer.hpp"
-#include "../ui/Theme.hpp"
-#include "../ui/UiContext.hpp"
+#include "core/Project.hpp"
+#include "i18n/Localizer.hpp"
+#include "platform/Filesystem.hpp"
+#include "platform/Window.hpp"
+#include "render/Camera.hpp"
+#include "render/UiRenderer.hpp"
+#include "ui/Theme.hpp"
+#include "ui/UiContext.hpp"
 
 namespace s3d {
 

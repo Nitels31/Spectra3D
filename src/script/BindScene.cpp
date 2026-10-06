@@ -1,9 +1,9 @@
-#include "Bindings.hpp"
+#include "script/Bindings.hpp"
 
-#include "../assets/MeshRegistry.hpp"
-#include "../core/Log.hpp"
-#include "../physics/PhysicsWorld.hpp"
-#include "BindString.hpp"
+#include "assets/MeshRegistry.hpp"
+#include "core/Log.hpp"
+#include "physics/PhysicsWorld.hpp"
+#include "script/BindString.hpp"
 
 #if SPECTRA_SCRIPTING
 

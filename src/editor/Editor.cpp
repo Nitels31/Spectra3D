@@ -1,9 +1,9 @@
-#include "Editor.hpp"
+#include "editor/Editor.hpp"
 
-#include "../core/Log.hpp"
-#include "../scene/SceneSerializer.hpp"
-#include "../ui/Theme.hpp"
-#include "Picking.hpp"
+#include "core/Log.hpp"
+#include "scene/SceneSerializer.hpp"
+#include "ui/Theme.hpp"
+#include "editor/Picking.hpp"
 
 #include <algorithm>
 #include <cmath>

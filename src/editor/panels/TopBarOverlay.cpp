@@ -1,12 +1,12 @@
-#include "../Editor.hpp"
+#include "editor/Editor.hpp"
 
-#include "../../core/Log.hpp"
-#include "../../core/Project.hpp"
-#include "../../core/Str.hpp"
-#include "../../platform/Filesystem.hpp"
-#include "../../render/GlInfo.hpp"
-#include "../../scene/SceneSerializer.hpp"
-#include "../../ui/Theme.hpp"
+#include "core/Log.hpp"
+#include "core/Project.hpp"
+#include "core/Str.hpp"
+#include "platform/Filesystem.hpp"
+#include "render/GlInfo.hpp"
+#include "scene/SceneSerializer.hpp"
+#include "ui/Theme.hpp"
 
 #include <algorithm>
 #include <cstdio>

@@ -1,6 +1,6 @@
-#include "Application.hpp"
+#include "app/Application.hpp"
 
-#include "../core/Log.hpp"
+#include "core/Log.hpp"
 
 int main() {
     s3d::Application app;

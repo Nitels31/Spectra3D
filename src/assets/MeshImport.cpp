@@ -1,7 +1,7 @@
-#include "MeshImport.hpp"
+#include "assets/MeshImport.hpp"
 
-#include "../core/Log.hpp"
-#include "../core/Str.hpp"
+#include "core/Log.hpp"
+#include "core/Str.hpp"
 
 namespace s3d {
 
