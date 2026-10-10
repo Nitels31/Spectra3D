@@ -1,61 +1,64 @@
 # Spectra3D
 
-Легкий 3D-рушій з **вбудованим редактором у стилі Godot** на
-**C++17 + OpenGL 2.1 + GLFW + FreeType**. Працює на **Windows** і **Linux**.
-Запуск починається зі **стартового меню**: вибирається або створюється проєкт,
-після чого відкривається редактор. Проєкт може містити **скрипти на
-AngelScript**, які виконуються при вході в режим «Грати».
+A lightweight 3D engine with a **built-in editor** in the spirit of Godot, written in
+**C++17 + OpenGL 2.1 + GLFW + FreeType**. Runs on **Windows** and **Linux**. Startup
+goes through a **launcher**: you pick or create a project, and the editor opens. A
+project may carry **AngelScript** scripts that run when you press Play.
 
-## Структура репозиторію
+Licensed under the [Apache License 2.0](LICENSE).
+
+## Repository layout
 
 ```
-CMakeLists.txt        єдине джерело правди для збірки
-ARCHITECTURE.md       шари, правила залежностей, виправлені дефекти
-build_windows.bat     обгортка cmake
-build_linux.sh        обгортка cmake
+CMakeLists.txt        the single source of truth for the build
+ARCHITECTURE.md       layers, dependency rules, the defects that were fixed
+build_windows.bat     a CMake wrapper
+build_linux.sh        a CMake wrapper
 
-src/                 реалізація (.cpp), поділена за шарами
+src/                 implementation (.cpp), split by layer
   core/              Log, Str, Math, Project (Settings, ProjectLibrary, ProjectInfo)
-  platform/          Window (GLFW + стан клавіатури/миші + очікування кадру),
-                     Filesystem (в т.ч. removeTree і системний вибір папки)
-  physics/           RigidBody, Material, PhysicsWorld (broadphase, солвер, сон)
+  platform/          Window (GLFW + keyboard/mouse state + frame waiting),
+                     Filesystem (removeTree and the system folder picker)
+  physics/           RigidBody, Material, PhysicsWorld (broadphase, solver, sleeping)
   assets/            MeshRegistry, MeshImport, loaders/{glb,obj,ply,fbx}
   render/            SceneRenderer, UiRenderer, TextAtlas, PrimitiveCache, Camera
-  ui/                Theme (палітри), UiContext
+  ui/                Theme (palettes), UiContext
   scene/             BodyFactory, SceneSerializer
   i18n/              Localizer
   editor/            Editor, panels/, Picking, Gizmo, AssetBrowser
   script/            ScriptHost, Bindings, BindEngine, BindScene, BindCamera, BindString
   app/               Application, Launcher, FixedClock, main
 
-include/             усі заголовки рушія, та сама розкладка шарів + json/
-  <шар>/*.hpp        Log.hpp, Camera.hpp, Editor.hpp, ... (усі .cpp пишуть
-                     #include "core/Log.hpp" - без ../)
-  json/json.hpp      header-only nlohmann/json, ціль spectra_json
+include/             every engine header, same layer split + json/
+  <layer>/*.hpp      Log.hpp, Camera.hpp, Editor.hpp, ... (all .cpp files write
+                     #include "core/Log.hpp" - no ../)
+  json/json.hpp      header-only nlohmann/json, target spectra_json
+  app/miniaudio.h    vendored single-header audio (public domain / MIT-0)
 
 third_party/         glfw, cgltf, rapidobj, miniply, ufbx, freetype, angelscript
 assets/              lang/*.lang, models/*.{glb,obj,ply,fbx}
-tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp — окремі утиліти:
-                      читання ассетів і перевірка скриптового шару (46 перевірок)
-build/               весь вивід: spectra3d.exe, glfw3.dll, icon.ico, engine.log,
-                     settings.ini, project/, копія assets/  (каталог у .gitignore)
+tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp - standalone
+                     utilities for reading assets and checking the scripting
+                     layer (46 checks)
+build/               all output: spectra3d.exe, glfw3.dll, icon.ico, engine.log,
+                     settings.ini, project/, a copy of assets/ (gitignored)
 ```
 
-У `include path` додається корінь `include/`, тому один і той самий заголовок
-пишеться однаково з будь-якого шару, з панелі редактора і з `tools/`, і жоден
-`#include` не ламається, коли файл переїжджає.
+The repository root `include/` goes on the include path, so the same header is
+spelled the same way from any layer, from an editor panel and from `tools/`, and no
+`#include` breaks when a file moves.
 
-`ARCHITECTURE.md` описує шари і правило залежностей. Коротко: залежності йдуть
-лише вгору — `core` ← `platform` ← `physics` ← `assets` ← `render`/`ui` ←
-`scene` ← `script` ← `editor` ← `app`; `i18n` залежить лише від `core` +
-`platform`. Глобального стану немає (окрім логу).
+`ARCHITECTURE.md` describes the layers and the dependency rule. In short,
+dependencies only point upward - `core` <- `platform` <- `physics` <- `assets` <-
+`render`/`ui` <- `scene` <- `script` <- `editor` <- `app`; `i18n` depends only on
+`core` + `platform`. There is no global state (apart from the log).
 
-## Збірка
+## Building
 
-Потрібні CMake ≥ 3.16 та компілятор C++17 (MSVC або MinGW-w64 g++).
+You need CMake >= 3.16 and a C++17 compiler (MSVC or MinGW-w64 g++).
 
-Збірка **поза вихідним деревом**: каталог `build/` створює CMake, він же
-у `.gitignore`, а сам бінарник потрапляє в `build/spectra3d.exe`
+The build tree is **outside the source tree**: CMake creates `build/`, it is in
+`.gitignore`, and the binary lands in `build/spectra3d.exe`
 (`CMAKE_RUNTIME_OUTPUT_DIRECTORY`).
 
 Windows, MSVC (Developer PowerShell):
@@ -66,15 +69,15 @@ cmake --build build --config Release
 build\spectra3d.exe
 ```
 
-Те саме через обгортку (вона лише викликає CMake):
+Same thing through the wrapper (it only calls CMake):
 
 ```bat
 build_windows.bat
 build\spectra3d.exe
 ```
 
-З генератором Visual Studio додайте `-G "Visual Studio 17 2022" -A x64`; тоді
-`--config Release` обов'язковий, а `CMAKE_BUILD_TYPE` ігнорується.
+With the Visual Studio generator add `-G "Visual Studio 17 2022" -A x64`; then
+`--config Release` is required and `CMAKE_BUILD_TYPE` is ignored.
 
 Linux:
 
@@ -84,108 +87,109 @@ sudo apt install build-essential cmake libglfw3-dev libgl1-mesa-dev
 ./build/spectra3d
 ```
 
-Опції CMake:
+CMake options:
 
-| Опція | Типова | Дія |
+| Option | Default | Effect |
 |---|---|---|
-| `SPECTRA_SCRIPTING` | `ON` | збирає `third_party/angelscript` і визначає `SPECTRA_SCRIPTING=1`; `OFF` прибирає скриптовий шар (у лозі `built without scripting`) |
-| `SPECTRA_BUILD_TOOLS` | `OFF` | збирає `glbinfo` / `fbxtest` / `scripttest`; вимкнено, щоб звичайна збірка давала рівно один `.exe`. Увімкнути: `-DSPECTRA_BUILD_TOOLS=ON` |
+| `SPECTRA_SCRIPTING` | `ON` | builds `third_party/angelscript` and defines `SPECTRA_SCRIPTING=1`; `OFF` removes the scripting layer (the log then says `built without scripting`) |
+| `SPECTRA_BUILD_TOOLS` | `OFF` | builds `glbinfo` / `fbxtest` / `scripttest`; off by default so a normal build produces exactly one `.exe`. Turn on with `-DSPECTRA_BUILD_TOOLS=ON` |
 
-**Перша збірка повільна**: `third_party/angelscript/source/*.cpp` компілюється в
-статичну бібліотеку `spectra_angelscript`. Це очікувано;
-`-DSPECTRA_SCRIPTING=OFF` прибирає цей час.
+**The first build is slow**: `third_party/angelscript/source/*.cpp` compiles into a
+static library called `spectra_angelscript`. That is expected;
+`-DSPECTRA_SCRIPTING=OFF` removes that time.
 
-Після збірки CMake копіює `glfw3.dll` (Windows) та `assets/` у `build/`, тож
-exe запускається з будь-якої директорії. Рухливі файли (`engine.log`,
-`settings.ini`, `build/project/`) пишуться поруч із бінарником: на старті
-`fs::adoptAssetWorkingDir()` знаходить каталог exe і робить його робочим.
+After the build, CMake copies `glfw3.dll` (Windows) and `assets/` into `build/`, so
+the exe runs from any directory. Mutable files (`engine.log`, `settings.ini`,
+`build/project/`) are written next to the binary: at startup
+`fs::adoptAssetWorkingDir()` locates the exe directory and makes it the working
+directory.
 
-## Стартове меню і проєкти
+## Launcher and projects
 
-Застосунок — **машина з двох станів**: `Launcher` (стартове меню) та `Editor`.
-Launcher володіє вікном, поки не вибрано проєкт; коли `Launcher::update()`
-повертає `Result::OpenProject`, `Application::openProject()` перемикає стан на
-редактор. Назад повернутися не можна: `Application::closeProject()` існує, але
-ніде не викликається — вихід із редактора означає закрити вікно.
+The application is a **two-state machine**: `Launcher` (startup menu) and `Editor`.
+The Launcher owns the window until a project is chosen; when `Launcher::update()`
+returns `Result::OpenProject`, `Application::openProject()` switches to the editor.
+There is no way back: `Application::closeProject()` exists but is never called -
+leaving the editor means closing the window.
 
-Розкладка меню — та сама, що на концепті: **смуга вкладок угорі, сайдбар ліворуч,
-список проєктів у решті**. Кожен рядок має власні кнопки **Відкрити** та
-**Видалити**; спільної панелі дій немає, бо рядок, на який дивишся, і є той, який
-маєш на увазі.
+The menu layout follows the concept: **a tab strip on top, a sidebar on the left,
+the project list in the rest**. Every row carries its own **Open** and **Delete**
+buttons; there is no shared action bar, because the row you are looking at is the
+one you mean.
 
 ```
 +----------------------------------------------------------+
-| Spectra3D | Усі | Обрані |  OpenGL ... | 2 проєкти  [Створити] |
+| Spectra3D | All | Favorites |  OpenGL ... | 2 projects [Create] |
 +------------+---------------------------------------------+
-| Проєкти    | Projects                     N проєктів      |
-|            |  ○ [icon] MyForest  C:/.../MyForest  [Відкрити] [Видалити] |
+| Projects   | Projects                     N projects      |
+|            |  O [icon] MyForest  C:/.../MyForest  [Open] [Delete] |
 |            |                                             |
-| Обліковий  |                                             |
-| запис  [⚙] |                                             |
+| Account    |                                             |
+|        [G] |                                             |
 +-----------------------------------------------------+----+
-| Esc - вихід                                   Вихід    |
+| Esc - quit                                  Quit       |
 +----------------------------------------------------------+
 ```
 
-| Елемент | Що робить |
+| Element | What it does |
 |---|---|
-| **Усі** / **Обрані** | вкладки списку; «Обрані» показує лише позначені проєкти |
-| Кільце ліворуч у рядку |_star_: додає або прибирає проєкт з «Обраних»; стан пишеться в маніфест, тож лишається разом з проєктом |
-| **Відкрити** | відкриває проєкт у редакторі |
-| **Видалити** | питає підтвердження, нічого не видаляє одразу |
-| **Projects** у сайдбарі | повертає до списку проєктів |
-| **Обліковий запис** | локальний сеанс: користувач, тип, версія рушія, знайдені проєкти, папка. Нічого нікуди не надсилається |
-| ⚙ у куті сайдбару | налаштування |
-| **Створити** | вкладка створення: назва + вибір папки одразу тут |
+| **All** / **Favorites** | list tabs; Favorites shows only starred projects |
+| Ring at the left of a row |_star_: adds or removes a project from Favorites; the state is written into the manifest, so it travels with the project |
+| **Open** | opens the project in the editor |
+| **Delete** | asks for confirmation, deletes nothing immediately |
+| **Projects** in the sidebar | back to the project list |
+| **Account** | a local session: user, type, engine version, projects found, folder. Nothing is ever sent anywhere |
+| G in the sidebar corner | settings |
+| **Create** | the creation tab: name plus folder picker, right there |
 
-Шлях проєкту внизу сайдбару — це та папка, з якої береться список, тому порожній
-список завжди пояснюється.
+The project path at the bottom of the sidebar is the folder the list is read from,
+so an empty list always has an explanation.
 
-### Видалення проєкту
+### Deleting a project
 
-**Видалити** відкриває модальне підтвердження:
+**Delete** opens a confirmation modal:
 
 ```
-Видалення проєкту
-Видалити проєкт "MyProject"?
+Delete project
+Delete project "MyProject"?
 C:\__Spectra3D\build/project/MyProject
-Це не можна скасувати.
-                                    [Повернутись] [Ok]
+This cannot be undone.
+                                     [Return] [Ok]
 ```
 
-* **Ok** — видаляє папку проєкту з усім contents (рекурсивно) і прибирає його зі
-  списку нещодавніх.
-* **Повернутись** або **Esc** — нічого не робить.
-* Закриття вікна (хрестик у заголовку) теж нічого не видаляє: видалення може
-  статися тільки після натискання **Ok**.
+* **Ok** - deletes the project folder with all its contents (recursively) and
+  removes it from the recents list.
+* **Return** or **Esc** - does nothing.
+* Closing the window (the X in the title bar) also deletes nothing: deletion can
+  only happen after **Ok** is pressed.
 
-Перед видаленням знімається атрибут «лише для читання», щоб проєкт, розпакований
-із zip або з git, теж видалявся.
+The read-only attribute is cleared before deletion, so a project unpacked from a zip
+or from git deletes too.
 
-### Вибір папки
+### Folder picker
 
-**Оглянути…** відкриває **системний діалог Провідника** (`IFileDialog`,
-`FOS_PICKFOLDERS`) — з вкладками, мережевими шляхами, введенням шляху. Власний
-браузер папок залишився лише як запасний варіант для систем без такого діалогу
-(наприклад Linux без GTK); тоді про це пишеться в рядку під полем.
+**Browse...** opens the **system Explorer dialog** (`IFileDialog`, `FOS_PICKFOLDERS`)
+- with tabs, network paths, and a path field. The built-in folder browser survives
+only as a fallback for systems without such a dialog (Linux without GTK, for
+example), and the row under the field says so when that happens.
 
-Папку можна змінити і в налаштуваннях, і на екрані створення проєкту: якщо
-введена папка відрізняється від активної, з'являється кнопка **Застосувати**, щоб
-проєкт не створився непомітно не там.
+The folder can be changed both in settings and on the project creation screen: if
+the entered folder differs from the active one, an **Apply** button appears, so a
+project does not silently land in the wrong place.
 
-### Файли проєкту
+### Project files
 
 ```
 <projectsRoot>/MyProject/
-  project.spectra    маніфест (див. нижче)
-  scene.txt          документ сцени
-  editorlayout.txt   збережений робочий простір редактора (пише сам редактор)
-  scripts/           *.as — скрипти проєкту
-  models/            каталог під моделі проєкту
+  project.spectra    manifest (see below)
+  scene.txt          the scene document
+  editorlayout.txt   saved editor workspace (written by the editor itself)
+  scripts/           *.as - project scripts
+  models/            folder for project models
 ```
 
-`project.spectra` — звичайний `key=value` (коментарі `#`), завжди з однаковим
-порядком ключів:
+`project.spectra` is a plain `key=value` file (comments start with `#`), always
+written with the same key order:
 
 ```
 # Spectra3D project manifest
@@ -205,17 +209,16 @@ cameraFov=70.0000
 favorite=0
 ```
 
-Маніфест пише `ProjectLibrary::create()`, читає `readManifest()`, а
-`Application::openProject()` бере з нього гравітацію та камеру (позиція, yaw,
-pitch, fov) і вантажить `scene.txt`, якщо файл є. **Після створення маніфест
-ніхто не перезаписує** (`writeManifest` більше нікуди не викликається), тож
-ключі камери й гравітації лишаються такими, якими їх задав `create()`.
-Єдиний виняток — `favorite`: його перемикає кільце в списку, через
-`ProjectLibrary::setFavorite()`.
+`ProjectLibrary::create()` writes the manifest, `readManifest()` reads it, and
+`Application::openProject()` takes gravity and the camera (position, yaw, pitch,
+fov) from it and loads `scene.txt` if the file exists. **After creation nobody
+rewrites the manifest** (`writeManifest` is no longer called anywhere), so the
+camera and gravity keys stay exactly as `create()` set them. The one exception is
+`favorite`: the ring in the list toggles it via `ProjectLibrary::setFavorite()`.
 
-Корінь проєктів за замовчуванням — `<каталог exe>/project`, тобто
-`build/project` (`Settings::defaultProjectRoot()`). Він настраюється в секції
-«Налаштування» і зберігається в `settings.ini` поруч із бінарником:
+The project root defaults to `<exe dir>/project`, i.e. `build/project`
+(`Settings::defaultProjectRoot()`). It is configurable in the Settings screen and
+persisted in `settings.ini` next to the binary:
 
 ```
 # Spectra3D settings
@@ -226,137 +229,172 @@ frameRateCap=60
 recent=C:\...\build\project\MyForest
 ```
 
-`recent` містить до 8 абсолютних шляхів, найновіший — першим.
+`recent` holds up to 8 absolute paths, newest first.
 
-Каталог `models/` проєкту створюється разом із проєктом, але редактор його не
-сканує: `AssetBrowser::refresh()` читає `assets/models` спільного бенчмарку
-ассетів (з відкатом на робочий каталог), а список показує меню **Створити**.
-Модель у сцену додає пункт меню або `engine::importModel` зі скрипта.
+The project's `models/` folder is created together with the project, but the
+editor does not scan it: `AssetBrowser::refresh()` reads `assets/models` of the
+shared asset root (falling back to the working directory), and the list shows in
+the **Create** menu. Models are added to the scene from the menu or from a script
+via `engine::importModel`.
 
-### Мови
+### Languages
 
-**English**, **Українська**, **Deutsch**, **Français**, **Italiano** і **Español** —
-`assets/lang/{en,uk,de,fr,it,es}.lang`. Перемикач у «Налаштуваннях» одразу
-застосовує мову і пише вибір у `settings.ini`; у верхній смузі редактора
-перемикача немає. Мови називаються самими собою (Deutsch, Français, Italiano,
-Español), а не перекладом, — так їх і шукають.
+Twenty-three bundles live in `assets/lang/`.
 
-Усі шість файлів мають однакові ключі: 211 рядків, і ключ, которого немає в одній
-мові, показується як сам ключ, а не порожністю. Абетка текс-атласу — це ASCII,
-кирилиця й **Latin-1** (U+00C0..U+00FF плюс `« »`, `œ Œ`, `¡ ¿`): без нього
-німецькі умляути, французькі акценти та іспаноцькі `ñ` і `¿` малювалися би порожніми
-прямокутниками.
+**Six are real languages**: **English**, **Українська**, **Deutsch**, **Français**,
+**Italiano** and **Español** (`{en,uk,de,fr,it,es}.lang`). The switcher in Settings
+applies the language immediately and writes the choice to `settings.ini`; the
+editor's top bar has no language switch. Languages are named by themselves
+(Deutsch, Français, Italiano, Español) rather than by translation, because that is
+how people look for them.
 
-## Сценарії (AngelScript)
+**Seventeen are jokes**, and they are jokes rather than bad translations:
 
-Рантайм — **AngelScript 2.38.0** (`third_party/angelscript`), шар `src/script`.
-Скрипти проєкту лежать у `<project>/scripts/*.as` і виконуються **при натисканні
-Play**: `Application::runProjectScripts()` бере всі `.as` у каталозі (за
-іменем) і для кожного файлу викликає `script::Host::runFile()`. Кожен файл —
-окремий модуль AngelScript, тож помилка в одному не знищує функції інших.
-Помилки компіляції та виконання йдуть у `engine.log` (sink із
-`Application::initialize()`); `engine::log*` пишуть у той самий лог з
-префіксом `[script]`.
+| Code | Language | What it does |
+|---|---|---|
+| `lol` | Lolcat | a cat talking at you in the first person: "I can haz", "Yu", "meow", "purr" |
+| `jeb` | Jeb Kerman | the KSP mascot and his hangar: you do not press "Open", you press "Aboard" |
+| `pir` | Pirate | every label narrated by a buccaneer, "arr" included |
+| `u8f` | Broken UTF-8 | genuinely invalid bytes and lone `?` glyphs, appended byte-wise because a text round-trip would repair it into something boring |
+| `hex` | Hexadecimal | the whole UI as hex, kept mechanical on purpose |
+| `gd` | Geometry Dash | attempts, cubes, and the phrase "so hard" |
+| `mc` | Minecraft | blocks, crafting, and the Nether |
+| `ut` | Undertale | shouts SAVE, offers MERCY, and labels one button `SAVE` on purpose |
+| `cel` | Celeste | strawberries, the summit, and climbing again |
+| `dm` | Doom | a marine who writes the wad and offers no warranty |
+| `wows` | Wolf of Wall Street | diamond hands, stonks, and lambos |
+| `sus` | Among Us | vents, tasks, and everything being suspicious |
+| `leet` | 1337 | `h3ll0 w0rld`, `3v3ry k3y`, `1337 5p34k` |
+| `tlh` | Klingon | `Qapla'`, `nuqneH`, `tIn` |
+| `gop` | Пацан | Russian gopnik: "брат", "жиза", "кринж", "база" |
+| `sha` | Shakespeare | "thee", "hath", "'tis", and a playbill instead of a menu |
+| `pt` | Português | a seventh real language, for completeness |
 
-### Точка входу
+A joke bundle has **no untranslated English left outside the `help.*` section**, and
+no Russian in it unless it is the Russian one. The Create menu is included: the
+seven primitive names used to be hardcoded English in C++, and are now
+`shape.box` through `shape.prism` like any other string.
 
-На кожен скрипт виконується **рівно одна** точка входу:
+`help.*` is left in English on purpose, in **every** language including Russian.
+Keyboard names are `W A S D` everywhere on earth, and a half-translated help
+screen teaches nobody anything.
 
-1. функція з ім'ям **`onInit`**, **`main`** або **`start`** (регістр не важливий);
-2. якщо такої немає — **перша** глобальна функція `void()` у порядку
-   оголошення;
-3. якщо всі функції позначені `shared` — не виконується нічого, скрипт просто
-   збирається.
+All 23 files carry the same 236 keys. A key missing from a bundle shows up as the
+key itself rather than as emptiness. The text atlas alphabet is ASCII, Cyrillic and
+**Latin-1** (U+00C0..U+00FF plus `« »`, `œ Œ`, `¡ ¿`): without it, German umlauts,
+French accents and Spanish `ñ` would render as empty boxes.
 
-Тому помічник `void makeForest()` поруч з `onInit` **не** виконується сам — його
-викликає точка входу (іначе сцена будується двічі). `shared` виводить функцію з
-правила точки входу повністю.
+`hex` and `u8f` deliberately have no `%d` in their log lines - a broken bundle that
+also miscounts a format string is a crash, not a joke.
 
-Хост також знає три необов'язкові хуки — вони адресуються декларацією через
+## Scripting (AngelScript)
+
+The runtime is **AngelScript 2.38.0** (`third_party/angelscript`), layer
+`src/script`. Project scripts live in `<project>/scripts/*.as` and run **when Play is
+pressed**: `Application::runProjectScripts()` takes every `.as` in the directory (by
+name) and calls `script::Host::runFile()` for each. Each file is a separate
+AngelScript module, so an error in one does not destroy another's functions.
+Compile and runtime errors go to `engine.log` (the sink comes from
+`Application::initialize()`); `engine::log*` writes to the same log with a `[script]`
+prefix.
+
+### Entry point
+
+Each script runs **exactly one** entry point:
+
+1. a function named **`onInit`**, **`main`** or **`start`** (case does not matter);
+2. if there is none - the **first** global `void()` in declaration order;
+3. if every function is marked `shared` - nothing runs, the script just compiles.
+
+A helper `void makeForest()` next to `onInit` therefore **does not** run on its
+own - the entry point calls it (otherwise the scene is built twice). `shared`
+removes a function from the entry point rule entirely.
+
+The host also knows three optional hooks - they are addressed by declaration through
 `script::Host::callFunction()` (`kOnInitDeclaration`, `kOnUpdateDeclaration`,
 `kOnStopDeclaration`):
 
-| Хук | Коли має виконуватися |
+| Hook | When it should run |
 |---|---|
-| `void onInit()` | один раз, коли модуль виконується (див. правило вище) |
-| `void onUpdate()` | щокадру, поки триває режим «Грати» |
-| `void onStop()` | один раз, коли «Грати» завершено |
+| `void onInit()` | once, when the module is executed (see the rule above) |
+| `void onUpdate()` | every frame while Play mode lasts |
+| `void onStop()` | once, when Play finishes |
 
-**Стан поточного коду:** `Host::callFunction()` не викликає ніхто поза
-`ScriptHost.cpp` — ані цикл кадру, ані `Editor::exitPlayMode()` цих хуків не
-підпитують. Тобто зараз `onUpdate()` / `onStop()` не виконуються взагалі; якщо
-скрипт оголошує **лише** `void onUpdate()`, вона виконається один раз — як
-перша `void()`-точка входу. Усі три хуки необов'язкові.
+**Current state of the code:** nobody outside `ScriptHost.cpp` calls
+`Host::callFunction()` - neither the frame loop nor `Editor::exitPlayMode()` feeds
+these hooks. So today `onUpdate()` / `onStop()` do not run at all; if a script
+declares **only** `void onUpdate()`, it runs once - as the first `void()` entry
+point. All three hooks are optional.
 
 ### API
 
-Увесь API живе в просторі імен `engine` (хост робить
-`SetDefaultNamespace("engine")`), тому в скрипті пишуть `engine::log`,
-`engine::ShapeBox` тощо. Усі біндінги змінюють живий `PhysicsWorld` на місці —
-тому самий скрипт личиться і під час редагування, і в «Грати».
+The whole API lives in the `engine` namespace (the host does
+`SetDefaultNamespace("engine")`), so a script writes `engine::log`,
+`engine::ShapeBox` and so on. All bindings mutate the live `PhysicsWorld` in
+place - which is why the same script makes sense both while editing and while
+playing.
 
-**Логування:** `void log(const string &in)`, `logWarning`, `logError`.
+**Logging:** `void log(const string &in)`, `logWarning`, `logError`.
 
-**Створення тіл** (повертають індекс, `-1` на помилці; останній аргумент
-`density` необов'язковий, типове `1.0`; значення ≤ 0 стає `1.0` з попередженням):
+**Body creation** (returns an index, `-1` on failure; the trailing `density` is
+optional, default `1.0`; values <= 0 become `1.0` with a warning):
 
-| Виклик | Що робить |
+| Call | What it does |
 |---|---|
-| `int spawnBox(float x, float y, float z, float sx, float sy, float sz, float density)` | бокс розміру `sx × sy × sz` (саме повні розміри) |
-| `int spawnSphere(float x, float y, float z, float radius, float density)` | сфера заданого радіуса |
-| `int spawnShape(int shape, float x, float y, float z, float sx, float sy, float sz, float density)` | будь-яка фігура з `Shape`; `ShapeMesh` відхиляється — для моделі є `importModel` |
+| `int spawnBox(float x, float y, float z, float sx, float sy, float sz, float density)` | a box of size `sx x sy x sz` (full dimensions) |
+| `int spawnSphere(float x, float y, float z, float radius, float density)` | a sphere of the given radius |
+| `int spawnShape(int shape, float x, float y, float z, float sx, float sy, float sz, float density)` | any figure from `Shape`; `ShapeMesh` is rejected - for a model there is `importModel` |
 
-**Гравітація:** `void setGravity(int axis)`, `int getGravity()`; enum `Gravity` —
+**Gravity:** `void setGravity(int axis)`, `int getGravity()`; enum `Gravity` -
 `GravityNegX`, `GravityPosX`, `GravityNegY`, `GravityPosY`, `GravityNegZ`,
-`GravityPosZ` (значення = номери осей, `GravityNegY` = 2).
+`GravityPosZ` (values = axis numbers, `GravityNegY` = 2).
 
-**Тіла** (беруть індекс; поза діапазоном — один запис у лог і no-op):
+**Bodies** (take an index; out of range logs one line and does nothing):
 `getBodyX/Y/Z`, `setBodyPosition(index,x,y,z)`, `setBodyVelocity(index,x,y,z)`,
 `getBodyMass`, `setBodyMass(index,m)`, `getBodySpeed`, `getBodyShape`,
 `wakeBody(index)`.
 
-**Сцена:** `int getBodyCount()`, `void clearScene()` (зносить усі тіла й групи),
-`int importModel(const string &in path, float x, float y, float z)`,
-`int removeBody(int index)`. `importModel` віддає шлях ОС, тому відносний рахує
-від каталогу бінарника (`build/`), а абсолютний — як є; модель стає тілом із
-box-hull (маса з габаритів).
+**Scene:** `int getBodyCount()`, `void clearScene()` (removes every body and
+group), `int importModel(const string &in path, float x, float y, float z)`,
+`int removeBody(int index)`. `importModel` hands back an OS path, so a relative one
+counts from the binary directory (`build/`) and an absolute one is taken as-is; the
+model becomes a body with a box hull (mass from its dimensions).
 
-**Групи** — мішок індексів: `int createGroup(const string &in name)`
-(idempotent за іменем), `void addToGroup(int group, int body)`,
+**Groups** - a bag of indices: `int createGroup(const string &in name)`
+(idempotent by name), `void addToGroup(int group, int body)`,
 `int getGroupSize(int group)`, `void setGroupPosition(int group, float x, float
-y, float z)` (переносить центроїд у точку; повторний виклик у ту саму точку —
-no-op). `removeBody` тримає групи в узгодженому стані.
+y, float z)` (moves the centroid to the point; calling it again with the same point
+is a no-op). `removeBody` keeps groups consistent.
 
-**Камера:** `void setCamera(float x, float y, float z, float yaw, float pitch)`
-(радіани, pitch обмежено ±(π/2 − 0.001)), `void setCameraFov(float deg)`
-(обмежено 10…170).
+**Camera:** `void setCamera(float x, float y, float z, float yaw, float pitch)`
+(radians, pitch clamped to +-(pi/2 - 0.001)), `void setCameraFov(float deg)`
+(clamped to 10...170).
 
-**Типи:** enum `Shape` — `ShapeBox`, `ShapeSphere`, `ShapeCylinder`,
-`ShapeCapsule`, `ShapeCone`, `ShapePyramid`, `ShapePrism`, `ShapeMesh`; рядок
-`string` зареєстровано в глобальному просторі імен (у межах `engine::` він теж
-доступний без префікса) з операціями `+`, `==` / `!=`, `length()`,
-`setLength(uint)`.
+**Types:** enum `Shape` - `ShapeBox`, `ShapeSphere`, `ShapeCylinder`,
+`ShapeCapsule`, `ShapeCone`, `ShapePyramid`, `ShapePrism`, `ShapeMesh`; the type
+`string` is registered in the global namespace (inside `engine::` it is also
+available without the prefix) with `+`, `==` / `!=`, `length()`, `setLength(uint)`.
 
-Чого в API немає: прапорців статичності / видимості / блокування, матеріалів,
-кольорів і роботи з мешами за іменем — `importModel` повертає готове тіло, а не
-запис реєстру.
+What the API does not have: static/visible/locked flags, materials, colors, and
+mesh lookup by name - `importModel` returns a finished body, not a registry entry.
 
-### Приклад
+### Example
 
 `build/project/MyProject/scripts/pinball.as`:
 
 ```angelscript
-// Точка входу - onInit. Усе інше - помічники, хост їх сам не виконує.
+// Entry point - onInit. Everything else is a helper, which the host
+// never runs on its own.
 
 void buildArena()
 {
     engine::clearScene();
     engine::setGravity(engine::GravityNegY);
 
-    // підлога: товстий бокс
+    // floor: a thick box
     engine::spawnShape(engine::ShapeBox, 0.0f, -1.0f, 0.0f, 40.0f, 2.0f, 40.0f, 1.0);
 
-    // борти
+    // walls
     engine::spawnShape(engine::ShapeBox,  0.0f, 3.0f, -10.0f, 40.0f, 8.0f,  1.0f, 1.0);
     engine::spawnShape(engine::ShapeBox,  0.0f, 3.0f,  10.0f, 40.0f, 8.0f,  1.0f, 1.0);
     engine::spawnShape(engine::ShapeBox, -10.0f, 3.0f, 0.0f,  1.0f, 8.0f, 20.0f, 1.0);
@@ -385,7 +423,7 @@ void onInit()
 }
 ```
 
-Мінімальний скрипт (`scripts/hello.as`):
+The minimal script (`scripts/hello.as`):
 
 ```angelscript
 void onInit()
@@ -395,10 +433,10 @@ void onInit()
 }
 ```
 
-### Перевірка
+### Checking it
 
-Правило точки входу й хуки перевіряються без вікна та без проєкту. Утиліти не
-збираються за замовчуванням, тож спершу:
+The entry point rule and the hooks are testable without a window and without a
+project. The tools are not built by default, so first:
 
 ```bat
 cmake -S . -B build -DSPECTRA_BUILD_TOOLS=ON
@@ -406,337 +444,372 @@ cmake --build build --config Release
 build\scripttest.exe
 ```
 
-46 перевірок: точка входу з помічником виконується один раз, відсутній хук
-повертає `false` мовчки, наявний — виконується, помилка компіляції дає
-ERROR-діагностику.
+46 checks: an entry point with a helper runs once, a missing hook returns `false`
+silently, a present one runs, a compile error produces an ERROR diagnostic.
 
-## Можливості
+## Features
 
-### Стартове меню
+### Launcher
 
-- **Вкладки й сайдбар** за концептом: `Усі` / `Обрані`, зліва проєкти й обліковий
-  запис, унизу шестерня налаштувань; праворуч лічильник і `Створити`.
-- **Рядок проєкту**: кільце-зірка, іконка, назва, повний шлях, `Відкрити` і
-  `Видалити`. Клік по рядку вибирає його, `Enter` відкриває.
-- **Обрані** зберігаються в маніфесті проєкту, а не в `settings.ini`, тож
-  переживають перенесення папки.
-- **Видалення** — лише через підтвердження; `Esc` і закриття вікно не видаляють.
-- **Створення проєкту** на своїй вкладці, з полем папки та системним діалогом
-  Провідника поруч.
-- **Обліковий запис** — чесно локальний: без входу, без синхронізації.
+- **Tabs and sidebar** per the concept: `All` / `Favorites`, projects and the
+  account record on the left, the settings gear at the bottom; on the right a
+  counter and `Create`.
+- **Project row**: a ring-star, an icon, the name, the full path, `Open` and
+  `Delete`. Clicking the row selects it, `Enter` opens it.
+- **Favorites** are stored in the project manifest, not in `settings.ini`, so they
+  survive moving the folder.
+- **Deletion** only through a confirmation; `Esc` and closing the window delete
+  nothing.
+- **Project creation** on its own tab, with a folder field and the system Explorer
+  dialog next to it.
+- **The account record** is honestly local: no sign-in, no sync.
 
-### Теми
+### Themes
 
-Три палітри, перемикання миттєве, вибір пишеться в `settings.ini`
+Three palettes, switching instantly, the choice written to `settings.ini`
 (`theme=dark|light|contrast`):
 
-| Тема | Коли |
+| Theme | When |
 |---|---|
-| **Темна** | типова |
-| **Світла** | яскрава кімната: темний UI там — це лампа в обличчя |
-| **Контрастна** | чорний фон і чистий білий текст: ноутбук на батареї надворі |
+| **Dark** | the default |
+| **Light** | a bright room: a dark UI there is a lamp in the face |
+| **Contrast** | black background, pure white text: a laptop on battery outdoors |
 
-Палітра — це звичайні кольори в `theme::`, а не константи часу компіляції:
-перемикання має бути видно кожній панелі, а таких посилань у UI сотні. Писати
-може лише `theme::setActiveTheme()`.
+The palette is plain colours in `theme::`, not compile-time constants: switching has
+to be visible to every panel, and there are hundreds of such references in the UI.
+Only `theme::setActiveTheme()` may write.
 
-### Кадрова частота й нагрів
+### Frame rate and heat
 
-Vsync сам по собі **не обмежує** кадри: на цій машині драйвер показував ~154 FPS
-на статичному меню, тобто GPU малював 154 кадри за секунду для нерухомої
-картинки. Тому є явне обмеження: **30 / 60 / 120 / Без обмежень**
-(`frameRateCap` у `settings.ini`, типово 60) — списком, а не рядком кнопок.
+Vsync alone does **not** cap frames: on this machine the driver reported ~154 FPS on
+a static menu, i.e. the GPU was drawing 154 frames a second for a still image. So
+there is an explicit cap: **30 / 60 / 120 / Uncapped** (`frameRateCap` in
+`settings.ini`, default 60) - as a list, not a row of buttons.
 
-Обмеження реалізоване як **абсолютний графік**: наступний кадр має статись о
-`nextFrameTime_`, а не «через один бюджет після кінця попереднього». Додавання
-бюджету до мітки, яка вже містить час малювання, щоразу робить період довшим за
-заданий — обмеження 60 мовчки виходило на 42.
+The cap is implemented as an **absolute schedule**: the next frame must happen at
+`nextFrameTime_`, not "one budget after the previous frame ended". Adding a budget
+to a timestamp that already contains the draw time makes the period longer than
+asked every single time - a cap of 60 silently became 42.
 
-Очікування кадру точне: `Sleep()` у Windows округлюється до 15.6 мс, і через це
-cap 60 виходив би на 30, тому цикл чекає на waitable timer з
-`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`. Перевірено: 30 → 30 FPS, 60 → 60 FPS.
+Frame waiting is precise: `Sleep()` on Windows rounds up to 15.6 ms, which would
+turn a cap of 60 into 30, so the loop waits on a waitable timer with
+`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`. Verified: 30 -> 30 FPS, 60 -> 60 FPS.
 
-### Малювати лише коли є що показати
+### Draw only when there is something to show
 
-Вікно, якого ніхто не торкається, **не малює нічого**. Кадр потрібен лише
-тоді, коли:
+A window nobody touches **draws nothing**. A frame is needed only when:
 
-* користувач щось зробив — клавіатура, миша, скрол, текст, зміна розміру вікна;
-* хтось **тримає** клавішу або кнопку — політ камери, перетягування гізмо;
-* фізика симулюється (режим «Грати»);
-* минув секундний тік — він дає «застряглому» кадру видимість за секунду.
+* the user did something - keyboard, mouse, scroll, text, window resize;
+* someone is **holding** a key or button - camera flight, gizmo drag;
+* physics is simulating (Play mode);
+* a one-second tick has passed - it gives a "stuck" frame visibility once a second.
 
-Між цими подіями цикл просто чекає. Заміряно на цій машині:
+Between those events the loop simply waits. Measured on this machine:
 
-| Стан | CPU за 6 секунд |
+| State | CPU over 6 seconds |
 |---|---|
-| Меню, нічого не робиться | **0.00 с** |
-| Редактор, нічого не робиться | **0.00 с** |
-| «Грати», 64 тіла | 0.80 с |
-| Після «Стоп» | **0.00 с** |
+| Menu, nothing happening | **0.00 s** |
+| Editor, nothing happening | **0.00 s** |
+| Play, 64 bodies | 0.80 s |
+| After Stop | **0.00 s** |
 
-До цього статичне меню крутилося зі 154 кадрами на секунду — це і була причина
-нагріву ноутбука.
+Before this, the static menu ran at 154 frames a second - which was the cause of
+the laptop heating up.
 
-Три деталі, які важливі:
+Three details that matter:
 
-* **Очікування має бути сном, а не опитуванням.** `WaitForSingleObject(timer, 0)`
-  не спить взагалі — перша версія цього механізму з'їдала 95% ядра в простої.
-  Тепер цикл чекає на `MsgWaitForMultipleObjects`: або наближається час кадру,
-  або приходить повідомлення — тож клік обробляється миттєво, а ядро спить.
-* **Ребро живе рівно один кадр.** На початку кожної ітерації
-  `Window::dropUnreadInput()` знімає натиски, кліки, текст і скрол, які ніхто не
-  прочитав; затиснуті клавіши лишаються, бо це і є «хтось тримає». Без цього
-  один `Enter`, яким відкрили проєкт, вічно тримав би цикл «занятим» і редактор
-  малював би з частотою кадру, не малюючи нічого нового: виміряно **0.9 с CPU на
-  8 с** нахолоджуючого редактора проти **0.06 с** після цього кроку.
-* **Очікування має прокидатися на подію, а не дотерміновувати до кінця.**
-  Під час паузи до секундного тіку цикл чекає на `waitForFrame(window, tickDue,
-  true)`, і той повертається щойно `Window::peekActivity()` побачив рух. Це не
-  дрібниця: раніше очікування дотерміновувалося до кінця тіку, тож наведення на
-  кнопку підсвічувалося **через секунду**. `peekActivity()` окремо від
-  `consumeActivity()` саме тому: перший читає подію, не фіксуючи позицію курсора,
-  інакше рух, що розбудив очікування, з'їдається, і цикл знову не бачить, що
-  щось було. У паузі між кадрами прокидання немає (`false`): той кадр і так
-  надійде, тож миша не має піднімати частоту.
-* **Рівно одна точка входу** — див. розділ про скрипти.
+* **Waiting must be sleep, not polling.** `WaitForSingleObject(timer, 0)` does not
+  sleep at all - the first version of this mechanism ate 95% of a core while idle.
+  The loop now waits on `MsgWaitForMultipleObjects`: either the frame time is near,
+  or a message arrives - so a click is handled instantly and the core sleeps.
+* **An event lives exactly one frame.** At the start of every iteration
+  `Window::dropUnreadInput()` drops the presses, clicks, text and scrolls nobody
+  read; held keys stay, because "someone is holding it" is exactly the condition.
+  Without this, a single `Enter` used to open a project would keep the loop
+  "busy" forever and the editor would draw at frame rate while drawing nothing new:
+  measured **0.9 s CPU over 8 s** on an idle cooling editor versus **0.06 s** after
+  this step.
+* **Waiting must wake on an event, not run out the clock.** During a pause until
+  the one-second tick, the loop waits on `waitForFrame(window, tickDue, true)`,
+  which returns only once `Window::peekActivity()` saw movement. This is not a
+  trifle: waiting used to run out to the end of the tick, so hovering a button lit
+  up **a second later**. `peekActivity()` is separate from `consumeActivity()`
+  precisely for this: the first reads an event without latching the cursor
+  position, otherwise the movement that woke the wait gets eaten and the loop
+  cannot see that something happened. There is no waking between frames (`false`):
+  that frame arrives anyway, so the mouse should not raise the frequency.
+* **Exactly one entry point** - see the scripting section.
 
 ### OpenGL
 
-Движок просить **OpenGL 3.3 у compatibility-профілі** (не core: рендерер написаний
-на fixed pipeline — `glOrtho`, `glEnableClientState`, `glTexCoord2f`, який core
-прибирає). Якщо драйвер не дає 3.3 compatibility, є відкат на 2.1 і запис у журнал.
+The engine asks for **OpenGL 3.3 in the compatibility profile** (not core: the
+renderer is written against the fixed pipeline - `glOrtho`,
+`glEnableClientState`, `glTexCoord2f`, all of which core removes). If the driver
+cannot give 3.3 compatibility, it falls back to 2.1 and logs it.
 
-**Версія, яку показує інтерфейс, — це запитана версія, а не те, що пише драйвер.**
-NVIDIA, та й інші, друкують у `GL_VERSION` найвищу підтримувану версію для
-будь-якого compatibility-контексту, тож контекст 3.3 на цьому ноутбуці
-повідомляє «4.6.0 NVIDIA 391.35». Тому про версію кажуть на старті лаунчера та
-на сторінці «Про програму», а повний рядок драйвера йде в журнал запуску.
+**The version the interface shows is the requested one, not what the driver
+reports.** NVIDIA, and others, print the highest version supported for *any*
+compatibility context into `GL_VERSION`, so a 3.3 context on this laptop reports
+"4.6.0 NVIDIA 391.35". So the version is stated on the launcher startup and on the
+About page, while the full driver string goes to the startup log.
 
-### Редактор (розкладка з намальованого макета)
+### Editor (layout from the drawn concept)
 
 ```
 +------------------------------------------------------------+
-| Файл Редагувати Вигляд Створити Довідка | ⭘ ⭯ ⤢ ✋ | ▶ ❚❚ ■ | 0 / 3  ? [пошук] Шари ⟳ |
+| File Edit View Create Help | o - = hand | play pause stop | 0 / 3 ? [search] Layers reload |
 +---------------+-------------------------+---------------------------------+
-| Ієрархія   ☆  | Сцена       сітка ↑ ... ⛶ 70 | Інспектор                        |
-| ☆ [пошук]    +--------------------------+ [фільтр]                         |
-|  Корінь сцени | |                      | | Transform / Shape / Material     |
-| ☆ Box 00      | |      вьюпорт         | | Flags / Anchor / State / Node    |
-| ☆ Sphere 01   | |  [ вибір ]          | |                                 |
-|               | |  [ рух ]            | |                                 |
-|               | |  [ обертання ]       | |                                 |
-|               | |  [ масштаб ]         | |                                 |
-|               | |  [ панорама ]        | |                                 |
+| Hierarchy  *  | Scene       grid up ... fov 70 | Inspector                       |
+| * [search]    +--------------------------+ [filter]                          |
+|  Scene root   | |                      | | Transform / Shape / Material     |
+| * Box 00      | |      viewport        | | Flags / Anchor / State / Node    |
+| * Sphere 01   | |  [ select ]          | |                                  |
+|               | |  [ move ]            | |                                  |
+|               | |  [ rotate ]           | |                                  |
+|               | |  [ scale ]            | |                                  |
+|               | |  [ pan ]              | |                                  |
 |               +--------------------------+---------------------------------+
-| Консоль       | ⚠1  ✖0  ℹ18                                                  |
+| Console       | warn 1  err 0  info 18                                        |
 +---------------+-----------------------------------------------------------------+
 ```
 
-Панелі, зверху вниз:
+Panels, top to bottom:
 
-* **Верхня смуга (тулбар)** — п'ять меню ліворуч, далі п'ять кнопок-інструментів
-  (вибір, рух, обертання, масштаб, панорама — ті самі, що в колонці вьюпорту),
-  кнопки **▶ ❚❚ ■** по центру, праворуч лічильник `0 / 3` (вибрано / тіл), **`?`**
-  з довідкою, **поле пошуку команд**, **Шари** й **⟳** (перечитати сцену з диска).
-  Усі п'ять меню робочі: **Файл** (зберегти / завантажити / перечитати / вийти),
-  **Редагувати** (дублювати, видалити, зняти вибір, пробудити), **Вигляд**
-  (сітка, вектори, кадрувати вибір, скинути камеру, які панелі відкриті),
-  **Створити** (сім фігур і моделі з `assets/models`) і **Довідка** (клавіатура та
-  миша, про програму). Пошук у смузі знаходить рядок меню за підрядком і виконує
-  його на `Enter`; `Esc` або клік поза полем закриває і панель, і набір тексту.
-  **FOV у редакторі немає** — це властивість ігрової камери, а камера редактора
-  має одну роботу: дивитися на сцену. `Camera::fovDeg`, `cameraFov` у манifestі й
-  `engine::setCameraFov` для гри лишаються.
-* **Тулбар виду у вьюпорті** (смуга «Сцена») — рядок кнопок-іконок праворуч:
-  сітка, вектори, **прив'язка** (магніт: перетягування стає кратним 0.25),
-  кадрувати вибір, скинути камеру, панель «Шари». Кожна кнопка виконує команду.
-* **Панелі, які можна переміщувати** — ієрархія, інспектор, консоль і обране
-  стоять на трьох краях вікна, але їх можна перетягнути за заголовок: на іншу
-  крайку (панелі міняються місцями) або в центр сцени — тоді вона стає
-  плаваючою, з рамкою й тінню, поверх решти. Внутрішній край docked-панелі
-  тягнеться, щоб змінити ширину або висоту; плаваюча міняє розмір будь-якою з
-  чотирьох крайок і будь-яким кутом. Розкладка завжди рахується з того, які
-  крайки зайняті: порожня крайка віддає місце сцені. Розміри, зони, плаваючі
-  панелі й закриті панелі запам'ятовуються в `<project>/editorlayout.txt`, тож
-  проєкт відкривається так, як його залишили.
-* **Ієрархія** — дерево об'єктів з пошуком (фільтр по видимій назві). Зірка в
-  кожному рядку ставить об'єкт в обране; зірка в заголовку лишає тільки обране.
-  Обране зберігається в `scene.txt` разом із об'єктом.
-* **Обране** — окрема панель (закрита за замовчуванням, відкривається пунктом
-  **Вигляд → Обране**): список зірок, тим самим жестом у тій самій колонці;
-  клік по рядку вибирає об'єкт, клік по зірці прибирає з обраного. Кліком по
-  панелі її можна перетягнути на крайку або в сцену.
-* **Інспектор** — фільтр властивостей і секції Transform / Shape / Material /
-  Flags / Anchor / State / Node; тіло не виходить за межі панелі (scissor) і
-  скролиться колесом миші; праворуч — смуга прокрутки, коли секцій більше, ніж
-  місця. Колесо належить панелі під курсором.
-* **Консоль** — фільтри за рівнем із живими лічильниками: `Попередження 1`,
-  `Помилки 0`, `Інформація 18`. Порожня консоль — це нормально.
-* **Шари** — панель під кнопкою в смузі: усі тіла списком, з перемикачами
-  видимості й блокування. Заблоковане тіло не береться гізмо і не видаляється
-  `Delete`, тож замок означає щось, а не просто прапорець у файлі.
+* **Top bar (toolbar)** - five menus on the left, then five tool buttons (select,
+  move, rotate, scale, pan - the same set as in the viewport column), the
+  **play pause stop** buttons in the middle, then on the right the `0 / 3` counter
+  (selected / bodies), **`?`** for help, a **command search** field, **Layers**
+  and **reload** (re-read the scene from disk). All five menus work: **File**
+  (save / load / reload / quit), **Edit** (duplicate, delete, clear selection,
+  wake), **View** (grid, vectors, frame selection, reset camera, which panels are
+  open), **Create** (seven primitives and the models from `assets/models`) and
+  **Help** (keyboard and mouse, about). The search in the bar finds a menu row by
+  substring and runs it on `Enter`; `Esc` or a click outside closes both the panel
+  and the text set. There is **no FOV in the editor** - it is a property of the
+  game camera, and the editor camera has one job: look at the scene.
+  `Camera::fovDeg`, `cameraFov` in the manifest and `engine::setCameraFov` for the
+  game all remain.
+* **View toolbar in the viewport** (the "Scene" strip) - a row of icon buttons on
+  the right: grid, vectors, **snap** (a magnet: dragging becomes a multiple of
+  0.25), frame selection, reset camera, the "Layers" panel. Every button performs
+  its command.
+* **Movable panels** - hierarchy, inspector, console and favorites sit on three
+  window edges, but each can be dragged by its title: to another edge (panels swap
+  places) or into the middle of the scene - then it becomes floating, with a border
+  and a shadow, above the rest. The inner edge of a docked panel drags to change
+  width or height; a floating one resizes from any of four edges and any corner.
+  The layout is always recomputed from which edges are occupied: an empty edge
+  gives its space to the scene. Sizes, zones, floating panels and closed panels
+  are remembered in `<project>/editorlayout.txt`, so a project opens the way you
+  left it.
+* **Hierarchy** - a tree of objects with search (filtered by visible name). The
+  star on each row puts an object into favorites; the star in the header leaves
+  only favorites. Favorites are saved in `scene.txt` together with the object.
+* **Favorites** - a separate panel (closed by default, opened from
+  **View -> Favorites**): a list of stars, the same gesture in the same column;
+  clicking a row selects the object, clicking the star removes it from favorites.
+  Clicking the panel lets you drag it to an edge or into the scene.
+* **Inspector** - a property filter and the sections Transform / Shape / Material /
+  Flags / Anchor / State / Node; the body never leaves the panel's bounds (scissor)
+  and scrolls with the mouse wheel; on the right, a scrollbar when there are more
+  sections than room. The wheel belongs to the panel under the cursor.
+* **Console** - filters by level with live counters: `Warnings 1`, `Errors 0`,
+  `Info 18`. An empty console is normal.
+* **Layers** - a panel under the button in the bar: every body in a list, with
+  visibility and lock toggles. A locked body cannot be grabbed by the gizmo and is
+  not deleted with `Delete`, so a lock means something rather than being just a
+  flag in a file.
 
-Кожна зона екрана — окремий файл у `src/editor/panels/`: `TopBar.cpp` (сама
-смуга), `TopBarOverlay.cpp` (усі панелі, що з неї опускаються), `LeftColumn.cpp`,
-`FavoritesDock.cpp`, `ScenePanel.cpp`, `InspectorDock.cpp`, `BottomBar.cpp`.
+Every zone of the screen is a separate file in `src/editor/panels/`: `TopBar.cpp`
+(the bar itself), `TopBarOverlay.cpp` (all the panels that drop from it),
+`LeftColumn.cpp`, `FavoritesDock.cpp`, `ScenePanel.cpp`, `InspectorDock.cpp`,
+`BottomBar.cpp`.
 
-Заголовок вікна — значок, `Spectra3D`, риска й назва проєкту: значок береться з
-`icon.ico` у корені репозиторію (`Window::applyIcon`), CMake копіює його поруч із
-бінарником і вбудовує в `.exe` через ресурс (`windres` / `rc.exe`, якщо компілятор
-ресурсів є), а коли файлу немає — малюється кодом; жодного лічильника кадрів у
-заголовку немає: макет його не має, а заголовок, що змінюється щосекунди, мусив би
-ще й переписуватись під час того самого тіка.
+The window title is the icon, `Spectra3D`, a dash and the project name: the icon
+comes from `icon.ico` in the repository root (`Window::applyIcon`), CMake copies it
+next to the binary and embeds it in the `.exe` via a resource (`windres` / `rc.exe`,
+if a resource compiler exists), and when the file is missing it is drawn in code.
+There is no frame counter in the title: the concept does not have one, and a title
+that changed every second would also have to be rewritten during that same tick.
 
-### Редактор (можливості)
+### Editor (capabilities)
 
-- **Два режими**: **Створення** (фізика заморожена) і **Грати** (фізика
-  працює). Перемикаються **лише кнопками** PLAY / PAUSE / STOP у меню-барі —
-  гарячих клавіш для цього немає. При вході в Play зберігається знімок сцени,
-  при STOP сцена повертається до стану редагування; саме на цьому кадрі
-  виконуються скрипти проєкту.
-- **Немає кнопок збереження/завантаження сцени.** `scene.txt` читається при
-  відкритті проєкту, і більше ніхто його не пише — див. «Керування».
-- **Примітиви**: Box, Sphere, Cylinder, Capsule, Cone, Pyramid, Prism.
-  Меню **Створити**, плюс імпорт моделей звідти ж.
-- **Імпорт моделей `.glb` / `.gltf` / `.obj` / `.ply` / `.fbx`**:
-  - `.glb/.gltf` через cgltf — POSITION/NORMAL, індекси, baseColorFactor,
-    ієрархія вузлів, авто-нормалі
-  - `.obj` через rapidobj — триангуляція, нормалі/flat-shading, кольори з .mtl
-  - `.ply` через miniply — бінарний і ASCII, нормалі опційно
-  - `.fbx` через ufbx — бінарний і ASCII, ієрархія, авто-нормалі, конверсія
-    одиниць до метрів, відкидання гігантських part-ів
-  - меню **Створити** перелічує **усі** моделі з `assets/models`, без обрізання;
-    оновлення списку — кнопка **⟳** у смузі чи пункт **Файл → Перечитати з
-    диска**. Меню, довше за вікно, обмежене вікном, гортається колесом і показує
-    внизу, скільки рядків лишилося нижче. Фізика — box-hull, авто-нормалізація
-    розміру; меші зберігаються у `scene.txt` за іменем і підвантажуються
-- **Смуга (toolbar)**: меню Файл / Редагувати / Вигляд / Створити / Довідка —
-  усі п'ять відкривають списки; кнопки ▶ ❚❚ ■ по центру; праворуч лічильник
-  «вибрано / тіл», `?`, пошук команд, Шари та ⟳. Перемикача мови в смузі немає —
-  мова лишається в налаштуваннях лаунчера; напис `GL 3.3` теж прибрав, повний
-  рядок драйвера й так у журналі.
-- **Ліва колонка**: **Ієрархія** — дерево об'єктів (корінь сцени → тип + індекс)
-  з пошуком (фільтр по видимій назві) і зірками обраного. Зірка в рядку ставить
-  об'єкт в обране, зірка в заголовку лишає тільки обране; обидві пишуться в
-  `scene.txt`, тож обране переживає перезапуск.
-- **Панель «Обране»**: список об'єктів зі зіркою — клік по рядку вибирає, клік по
-  зірці прибирає з обраного. Закрита за замовчуванням (**Вигляд → Обране**), і
-  така сама панель, як інші три: перетягується за заголовок, міняє розмір
-  крайками й кутами, ховається **X**.
-- **Переміщувані панелі**: ієрархія, інспектор, консоль і обране можна
-  перетягнути за заголовок на іншу крайку (панелі міняються місцями) або в
-  центр сцени — тоді панель стає плаваючою, з рамкою й тінню, поверх решти.
-  Внутрішній край docked-панелі тягнеться, щоб змінити ширину або висоту,
-  плаваюча міняє розмір будь-якою з чотирьох крайок і будь-яким кутом. Вільна
-  крайка віддає місце сцені, а не залишає порожній док.
-- **Робочий простір запам'ятовується**: `<project>/editorlayout.txt` тримає
-  розміри крайок, зону й прямокутник кожної панелі та які з них закриті. Файл у
-  проєкті, а не у `settings.ini`: два проєкти — два простори, і перенесення папки
-  переносить розкладку разом із нею. Значення з файлу не довіряються: розмір поза
-  межами обмежується, невідомі ключі ігноруються, а дві панелі на одній крайці
-  (можливе лише у файлі, правленому руками) — пізніша спливає.
-- **Панель «Інспектор»**: поле фільтра, секції Transform / Shape / Material /
-  Flags / Anchor / State / Node. Числові поля підтримують drag-редагування і
-  введення з клавіатури; кнопки Пробудити / Видалити. Тіло інспектора не
-  виходить за межі панелі (scissor) і скролиться колесом миші; праворуч — смуга
-  прокрутки, коли секцій більше, ніж місця. Колесо належить панелі під курсором:
-  над ієрахією — дерево, над інспектором — властивості.
-- **Панель «Шари»** (з кнопки в смузі або з тулбара виду): список тіл із
-  перемикачами видимості й блокування; клік на назву вибирає тіло.
-- **Вʼюпорт**: тулбар виду в смузі «Сцена» (сітка, вектори, прив'язка,
-  кадрувати вибір, скинути камеру, «Шари»), вертикальна колонка інструментів
-  ліворуч, навігаційні кульки осей праворуч (клік = вирівнювання камери), ray-pick.
-- **Обертання** за кільцем гізмо йде по **світових** осях (`gizmo::axesFor` для
-  Rotate повертає осі світу, не тіла) — кільце не обертається разом із тілом, а
-  кут рахується **на екрані**, навколо проекції центру тіла, і кожен кадр додає
-  найкоротший крок (`std::remainder`). Тому рух через тил кільця не крутить тіло на
-  360°, промінь, паралельний площині кільця, не смикає його, а повільне
-  перетягування обертає так само рівно, як швидке.
-- **Прив'язка**: магніт у тулбарі виду — перетягування гізмо стає кратним 0.25 на
-  всіх трьох осях, а не тільки на тій, за яку тягнуть.
-- **Gizmo**: MOV — стрілки з конусами, перетягування по світових осях;
-  SCL — кубіки-ручки по **локальних осях тіла**; мультиплікативне масштабування
-  (Box — по SX/SY/SZ, Sphere — радіус, Mesh — рівномірний SCALE). Вибір ручки
-  — за екранною відстанню.
-- **Нижня панель**: Console з фільтрами за рівнем і лічильниками; тягнеться до
-  нижнього краю вікна. Рядка стану немає.
-- **Довідка** (`?` у смузі або меню **Довідка**): клавіатура та миша в двох
-  колонках і сторінка «Про програму» (версія, OpenGL, файл сцени, мова).
-- **Логи**: рівні INFO/WARN/ERROR, вивід у stderr, файл `build/engine.log`
-  і журнал у панелі Console; стартова діагностика (версія OpenGL, GPU, статус
-  шрифту, версія скриптового рушія, корінь проєктів, кількість тіл).
+- **Two modes**: **Create** (physics frozen) and **Play** (physics running). They
+  switch **only via the play / pause / stop buttons** in the menu bar - there are no
+  hotkeys for it. Entering Play saves a snapshot of the scene, and STOP restores
+  the scene to its editing state; project scripts run on that transition.
+- **There are no scene save/load buttons in the editor toolbar.** `scene.txt` is
+  read when the project opens and nobody writes it afterwards - see "Controls".
+- **Primitives**: Box, Sphere, Cylinder, Capsule, Cone, Pyramid, Prism. The
+  **Create** menu, plus model import from the same place.
+- **Model import of `.glb` / `.gltf` / `.obj` / `.ply` / `.fbx`**:
+  - `.glb/.gltf` via cgltf - POSITION/NORMAL, indices, baseColorFactor, node
+    hierarchy, auto-normals
+  - `.obj` via rapidobj - triangulation, normals/flat shading, colours from .mtl
+  - `.ply` via miniply - binary and ASCII, normals optional
+  - `.fbx` via ufbx - binary and ASCII, hierarchy, auto-normals, unit conversion
+    to metres, discarding gigantic parts
+  - the **Create** menu lists **all** models in `assets/models`, with no truncation;
+    the list is refreshed by the reload button in the bar or
+    **File -> Reload from disk**. A menu longer than the window is bounded by the
+    window and scrolls, and shows at the bottom how many rows are below. Physics is
+    a box hull with auto-normalized size; meshes are stored in `scene.txt` by name
+    and reloaded
+- **Toolbar**: File / Edit / View / Create / Help - all five open lists; the
+  play/pause/stop buttons in the middle; on the right the "selected / bodies"
+  counter, `?`, command search, Layers and reload. There is no language switch in
+  the bar - the language stays in the launcher's settings; the `GL 3.3` label was
+  removed too, the full driver string is in the log anyway.
+- **Left column**: **Hierarchy** - a tree of objects (scene root -> type + index)
+  with search and favorite stars. The star in a row puts an object into favorites,
+  the star in the header leaves only favorites; both write into `scene.txt`, so
+  favorites survive a restart.
+- **The Favorites panel**: a list of objects with a star - click a row to select,
+  click the star to remove from favorites. Closed by default (**View ->
+  Favorites**), and just another panel like the other three: draggable by its
+  title, resizable by edges and corners, hidden with **X**.
+- **Movable panels**: hierarchy, inspector, console and favorites can be dragged by
+  their title to another edge (panels swap places) or into the middle of the scene
+  - then the panel becomes floating, with a border and a shadow, above the rest.
+  The inner edge of a docked panel drags to change width or height, a floating one
+  resizes from any of four edges and any corner. A free edge gives its space to the
+  scene rather than leaving an empty dock.
+- **The workspace is remembered**: `<project>/editorlayout.txt` holds the edge
+  sizes, the zone and the rectangle of each panel, and which of them are closed. The
+  file is in the project, not in `settings.ini`: two projects, two layouts, and
+  moving a folder moves its layout with it. Values from the file are not trusted:
+  a size outside the bounds is clamped, unknown keys are ignored, and two panels on
+  one edge (only possible in a hand-edited file) let the later one float.
+- **The Inspector panel**: a filter field, sections Transform / Shape / Material /
+  Flags / Anchor / State / Node. Numeric fields support drag-editing and keyboard
+  entry; buttons Wake / Delete. The inspector's body never leaves the panel's
+  bounds (scissor) and scrolls with the mouse wheel; on the right, a scrollbar when
+  there are more sections than room. The wheel belongs to the panel under the
+  cursor: over the hierarchy the tree, over the inspector the properties.
+- **The Layers panel** (from the bar button or the view toolbar): a list of bodies
+  with visibility and lock toggles; clicking the name selects the body.
+- **Viewport**: the view toolbar in the "Scene" strip (grid, vectors, snap, frame
+  selection, reset camera, "Layers"), a vertical column of tools on the left,
+  navigation axis balls on the right (click = align the camera), ray-pick.
+- **Rotation** by gizmo ring follows the **world** axes (`gizmo::axesFor` returns
+  world axes for Rotate, not the body's) - so the ring does not turn with the body,
+  and the angle is computed **on screen**, around the projection of the body's
+  centre, adding the shortest step (`std::remainder`) each frame. Dragging across
+  the ring's body therefore does not spin the body 360 degrees, a ray parallel to
+  the ring's plane does not jerk it, and a slow drag rotates exactly like a fast
+  one.
+- **Snap**: the magnet in the view toolbar - gizmo dragging becomes a multiple of
+  0.25 on all three axes, not only on the one you are pulling.
+- **Gizmo**: MOV - arrows with cones, dragged along the world axes; SCL - cube
+  handles on the body's **local axes**; multiplicative scaling (Box - SX/SY/SZ,
+  Sphere - radius, Mesh - uniform SCALE). Handle picking uses screen distance.
+- **Bottom panel**: the Console with level filters and counters; drags to the
+  bottom edge of the window. There is no status line.
+- **Help** (`?` in the bar or the **Help** menu): keyboard and mouse in two
+  columns and an About page (version, OpenGL, scene file, language).
+- **Logs**: levels INFO/WARN/ERROR, output to stderr, the file `build/engine.log`
+  and the Console panel; startup diagnostics (OpenGL version, GPU, font status,
+  script runtime version, project root, body count).
 
-### Особливості
+### Details worth noting
 
-- **Заголовок вікна**: значок, `Spectra3D`, риска, назва проєкту. Лічильника
-  кадрів у ньому немає — див. «Коли малювати кадр».
-- **Значок**: `icon.ico` (16/32/64/128/256, 32 bpp) ставиться і на вікно, і в
-  сам `.exe`; якщо файлу поруч із бінарником немає, редактор малює призму кодом.
-- **Текст не обрізається «...», а зменшується.** Якщо рядок не вміщається, шрифт
-  стискається (`UiRenderer::textScaled`) аж до 0.6, і лише потім символи
-  відкидаються. Мітки кнопок вимірюються: `«Без обмежень»` на 60 пікселів ширше за
-  `«Off»`, і та сама кнопка не може мати одну ширину для обох мов.
-- **6-напрямкова гравітація** — клавіші `1..6`.
-- **Фізика твердого тіла**: OBB і Sphere (усі примітиви зі своїми об'ємами та
-  моментами інерції); інтегрування 60 Гц фіксованим кроком (`FixedClock`, до
-  10 кроків на кадр); колізії тіло-тіло (Sphere-Sphere, Sphere-Box, Box-Box) і
-  тіло-стіна; послідовні імпульси з early-exit, тертя, warm starting, корекція
-  проникнення, спекулятивні контакти (стійкий спокій), засинання тіл.
-- **Spatial hash broadphase** (sort-based, без алокацій): комірки 2 м,
-  пари дедуплікуються через uint64 ключі → O(n) замість O(n²).
-- **CPU-frustum без glGet** — матриці P·MV рахуються на ЦП, відсікання без
-  синхронних запитів до драйвера.
-- **Display lists** для статичної геометрії: юніт-примітиви, сітка кожної
-  стіни, ребра арени — запікаються один раз.
-- **Vertex batching UI**: усі квади/кола/гліфи кадру зводяться у два буфери
-  і малюються двома `glDrawArrays`.
-- **Текст**: FreeType → текстурний атлас ASCII + кирилиця системного TTF
-  (Consolas/Arial/Segoe UI/Tahoma на Windows, DejaVu/Liberation на Linux),
-  альфа-блендинг, оцінка ширини як fallback.
+- **Window title**: the icon, `Spectra3D`, a dash, the project name. No frame
+  counter - see "Draw only when there is something to show".
+- **Icon**: `icon.ico` (16/32/64/128/256, 32 bpp) is set on the window and embedded
+  in the `.exe` itself; if the file is missing next to the binary, the editor draws
+  a prism in code.
+- **Text is not truncated with "...", it shrinks.** If a string does not fit, the
+  font is squeezed (`UiRenderer::textScaled`) down to 0.6, and only then are
+  characters dropped. Button labels are measured: `Uncapped` is 60 pixels wider
+  than `Off` at 60 pixels, and the same button cannot have one width for both.
+- **6-direction gravity** - keys `1..6`.
+- **Rigid body physics**: OBB and Sphere (all primitives with their own volumes and
+  moments of inertia); integration at a fixed 60 Hz step (`FixedClock`, up to 10
+  steps per frame); body-body collisions (Sphere-Sphere, Sphere-Box, Box-Box) and
+  body-wall; sequential impulses with early exit, friction, warm starting,
+  penetration correction, speculative contacts (resting stability), and body
+  sleeping.
+- **Spatial hash broadphase** (sort-based, no allocations): 2 m cells, pairs
+  deduplicated by uint64 keys -> O(n) instead of O(n^2).
+- **CPU frustum, no glGet** - the P*MV matrices are computed on the CPU, culling
+  without synchronous queries to the driver.
+- **Display lists** for static geometry: unit primitives, each wall's grid, arena
+  edges - baked once.
+- **UI vertex batching**: every quad/circle/glyph of a frame is reduced to two
+  buffers and drawn with two `glDrawArrays`.
+- **Text**: FreeType -> a texture atlas of ASCII + Cyrillic from the system TTF
+  (Consolas/Arial/Segoe UI/Tahoma on Windows, DejaVu/Liberation on Linux), alpha
+  blending, width estimation as a fallback.
 
-## Керування
+## Controls
 
-**У редакторі немає гарячих клавіш, які змінюють сцену.** Play / Pause / Stop,
-збереження, завантаження та видалення — тільки кнопки в інтерфейсі; це
-свідомий вибір, і повертати клавіші не треба. Причина практична: `STOP`
-відновлює знімок, зроблений на початку Play, тож усе побудоване під час прогону
-зникає; `DEL` і завантаження сцени миттєво знищували роботу. Клавіші, які
-лишилися, нічого не руйнують:
+**There are no hotkeys in the editor that change the scene.** Play / Pause / Stop,
+saving, loading and deleting are buttons in the interface only; this is a deliberate
+choice and the keys should not come back. The reason is practical: STOP restores
+the snapshot taken when Play began, so everything built during the run disappears;
+DEL and scene loading destroyed work immediately. The keys that remain destroy
+nothing:
 
-| Клавіша / миша | Дія |
+| Key / mouse | Action |
 |---|---|
-| ЛКМ | вибір об'єкта / drag gizmo / перетягування та зміна розміру панелей / UI |
-| ПКМ (тримати) | огляд камерою |
-| `W A S D`, `SPACE`/`C` | політ камери (+`SHIFT` — прискорення) |
-| `1..6` | напрямок гравітації `-Y +Y -X +X -Z +Z` |
-| `Esc` | закрити панель, що висить із верхньої смуги, і очистити пошук |
-| `Enter` | виконати перший збіг пошуку команд |
+| LMB | select an object / drag the gizmo / drag and resize panels / UI |
+| RMB (hold) | look around with the camera |
+| `W A S D`, `SPACE`/`C` | camera flight (+`SHIFT` to boost) |
+| `1..6` | gravity direction `-Y +Y -X +X -Z +Z` |
+| `Esc` | close a panel hanging from the top bar and clear the search |
+| `Enter` | run the first command search match |
 
-Камера й гравітація мають силу лише в редакторі — у стартовому меню ці клавіші
-нічого не роблять. `Editor::handleHotkeys()` (`src/editor/Editor.cpp`) свідомо
-порожня: режим Play, збереження, завантаження й видалення живуть лише на
-кнопках і пунктах меню.
+The camera and gravity only have power in the editor - in the launcher these keys
+do nothing. `Editor::handleHotkeys()` (`src/editor/Editor.cpp`) is deliberately
+empty: Play mode, saving, loading and deleting live on buttons and menu items only.
 
-У стартовому меню (`Launcher::handleKeys`):
+In the launcher (`Launcher::handleKeys`):
 
-| Клавіша | Дія |
+| Key | Action |
 |---|---|
-| `Up` / `Down` | рух вибору проєкту (поки не фокус у текстовому полі) |
-| `Enter` | створити проєкт, якщо фокус у полі імені; застосувати корінь, якщо фокус у полі шляху; інакше відкрити вибраний проєкт |
-| `Esc` | закрити модальний вибір папки або вийти з програми |
-| колесо миші | прокрутка списку проєктів |
+| `Up` / `Down` | move the project selection (while focus is not in a text field) |
+| `Enter` | create the project if focus is in the name field; apply the root if focus is in the path field; otherwise open the selected project |
+| `Esc` | close the folder picker modal or quit the program |
+| mouse wheel | scroll the project list |
 
-Збереження й завантаження сцени: `Editor::saveScene()` / `Editor::loadScene()`
-живуть у меню **Файл** (Зберегти / Завантажити / Перечитати з диска) і пишуть у
-`scene.txt` поточного проєкту.
+Scene saving and loading: `Editor::saveScene()` / `Editor::loadScene()` live in the
+**File** menu (Save / Load / Reload from disk) and write to the current project's
+`scene.txt`.
 
-## Формат сцени
+## Scene format
 
-`scene.txt` у каталозі проєкту — один рядок на тіло, пробіли як роздільник:
-номер `Shape`, позиція, швидкість, орієнтація (w x y z), half-extents, маса,
-тертя, реституція, гусина, кутова швидкість, масштаб меша, **ім'я меша** або
-`-`, статичність / видимість / блокування, якорі, жорсткість пружини і, останнім
-полем, **обране** (зірка). Усе після імені меша необов'язкове, тож сцени, збережені
-до цих полів, відкриваються як є — просто без зірок. Моделі шукаються за іменем у
-`assets/models`, потім у робочому каталозі — сцена переживає перезапуск.
+`scene.txt` in the project directory is one line per body, spaces as the
+separator: the `Shape` number, position, velocity, orientation (w x y z),
+half-extents, mass, friction, restitution, density, angular velocity, mesh scale,
+**the mesh name** or `-`, static / visible / locked, anchors, spring stiffness and,
+as the last field, **favorite** (star). Everything after the mesh name is optional,
+so scenes saved before those fields open as they are - just without stars. Meshes
+are looked up by name in `assets/models`, then in the working directory, so a scene
+survives a restart.
+
+## Third-party licenses
+
+Spectra3D itself is Apache-2.0 (see [LICENSE](LICENSE)). Every vendored component
+below is under a permissive, GPL-compatible license, so nothing here pulls the
+project away from Apache-2.0. The full text of each license ships with the component
+under `third_party/`.
+
+| Component | Version | License | Text |
+|---|---|---|---|
+| GLFW | 3.5.1 | zlib | `third_party/glfw/LICENSE.md` |
+| cgltf | - | MIT | `third_party/cgltf/LICENSE` |
+| rapidobj | - | MIT | `third_party/rapidobj/LICENSE` |
+| miniply | - | MIT | header comment in `third_party/miniply/miniply.h` |
+| ufbx | - | MIT | `third_party/ufbx/LICENSE` |
+| FreeType | 2.14.3 | FTL | `FTL.txt` (full text), `third_party/freetype/LICENSE.TXT` |
+| AngelScript | 2.38.0 | zlib | inside `third_party/angelscript/SDK-2.38.0.zip` |
+| nlohmann/json | 3.12.0 | MIT | `include/json/json.hpp` |
+| miniaudio | 0.11.25 | public domain **or** MIT-0 | end of `include/app/miniaudio.h` |
+
+FreeType is dual-licensed upstream and this project uses the **FreeType License
+(FTL)**, the permissive option. The FTL requires crediting the FreeType Project in
+the product documentation, so:
+
+```
+Portions of this software are copyright © 2026 The FreeType Project (https://freetype.org). All rights reserved.
+```
