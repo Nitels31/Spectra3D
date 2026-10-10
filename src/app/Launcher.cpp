@@ -195,6 +195,23 @@ void Launcher::applySettings() {
     case LanguageTag::French: language = i18n::Language::French; break;
     case LanguageTag::Italian: language = i18n::Language::Italian; break;
     case LanguageTag::Spanish: language = i18n::Language::Spanish; break;
+    case LanguageTag::Lolcat: language = i18n::Language::Lolcat; break;
+    case LanguageTag::Jeb: language = i18n::Language::Jeb; break;
+    case LanguageTag::Pirate: language = i18n::Language::Pirate; break;
+    case LanguageTag::BrokenUtf8: language = i18n::Language::BrokenUtf8; break;
+    case LanguageTag::Hex: language = i18n::Language::Hex; break;
+    case LanguageTag::GeometryDash: language = i18n::Language::GeometryDash; break;
+    case LanguageTag::Portuguese: language = i18n::Language::Portuguese; break;
+    case LanguageTag::Minecraft: language = i18n::Language::Minecraft; break;
+    case LanguageTag::Undertale: language = i18n::Language::Undertale; break;
+    case LanguageTag::Celeste: language = i18n::Language::Celeste; break;
+    case LanguageTag::Doom: language = i18n::Language::Doom; break;
+    case LanguageTag::WolfOfWallStreet: language = i18n::Language::WolfOfWallStreet; break;
+    case LanguageTag::AmongUs: language = i18n::Language::AmongUs; break;
+    case LanguageTag::Leet: language = i18n::Language::Leet; break;
+    case LanguageTag::Klingon: language = i18n::Language::Klingon; break;
+    case LanguageTag::Gopnik: language = i18n::Language::Gopnik; break;
+    case LanguageTag::Shakespeare: language = i18n::Language::Shakespeare; break;
     case LanguageTag::English:
     default: language = i18n::Language::English; break;
     }
@@ -741,6 +758,23 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
         {text("settings.languageFrench"), (int)LanguageTag::French},
         {text("settings.languageItalian"), (int)LanguageTag::Italian},
         {text("settings.languageSpanish"), (int)LanguageTag::Spanish},
+        {text("settings.languageLolcat"), (int)LanguageTag::Lolcat},
+        {text("settings.languageJeb"), (int)LanguageTag::Jeb},
+        {text("settings.languagePirate"), (int)LanguageTag::Pirate},
+        {text("settings.languageBrokenUtf8"), (int)LanguageTag::BrokenUtf8},
+        {text("settings.languageHex"), (int)LanguageTag::Hex},
+        {text("settings.languageGD"), (int)LanguageTag::GeometryDash},
+        {text("settings.languagePortuguese"), (int)LanguageTag::Portuguese},
+        {text("settings.languageMinecraft"), (int)LanguageTag::Minecraft},
+        {text("settings.languageUndertale"), (int)LanguageTag::Undertale},
+        {text("settings.languageCeleste"), (int)LanguageTag::Celeste},
+        {text("settings.languageDoom"), (int)LanguageTag::Doom},
+        {text("settings.languageWows"), (int)LanguageTag::WolfOfWallStreet},
+        {text("settings.languageAmongUs"), (int)LanguageTag::AmongUs},
+        {text("settings.languageLeet"), (int)LanguageTag::Leet},
+        {text("settings.languageKlingon"), (int)LanguageTag::Klingon},
+        {text("settings.languageGopnik"), (int)LanguageTag::Gopnik},
+        {text("settings.languageShakespeare"), (int)LanguageTag::Shakespeare},
     };
     const SelectPaint languagePaint =
         drawSelectField(ui, ctx, Rect{body.x, rowY, std::fmin(240.0f, body.width), kRowHeight},
@@ -1375,27 +1409,30 @@ void Launcher::drawTextFit(UiRenderer& ui, float x, float y, float maxWidth, boo
         return;
     }
 
-    const float floor_ = UiRenderer::kMinTextScale;
+const float floor_ = UiRenderer::kMinTextScale;
     const char* ellipsis = "...";
     const float ellipsisWidth = ui.textWidthScaled(ellipsis, floor_);
 
     if (keepTail) {
         // Keep the tail: for a path the last component is what is being looked for.
+        // fitOffset already returns the longest byte offset whose suffix fits at
+        // full scale - and it walks whole code points, never splitting a glyph -
+        // so the suffix fits at floor_ too, which is smaller. No second pass.
         std::string tail = value.substr(fitOffset(ui, value, limit - x - ellipsisWidth));
-        while (!tail.empty() &&
-               ui.textWidthScaled(tail.c_str(), floor_) > limit - x - ellipsisWidth)
-            tail.erase(tail.begin());
         if (tail.empty()) return;
         ui.textScaled(x + ellipsisWidth, y, tail.c_str(), color, floor_);
         ui.textScaled(x, y, ellipsis, color, floor_);
         return;
     }
 
-    // Keep the head: which sentence it is matters more than where it ends.
-    std::string head = value;
-    while (!head.empty() && ui.textWidthScaled((head + ellipsis).c_str(), floor_) > limit - x)
-        head.pop_back();
-    if (head.empty()) return;
+    // Keep the head: which sentence it is matters more than where it ends. The
+    // old loop popped one character and re-measured the whole remaining string
+    // each time, so a long path cost O(n^2) glyph lookups and one heap temporary
+    // per character - once per project row, every frame. One linear pass over the
+    // code points gives the same answer.
+    const size_t headLength = fitHeadLength(ui, value, limit - x - ellipsisWidth, floor_);
+    if (headLength == 0) return;
+    std::string head(value.c_str(), headLength);
     ui.textScaled(x, y, (head + ellipsis).c_str(), color, floor_);
 }
 
@@ -1596,6 +1633,35 @@ void Launcher::setView(View view) {
         if (selected_ < 0 && !visible_.empty()) selected_ = 0;
     }
     lastError_.clear();
+}
+
+size_t Launcher::fitHeadLength(UiRenderer& ui, const std::string& value, float maxWidth,
+                               float scale) const {
+    // Byte length of the longest prefix of `value` that fits in `maxWidth` at
+    // `scale`, measured by walking whole code points - so it never cuts a UTF-8
+    // sequence in half. Width grows monotonically with the prefix, so stopping at
+    // the first glyph that does not fit is the answer; no search is needed and no
+    // substring is ever built to measure it.
+    if (maxWidth <= 0.0f) return 0;
+    const char* const begin = value.c_str();
+    const char* p = begin;
+    const char* const end = begin + value.size();
+    char glyph[8];
+    float width = 0.0f;
+
+    while (p < end) {
+        const char* const start = p;
+        str::nextCodepoint(p);
+        size_t length = (size_t)(p - start);
+        if (length >= sizeof(glyph)) length = sizeof(glyph) - 1;
+        std::memcpy(glyph, start, length);
+        glyph[length] = '\0';
+
+        const float advance = ui.textWidthScaled(glyph, scale);
+        if (width + advance > maxWidth) return (size_t)(start - begin);
+        width += advance;
+    }
+    return value.size();
 }
 
 size_t Launcher::fitOffset(UiRenderer& ui, const std::string& value, float maxWidth) const {

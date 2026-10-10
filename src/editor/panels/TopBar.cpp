@@ -22,9 +22,15 @@ constexpr float kSearchWidth = 172.0f;
 
 // Shape names, in `Shape` order. A menu row carries the shape as its parameter,
 // so these two have to stay in step - hence the count check.
-const char* const kShapeLabels[] = {"Box",      "Sphere",   "Cylinder", "Capsule",
-                                    "Cone",     "Pyramid",  "Prism"};
-constexpr int kShapeCount = (int)(sizeof(kShapeLabels) / sizeof(kShapeLabels[0]));
+//
+// These used to be hardcoded English literals, which meant the Create menu kept
+// saying "Box"/"Sphere" in whatever language the rest of the UI was in. A
+// language has to reach every label, so each shape name goes through the
+// localizer now, exactly like every other menu row.
+const char* const kShapeLabelKeys[] = {"shape.box",      "shape.sphere", "shape.cylinder",
+                                       "shape.capsule",  "shape.cone",   "shape.pyramid",
+                                       "shape.prism"};
+constexpr int kShapeCount = (int)(sizeof(kShapeLabelKeys) / sizeof(kShapeLabelKeys[0]));
 static_assert(kShapeCount == 7, "one label per primitive in Shape, before Mesh");
 
 // Case-insensitive substring test, `needle` folded once by the caller and
@@ -174,7 +180,7 @@ void Editor::buildMenuRows() {
 
     open(kMenuCreate);
     for (int i = 0; i < kShapeCount; ++i)
-        add(Action::Shape, i, kShapeLabels[i]);
+        add(Action::Shape, i, text(kShapeLabelKeys[i]));
     const std::vector<std::string>& models = assets_.files();
     add(Action::None, 0, nullptr, false, true);
     if (models.empty()) {

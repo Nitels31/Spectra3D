@@ -1,11 +1,8 @@
-# Spectra3D English UI strings
-
 menu.file=File
 menu.edit=Edit
 menu.view=View
 menu.create=Create
 menu.help=Help
-
 file.save=Save scene
 file.newScene=New Scene
 file.openScene=Open Scene
@@ -18,13 +15,11 @@ file.buildRun=Build and Run
 file.load=Load scene
 file.reload=Reload from disk
 file.exit=Exit
-
 edit.duplicate=Duplicate object
 edit.delete=Delete object
 edit.favorite=Favorite / unfavorite
 edit.clearSelection=Clear selection
 edit.wake=Wake object
-
 modal.newScene=New Scene
 modal.newSceneHint=The current scene will be emptied. What is already on disk stays there.
 modal.openScene=Open Scene
@@ -39,25 +34,20 @@ modal.buildStages=Staged: the program, glfw3.dll, assets/ (languages and models)
 modal.file=File
 modal.buildPath=Build folder
 modal.noScenes=No scene files in the project folder
-
 btn.open=Open
 btn.save=Save
 btn.dontSave=Don't Save
 btn.build=Build
 btn.cancel=Cancel
 btn.create=Create
-
 view.grid=Grid
 view.vectors=Vectors
 view.frame=Frame selection
 view.resetCamera=Reset camera
-
 toolbar.search=Search commands...
 toolbar.layers=Layers
 toolbar.noMatches=No such command
-
 layers.empty=The scene is empty
-
 help.controls=Keyboard and mouse
 help.about=About
 help.close=Close
@@ -77,10 +67,8 @@ help.desc.look=Hold to look around
 help.desc.gravity=Gravity along each axis
 help.desc.select=Select an object, Ctrl adds to the selection
 help.desc.tools=Select, move, rotate, scale, pan
-
 btn.wake=Wake
 btn.delete_=Delete
-
 tab.hierarchy=Hierarchy
 tab.inspector=Inspector
 tab.node=Node
@@ -91,7 +79,6 @@ hierarchy.search=Search objects
 hierarchy.noMatches=Nothing matches the filter
 favorites.empty=No favorites yet
 favorites.hint=Star a row in the hierarchy to add it here
-
 hier.sceneRoot=Scene Root
 sec.create=Create
 sec.transform=Transform
@@ -100,20 +87,15 @@ sec.material=Material
 sec.flags=Flags
 sec.anchor=Anchor
 sec.state=State
-
 assets.import=Import Models
 assets.noModels=No models found
-
 node.signals=Signals
 node.onBodyEntered=On Body Entered
 node.onSleepChanged=On Sleep Changed
 node.noNode=No node selected
-
 filter.placeholder=Filter...
-
 inspector.nothing=Nothing selected
 inspector.click=Click an object to inspect
-
 prop.posX=Position X
 prop.posY=Position Y
 prop.posZ=Position Z
@@ -128,32 +110,26 @@ prop.mass=Mass
 prop.friction=Friction
 prop.bounce=Bounce
 prop.density=Density
-
 flag.static_=Static
 flag.visible=Visible
 flag.locked=Locked
-
 anchor.pinPosition=Pin Position
 anchor.pinRotation=Pin Rotation
 anchor.spring=Spring
 anchor.setAtBody=Set At Body
-
 state.velocity=Velocity
 state.sleeping=Sleeping
 state.active=Active
-
 bar.consoleEmpty=Console empty
 console.warnings=Warnings
 console.errors=Errors
 console.info=Info
-
 log.play=Entering play mode with %d bodies
 log.stop=Exited play mode
 log.saved=Scene saved with %d bodies
 log.loaded=Scene loaded with %d bodies
 log.resumed=Resumed
 log.paused_=Paused
-
 launcher.newProject=New Project
 launcher.create=Create
 launcher.namePlaceholder=Project name
@@ -204,7 +180,6 @@ launcher.accountEngine=Engine
 launcher.accountProjects=Projects found
 launcher.accountRoot=Projects folder
 launcher.accountNote=Spectra3D works without an account: nothing is uploaded anywhere.
-
 settings.projectRoot=Projects folder
 settings.browse=Browse...
 settings.apply=Apply
@@ -216,6 +191,23 @@ settings.languageGerman=Deutsch
 settings.languageFrench=Français
 settings.languageItalian=Italiano
 settings.languageSpanish=Español
+settings.languageLolcat=Lolcat
+settings.languageJeb=Jeb Kerman
+settings.languagePirate=Pirate
+settings.languageBrokenUtf8=Broken UTF-8
+settings.languageHex=Hexadecimal
+settings.languageGD=Geometry Dash
+settings.languagePortuguese=Português
+settings.languageMinecraft=Minecraft
+settings.languageUndertale=Undertale
+settings.languageCeleste=Celeste
+settings.languageDoom=Doom
+settings.languageWows=Wolf of Wall Street
+settings.languageAmongUs=Among Us
+settings.languageLeet=1337
+settings.languageKlingon=Klingon
+settings.languageGopnik=Пацан
+settings.languageShakespeare=Shakespeare
 settings.rescan=Rescan
 settings.chooseFolder=Choose projects folder
 settings.chooseHere=Use this folder
@@ -235,3 +227,10 @@ settings.theme=Theme
 settings.themeDark=Dark
 settings.themeLight=Light
 settings.themeContrast=Contrast
+shape.box=Box
+shape.sphere=Sphere
+shape.cylinder=Cylinder
+shape.capsule=Capsule
+shape.cone=Cone
+shape.pyramid=Pyramid
+shape.prism=Prism

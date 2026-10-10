@@ -19,6 +19,16 @@ const Bundle kBundles[] = {
     {Language::English, "en.lang"}, {Language::Ukrainian, "uk.lang"},
     {Language::German, "de.lang"}, {Language::French, "fr.lang"},
     {Language::Italian, "it.lang"}, {Language::Spanish, "es.lang"},
+    {Language::Lolcat, "lol.lang"},
+    {Language::Jeb, "jeb.lang"}, {Language::Pirate, "pir.lang"},
+    {Language::BrokenUtf8, "u8f.lang"}, {Language::Hex, "hex.lang"},
+    {Language::GeometryDash, "gd.lang"},
+    {Language::Portuguese, "pt.lang"}, {Language::Minecraft, "mc.lang"},
+    {Language::Undertale, "ut.lang"}, {Language::Celeste, "cel.lang"},
+    {Language::Doom, "dm.lang"}, {Language::WolfOfWallStreet, "wows.lang"},
+    {Language::AmongUs, "sus.lang"}, {Language::Leet, "leet.lang"},
+    {Language::Klingon, "tlh.lang"}, {Language::Gopnik, "gop.lang"},
+    {Language::Shakespeare, "sha.lang"},
 };
 
 } // namespace
@@ -79,12 +89,46 @@ const std::string& Localizer::languageName() const {
     static const std::string kFrench = "Français";
     static const std::string kItalian = "Italiano";
     static const std::string kSpanish = "Español";
+    static const std::string kLolcat = "Lolcat";
+    static const std::string kJeb = "Jeb Kerman";
+    static const std::string kPirate = "Pirate";
+    static const std::string kBroken = "Broken UTF-8";
+    static const std::string kHex = "Hexadecimal";
+    static const std::string kGeometryDash = "Geometry Dash";
+    static const std::string kPortuguese = "Português";
+    static const std::string kMinecraft = "Minecraft";
+    static const std::string kUndertale = "Undertale";
+    static const std::string kCeleste = "Celeste";
+    static const std::string kDoom = "Doom";
+    static const std::string kWows = "Wolf of Wall Street";
+    static const std::string kAmongUs = "Among Us";
+    static const std::string kLeet = "1337";
+    static const std::string kKlingon = "Klingon";
+    static const std::string kGopnik = "Пацан";
+    static const std::string kShakespeare = "Shakespeare";
     switch (language_) {
     case Language::Ukrainian: return kUkrainian;
     case Language::German: return kGerman;
     case Language::French: return kFrench;
     case Language::Italian: return kItalian;
     case Language::Spanish: return kSpanish;
+    case Language::Lolcat: return kLolcat;
+    case Language::Jeb: return kJeb;
+    case Language::Pirate: return kPirate;
+    case Language::BrokenUtf8: return kBroken;
+    case Language::Hex: return kHex;
+    case Language::GeometryDash: return kGeometryDash;
+    case Language::Portuguese: return kPortuguese;
+    case Language::Minecraft: return kMinecraft;
+    case Language::Undertale: return kUndertale;
+    case Language::Celeste: return kCeleste;
+    case Language::Doom: return kDoom;
+    case Language::WolfOfWallStreet: return kWows;
+    case Language::AmongUs: return kAmongUs;
+    case Language::Leet: return kLeet;
+    case Language::Klingon: return kKlingon;
+    case Language::Gopnik: return kGopnik;
+    case Language::Shakespeare: return kShakespeare;
     case Language::English:
     default: return kEnglish;
     }

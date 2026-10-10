@@ -33,7 +33,12 @@ inline constexpr const char* kAppIconFile = "icon.ico";
 // Languages a project can be tagged with. Deliberately not i18n::Language:
 // core must not depend on the localisation layer, so the launcher is the one
 // place that translates between the two.
-enum class LanguageTag { English, Ukrainian, German, French, Italian, Spanish };
+enum class LanguageTag {
+    English, Ukrainian, German, French, Italian, Spanish, Lolcat,
+    Jeb, Pirate, BrokenUtf8, Hex, GeometryDash,
+    Portuguese, Minecraft, Undertale, Celeste, Doom, WolfOfWallStreet,
+    AmongUs, Leet, Klingon, Gopnik, Shakespeare,
+};
 
 inline const char* languageCode(LanguageTag tag) {
     switch (tag) {
@@ -42,6 +47,23 @@ inline const char* languageCode(LanguageTag tag) {
         case LanguageTag::French: return "fr";
         case LanguageTag::Italian: return "it";
         case LanguageTag::Spanish: return "es";
+        case LanguageTag::Lolcat: return "lol";
+        case LanguageTag::Jeb: return "jeb";
+        case LanguageTag::Pirate: return "pir";
+        case LanguageTag::BrokenUtf8: return "u8f";
+        case LanguageTag::Hex: return "hex";
+        case LanguageTag::GeometryDash: return "gd";
+        case LanguageTag::Portuguese: return "pt";
+        case LanguageTag::Minecraft: return "mc";
+        case LanguageTag::Undertale: return "ut";
+        case LanguageTag::Celeste: return "cel";
+        case LanguageTag::Doom: return "dm";
+        case LanguageTag::WolfOfWallStreet: return "wows";
+        case LanguageTag::AmongUs: return "sus";
+        case LanguageTag::Leet: return "leet";
+        case LanguageTag::Klingon: return "tlh";
+        case LanguageTag::Gopnik: return "gop";
+        case LanguageTag::Shakespeare: return "sha";
         case LanguageTag::English:
         default: return "en";
     }

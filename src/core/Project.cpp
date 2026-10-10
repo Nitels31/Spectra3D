@@ -142,6 +142,23 @@ LanguageTag languageFromCode(const std::string& code) {
     if (code == "fr") return LanguageTag::French;
     if (code == "it") return LanguageTag::Italian;
     if (code == "es") return LanguageTag::Spanish;
+    if (code == "lol") return LanguageTag::Lolcat;
+    if (code == "jeb") return LanguageTag::Jeb;
+    if (code == "pir") return LanguageTag::Pirate;
+    if (code == "u8f") return LanguageTag::BrokenUtf8;
+    if (code == "hex") return LanguageTag::Hex;
+    if (code == "gd") return LanguageTag::GeometryDash;
+    if (code == "pt") return LanguageTag::Portuguese;
+    if (code == "mc") return LanguageTag::Minecraft;
+    if (code == "ut") return LanguageTag::Undertale;
+    if (code == "cel") return LanguageTag::Celeste;
+    if (code == "dm") return LanguageTag::Doom;
+    if (code == "wows") return LanguageTag::WolfOfWallStreet;
+    if (code == "sus") return LanguageTag::AmongUs;
+    if (code == "leet") return LanguageTag::Leet;
+    if (code == "tlh") return LanguageTag::Klingon;
+    if (code == "gop") return LanguageTag::Gopnik;
+    if (code == "sha") return LanguageTag::Shakespeare;
     return LanguageTag::English;
 }
 

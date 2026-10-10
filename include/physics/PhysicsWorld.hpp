@@ -37,7 +37,7 @@ public:
 private:
     // One resolved contact for the current step. `bodyB` == kNoBody for arena
     // walls, in which case `wall`/`slot` address the warm-start cache.
-    struct Contact {
+struct Contact {
         static constexpr uint32_t kNoBody = UINT32_MAX;
         static constexpr int kNoWall = -1;
 
@@ -53,6 +53,10 @@ private:
         float accumulatedTangent;
         float warmNormal;
         float warmTangent;
+        // Index into the pair warm-start table for a body-body contact, -1 for a
+        // wall contact (which keeps its cache in the RigidBody instead). Set only
+        // for pairs; the default leaves every wall contact's -1.
+        int pairIndex = -1;
     };
 
     void integrateForces(float dt);
@@ -67,9 +71,42 @@ private:
     void updateSleep(float dt);
     void refreshDerived(RigidBody& body) const;
 
-    std::vector<Contact> contacts_;
+std::vector<Contact> contacts_;
     std::vector<std::pair<uint64_t, uint32_t>> cellEntries_;
     std::vector<uint64_t> pairKeys_;
+
+    // Warm-start impulses for body-body pairs, keyed by the canonical pair key and
+    // then by contact slot within the pair - the same idea the wall cache uses
+    // (wall + corner slot), so a box-box pair's 16 contact points each keep their
+    // own impulse instead of sharing one number.
+    //
+    // The cache cannot live on the Contact: contacts_ is rebuilt from scratch
+    // every step, so anything written to a contact is gone before it is read
+    // again. That is why body-body contacts were never warm-started - the solver
+    // never converged, its early-out never fired, and stacked bodies never slept.
+    //
+    // A pair produces at most 16 points (box-box samples 8 corners of A against B
+    // and 8 of B against A), so the table is pairCount * kPairSlots wide.
+    static constexpr int kPairSlots = 16;
+    struct PairWarm {
+        float normal = 0.0f;
+        float tangent = 0.0f;
+    };
+    // Both key arrays are sorted by the same canonical pair key and are walked in
+    // the same order, so seeding is a linear merge, not a lookup. The two value
+    // arrays are swapped at the end of each step, so nothing allocates after the
+    // first few frames.
+    std::vector<uint64_t> pairWarmKeys_;
+    std::vector<PairWarm> pairWarmValues_;
+    std::vector<uint64_t> pairWarmNextKeys_;
+    std::vector<PairWarm> pairWarmNextValues_;
+
+    // Writes one fresh (zeroed) seed row into the next-step table and returns the
+    // pair index the caller should stamp on its contacts. Called once per pair,
+    // from the same sorted sequence that produced the key, so `cursor` advances
+    // monotonically across calls.
+    int seedPairWarm(uint64_t key, size_t& cursor);
+    void clearPairWarm();
 
     // Steps since the world was created; used to invalidate warm-start caches.
     uint16_t stepStamp_ = 0;
@@ -79,6 +116,10 @@ private:
     // Reused by resolvePenetrations so the step allocates nothing.
     std::vector<float> deepestPenetration_;
     std::vector<Vec3> pushDirection_;
+    // Same, for body pairs: the deepest contact of each pair, so one pair is
+    // pushed out once instead of once per contact point.
+    std::vector<float> pairDeepest_;
+    std::vector<Vec3> pairPush_;
     float currentStepDt_ = 1.0f / 60.0f;
 };
 

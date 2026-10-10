@@ -50,6 +50,11 @@ void UiRenderer::begin(int width, int height) {
     glDisable(GL_SCISSOR_TEST);
     colorBatch_.clear();
     textBatch_.clear();
+    // Reserve once so the per-rectangle and per-glyph grows below never hit the
+    // geometric reallocation mid-frame. The capacities are generous enough for a
+    // full editor frame and only ever grow.
+    if (colorBatch_.capacity() < 24576) colorBatch_.reserve(24576);
+    if (textBatch_.capacity() < 117504) textBatch_.reserve(117504);
 
     glViewport(0, 0, width, height);
     glMatrixMode(GL_PROJECTION);

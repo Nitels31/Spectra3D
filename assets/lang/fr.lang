@@ -1,11 +1,8 @@
-# Spectra3D French UI strings
-
 menu.file=Fichier
 menu.edit=Édition
 menu.view=Affichage
 menu.create=Créer
 menu.help=Aide
-
 file.save=Enregistrer la scène
 file.newScene=Nouvelle scène
 file.openScene=Ouvrir une scène
@@ -18,13 +15,11 @@ file.buildRun=Construire et lancer
 file.load=Charger la scène
 file.reload=Recharger depuis le disque
 file.exit=Quitter
-
 edit.duplicate=Dupliquer l'objet
 edit.delete=Supprimer l'objet
 edit.favorite=Favori / retirer des favoris
 edit.clearSelection=Effacer la sélection
 edit.wake=Réveiller l'objet
-
 modal.newScene=Nouvelle scène
 modal.newSceneHint=La scène actuelle sera vidée. Ce qui est déjà sur le disque reste là.
 modal.openScene=Ouvrir une scène
@@ -39,25 +34,20 @@ modal.buildStages=Comprend : le programme, glfw3.dll, assets/ (langues et modèl
 modal.file=Fichier
 modal.buildPath=Dossier du build
 modal.noScenes=Aucun fichier de scène dans le dossier du projet
-
 btn.open=Ouvrir
 btn.save=Enregistrer
 btn.dontSave=Ne pas enregistrer
 btn.build=Construire
 btn.cancel=Annuler
 btn.create=Créer
-
 view.grid=Grille
 view.vectors=Vecteurs
 view.frame=Cadrer la sélection
 view.resetCamera=Réinitialiser la caméra
-
 toolbar.search=Rechercher des commandes...
 toolbar.layers=Couches
 toolbar.noMatches=Aucune commande de ce nom
-
 layers.empty=La scène est vide
-
 help.controls=Clavier et souris
 help.about=À propos
 help.close=Fermer
@@ -77,10 +67,8 @@ help.desc.look=Maintenir pour regarder autour
 help.desc.gravity=Gravité sur chaque axe
 help.desc.select=Sélectionner un objet, Ctrl ajoute à la sélection
 help.desc.tools=Sélectionner, déplacer, pivoter, redimensionner, panoramique
-
 btn.wake=Réveiller
 btn.delete_=Supprimer
-
 tab.hierarchy=Hierarchie
 tab.inspector=Inspecteur
 tab.node=Nœud
@@ -91,7 +79,6 @@ hierarchy.search=Rechercher des objets
 hierarchy.noMatches=Rien ne correspond au filtre
 favorites.empty=Aucun favori pour l'instant
 favorites.hint=Marquer une ligne de la hiérarchie d'une étoile pour l'ajouter ici
-
 hier.sceneRoot=Racine de la scène
 sec.create=Créer
 sec.transform=Transformation
@@ -100,20 +87,15 @@ sec.material=Matériau
 sec.flags=Indicateurs
 sec.anchor=Ancre
 sec.state=État
-
 assets.import=Importer des modèles
 assets.noModels=Aucun modèle trouvé
-
 node.signals=Signaux
 node.onBodyEntered=À l'entrée d'un corps
 node.onSleepChanged=Au changement de sommeil
 node.noNode=Aucun nœud sélectionné
-
 filter.placeholder=Filtre...
-
 inspector.nothing=Rien de sélectionné
 inspector.click=Cliquez sur un objet pour l'inspecter
-
 prop.posX=Position X
 prop.posY=Position Y
 prop.posZ=Position Z
@@ -128,32 +110,26 @@ prop.mass=Masse
 prop.friction=Frottement
 prop.bounce=Rebond
 prop.density=Densité
-
 flag.static_=Statique
 flag.visible=Visible
 flag.locked=Verrouillé
-
 anchor.pinPosition=Épingler la position
 anchor.pinRotation=Épingler la rotation
 anchor.spring=Ressort
 anchor.setAtBody=Placer sur le corps
-
 state.velocity=Vitesse
 state.sleeping=Endormi
 state.active=Actif
-
 bar.consoleEmpty=Console vide
 console.warnings=Avertissements
 console.errors=Erreurs
 console.info=Infos
-
 log.play=Passage en mode jeu avec %d corps
 log.stop=Mode jeu quitté
 log.saved=Scène enregistrée avec %d corps
 log.loaded=Scène chargée avec %d corps
 log.resumed=Reprise
 log.paused_=En pause
-
 launcher.newProject=Nouveau projet
 launcher.create=Créer
 launcher.namePlaceholder=Nom du projet
@@ -204,7 +180,6 @@ launcher.accountEngine=Moteur
 launcher.accountProjects=Projets trouvés
 launcher.accountRoot=Dossier des projets
 launcher.accountNote=Spectra3D fonctionne sans compte : rien n'est envoyé nulle part.
-
 settings.projectRoot=Dossier des projets
 settings.browse=Parcourir...
 settings.apply=Appliquer
@@ -235,3 +210,27 @@ settings.theme=Thème
 settings.themeDark=Sombre
 settings.themeLight=Clair
 settings.themeContrast=Contraste
+settings.languageLolcat=Lolcat
+settings.languageJeb=Jeb Kerman
+settings.languagePirate=Pirate
+settings.languageBrokenUtf8=UTF-8 cass?
+settings.languageHex=Hexad?cimal
+settings.languageGD=Geometry Dash
+settings.languagePortuguese=Portugais
+settings.languageMinecraft=Minecraft
+settings.languageUndertale=Undertale
+settings.languageCeleste=Celeste
+settings.languageDoom=Doom
+settings.languageWows=Wolf of Wall Street
+settings.languageAmongUs=Among Us
+settings.languageLeet=1337
+settings.languageKlingon=Klingon
+settings.languageGopnik=?????
+settings.languageShakespeare=Shakespeare
+shape.box=Cube
+shape.sphere=Sph?re
+shape.cylinder=Cylindre
+shape.capsule=Capsule
+shape.cone=C?ne
+shape.pyramid=Pyramide
+shape.prism=Prisme

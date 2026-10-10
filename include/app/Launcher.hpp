@@ -249,10 +249,15 @@ void toggleFavorite(int index);
     // content rectangle. `trailing` is right-aligned in the header strip.
     Rect section(UiRenderer& ui, UiContext& ctx, const Rect& area, const char* title,
                  const char* trailing, int fbWidth, float& contentY) const;
-    // Byte offset of the suffix of `value` that fits in `maxWidth`: long values
+// Byte offset of the suffix of `value` that fits in `maxWidth`: long values
     // are cut from the left so the last path component, the part that
     // identifies a folder, stays on screen.
     size_t fitOffset(UiRenderer& ui, const std::string& value, float maxWidth) const;
+    // Byte length of the longest PREFIX of `value` that fits in `maxWidth` at
+    // `scale`. The counterpart of fitOffset, used when the text is cut from the
+    // right and the "..." goes at the end. One pass over the code points.
+    size_t fitHeadLength(UiRenderer& ui, const std::string& value, float maxWidth,
+                         float scale) const;
 
     i18n::Localizer& loc_;
     ProjectLibrary projects_;

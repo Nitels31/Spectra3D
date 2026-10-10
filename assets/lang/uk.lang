@@ -1,11 +1,8 @@
-# Spectra3D Ukrainian UI strings
-
 menu.file=Файл
 menu.edit=Редагувати
 menu.view=Вигляд
 menu.create=Створити
 menu.help=Довідка
-
 file.save=Зберегти сцену
 file.newScene=Нова сцена
 file.openScene=Відкрити сцену
@@ -18,13 +15,11 @@ file.buildRun=Зібрати та запустити
 file.load=Завантажити сцену
 file.reload=Перечитати з диска
 file.exit=Вийти
-
 edit.duplicate=Дублювати об'єкт
 edit.delete=Видалити об'єкт
 edit.favorite=В обрані / прибрати з обраного
 edit.clearSelection=Зняти вибір
 edit.wake=Пробудити об'єкт
-
 modal.newScene=Нова сцена
 modal.newSceneHint=Поточна сцена буде очищена. Об'єкти, збережені на диску, залишаться.
 modal.openScene=Відкрити сцену
@@ -39,25 +34,20 @@ modal.buildStages=Що копіюється: програма, glfw3.dll, assets
 modal.file=Файл
 modal.buildPath=Каталог збірки
 modal.noScenes=У каталозі проєкту немає файлів сцен
-
 btn.open=Відкрити
 btn.save=Зберегти
 btn.dontSave=Не зберігати
 btn.build=Зібрати
 btn.cancel=Скасувати
 btn.create=Створити
-
 view.grid=Сітка
 view.vectors=Вектори
 view.frame=Кадрувати вибір
 view.resetCamera=Скинути камеру
-
 toolbar.search=Пошук команд...
 toolbar.layers=Шари
 toolbar.noMatches=Немає такої команди
-
 layers.empty=Сцена порожня
-
 help.controls=Клавіатура та миша
 help.about=Про програму
 help.close=Закрити
@@ -77,10 +67,8 @@ help.desc.look=Утримувати, щоб оглядатися
 help.desc.gravity=Гравітація вздовж кожної осі
 help.desc.select=Вибрати об'єкт, Ctrl додає до вибору
 help.desc.tools=Вибір, переміщення, обертання, масштаб, панорама
-
 btn.wake=Пробудити
 btn.delete_=Видалити
-
 tab.hierarchy=Ієрархія
 tab.inspector=Інспектор
 tab.node=Вузол
@@ -91,7 +79,6 @@ hierarchy.search=Пошук об'єктів
 hierarchy.noMatches=Нічого не знайдено за фільтром
 favorites.empty=Обраного поки немає
 favorites.hint=Зірка в рядку ієрархії додає об'єкт сюди
-
 hier.sceneRoot=Корінь сцени
 sec.create=Створити
 sec.transform=Трансформація
@@ -100,20 +87,15 @@ sec.material=Матеріал
 sec.flags=Прапорці
 sec.anchor=Якір
 sec.state=Стан
-
 assets.import=Імпорт моделей
 assets.noModels=Моделі не знайдені
-
 node.signals=Сигнали
 node.onBodyEntered=При вході тіла
 node.onSleepChanged=При зміні сну
 node.noNode=Вузол не вибрано
-
 filter.placeholder=Фільтр...
-
 inspector.nothing=Нічого не вибрано
 inspector.click=Натисніть на об'єкт
-
 prop.posX=Позиція X
 prop.posY=Позиція Y
 prop.posZ=Позиція Z
@@ -128,32 +110,26 @@ prop.mass=Маса
 prop.friction=Тертя
 prop.bounce=Відскок
 prop.density=Щільність
-
 flag.static_=Статичний
 flag.visible=Видимий
 flag.locked=Заблокований
-
 anchor.pinPosition=Закріпити позицію
 anchor.pinRotation=Закріпити обертання
 anchor.spring=Пружина
 anchor.setAtBody=Встановити на тілі
-
 state.velocity=Швидкість
 state.sleeping=Спить
 state.active=Активний
-
 bar.consoleEmpty=Консоль порожня
 console.warnings=Попередження
 console.errors=Помилки
 console.info=Інформація
-
 log.play=Режим гри з %d тілами
 log.stop=Вихід з режиму гри
 log.saved=Сцену збережено з %d тілами
 log.loaded=Сцену завантажено з %d тілами
 log.resumed=Відновлено
 log.paused_=Пауза
-
 launcher.newProject=Новий проєкт
 launcher.create=Створити
 launcher.namePlaceholder=Назва проєкту
@@ -204,7 +180,6 @@ launcher.accountEngine=Движок
 launcher.accountProjects=Знайдено проєктів
 launcher.accountRoot=Папка проєктів
 launcher.accountNote=Spectra3D працює без облікового запису: нічого нікуди не надсилається.
-
 settings.projectRoot=Папка проєктів
 settings.browse=Оглянути...
 settings.apply=Застосувати
@@ -235,3 +210,27 @@ settings.theme=Тема
 settings.themeDark=Темна
 settings.themeLight=Світла
 settings.themeContrast=Контрастна
+settings.languageLolcat=???-???
+settings.languageJeb=???? ??????
+settings.languagePirate=?????
+settings.languageBrokenUtf8=???????? UTF-8
+settings.languageHex=???????????????
+settings.languageGD=Geometry Dash
+settings.languagePortuguese=?????????????
+settings.languageMinecraft=Minecraft
+settings.languageUndertale=Undertale
+settings.languageCeleste=Celeste
+settings.languageDoom=Doom
+settings.languageWows=???? ? ????-?????
+settings.languageAmongUs=????? ???
+settings.languageLeet=1337
+settings.languageKlingon=???????????
+settings.languageGopnik=?????
+settings.languageShakespeare=???????
+shape.box=???
+shape.sphere=?????
+shape.cylinder=???????
+shape.capsule=???????
+shape.cone=?????
+shape.pyramid=????????
+shape.prism=??????

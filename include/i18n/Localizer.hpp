@@ -7,7 +7,13 @@
 namespace s3d {
 namespace i18n {
 
-enum class Language { English = 0, Ukrainian = 1, German = 2, French = 3, Italian = 4, Spanish = 5 };
+enum class Language {
+    English = 0, Ukrainian = 1, German = 2, French = 3, Italian = 4, Spanish = 5,
+    Lolcat = 6, Jeb = 7, Pirate = 8, BrokenUtf8 = 9, Hex = 10, GeometryDash = 11,
+    Portuguese = 12, Minecraft = 13, Undertale = 14, Celeste = 15, Doom = 16,
+    WolfOfWallStreet = 17, AmongUs = 18, Leet = 19, Klingon = 20, Gopnik = 21,
+    Shakespeare = 22,
+};
 
 // Byte-wise FNV-1a, used for both the stored keys and the `const char*` probes so
 // the two can never hash differently: std::hash is not specified to agree
@@ -35,7 +41,7 @@ using TextTable = std::unordered_map<std::string, std::string, TextHash, std::eq
 // reachable without going through that reference.
 class Localizer {
 public:
-    // Loads every bundle in `assets/lang` (en, uk, de, fr, it, es) from the
+    // Loads every bundle in `assets/lang` (en, uk, de, fr, it, es, lol) from the
     // detected asset root. Missing files are reported and skipped, and the
     // application keeps running in whatever it has.
     void loadBundles();

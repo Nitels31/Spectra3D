@@ -10,6 +10,15 @@ namespace s3d {
 // Unit-scaled primitives baked once into GL display lists. Keeping the
 // immediate-mode geometry out of the frame loop turns thousands of per-frame
 // glVertex calls into a handful of glCallList calls.
+//
+// The lists record a single glDrawArrays over a vertex array, not a stream of
+// immediate-mode commands. GL_COMPILE stores the commands, so a command-stream
+// list is re-dispatched in full on every glCallList; a vertex-array list is one
+// draw. That difference is the whole reason 200 sphere bodies used to issue
+// ~140k GL calls per frame.
+//
+// The vertex buffers are members, not locals: a display list keeps the client
+// pointers, not a copy of the data, so the buffer must outlive the list.
 class PrimitiveCache {
 public:
     ~PrimitiveCache();
@@ -49,6 +58,17 @@ private:
     unsigned cylinder_ = 0;
     unsigned cone_ = 0;
     unsigned pyramid_ = 0;
+
+    // Interleaved x,y,z,nx,ny,nz for the lit primitives; positions only for the
+    // two line lists. Built once in build() and kept for the display lists to
+    // read on every replay.
+    std::vector<float> cubeVerts_;
+    std::vector<float> sphereVerts_;
+    std::vector<float> cylinderVerts_;
+    std::vector<float> coneVerts_;
+    std::vector<float> pyramidVerts_;
+    std::vector<float> wallGridVerts_[6];
+    std::vector<float> arenaEdgesVerts_;
 };
 
 // Immediate-mode line helpers shared by the debug draw paths.
