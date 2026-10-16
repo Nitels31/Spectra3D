@@ -163,6 +163,10 @@ private:
     static constexpr int kMaxClips = 4;
     Rect clips_[kMaxClips] = {};
     int clipDepth_ = 0;
+    // Pushes that arrived after the stack was full. Counted so a pop cannot spend a
+    // depth this class never took - same trap as UiRenderer, which is why the two
+    // are fixed together.
+    int clipOverflow_ = 0;
     float dragStartX_ = 0.0f;
     float dragStartValue_ = 0.0f;
 

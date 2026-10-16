@@ -43,6 +43,7 @@ void UiRenderer::begin(int width, int height) {
     width_ = width;
     height_ = height;
     clipDepth_ = 0;
+    clipOverflow_ = 0;
     // The scissor test is state, and state survives a frame. Forgetting to turn it
     // off here meant a panel whose clip rectangle moved - a floating panel, a dock
     // dragged to the other edge - had the PREVIOUS frame's box still in force for
@@ -77,6 +78,7 @@ void UiRenderer::end() {
     // Symmetric with begin(): whatever a panel pushed, the next frame starts from
     // a clean state.
     clipDepth_ = 0;
+    clipOverflow_ = 0;
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
@@ -124,12 +126,33 @@ void UiRenderer::pushClip(const Rect& rect) {
     // and submitting it now would mix clipped and unclipped triangles into one
     // draw call.
     flush();
-    if (clipDepth_ >= kMaxClips) return;
+    if (clipDepth_ >= kMaxClips) {
+        // Counted, not just refused. popClip() cannot tell an overflowing push from
+        // a real one by depth alone, so a silent return here meant the matching pop
+        // decremented the depth and restored somebody else's box: the stack came
+        // unwound one entry per overflow while the panel still believed it was
+        // nested, and everything after it was cut to the wrong rectangle. Nothing
+        // in the editor nests eight deep today, which is why this never fired - but
+        // it fails silently the day a panel does.
+        ++clipOverflow_;
+        return;
+    }
 
+    // Round OUT, not in. A scissor box has to CONTAIN the rectangle it is meant to
+    // clip, so the left and top edges go down and the right and bottom go up:
+    // `(int)rect.x` and `(int)rect.width` truncate, which threw away a pixel
+    // whenever the bounds were fractional - and they are, because the inspector
+    // scrolls by a float. Rect in window coordinates (y down) becomes GL
+    // coordinates (y up) here, and `height_` is an integer, so
+    // floor(height_ - v) == height_ - ceil(v); that identity is why the two edges
+    // collapse into the four lines below instead of six.
+    const int x0 = (int)std::floor(rect.x);
+    const int y0 = (int)std::floor(rect.y);
+    const int x1 = (int)std::ceil(rect.x + rect.width);
+    const int y1 = (int)std::ceil(rect.y + rect.height);
     // GL scissors cannot be switched off per triangle, so an empty intersection is
     // expressed as a degenerate box - nothing inside it can pass.
-    Clip next{(int)rect.x, height_ - (int)(rect.y + rect.height), (int)rect.width,
-              (int)rect.height};
+    Clip next{x0, height_ - y1, x1 - x0, y1 - y0};
     if (clipDepth_ > 0) {
         const Clip& outer = clips_[clipDepth_ - 1];
         const int left = std::max(outer.x, next.x);
@@ -145,7 +168,14 @@ void UiRenderer::pushClip(const Rect& rect) {
 
 void UiRenderer::popClip() {
     if (clipDepth_ <= 0) return;
+    // After the flush, before the decrement: an overflowing push left the scissor
+    // exactly where it was, so the matching pop restores nothing and must not spend
+    // a depth it never took.
     flush();
+    if (clipOverflow_ > 0) {
+        --clipOverflow_;
+        return;
+    }
     --clipDepth_;
     if (clipDepth_ == 0) {
         glDisable(GL_SCISSOR_TEST);

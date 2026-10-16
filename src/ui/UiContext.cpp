@@ -37,7 +37,10 @@ const char* NumTraits<int>::kScanFormat = "%d";
 } // namespace
 
 void UiContext::pushClip(const Rect& rect) {
-    if (clipDepth_ >= kMaxClips) return;
+    if (clipDepth_ >= kMaxClips) {
+        ++clipOverflow_;
+        return;
+    }
     Rect next = rect;
     if (clipDepth_ > 0) {
         const Rect& outer = clips_[clipDepth_ - 1];
@@ -51,6 +54,10 @@ void UiContext::pushClip(const Rect& rect) {
 }
 
 void UiContext::popClip() {
+    if (clipOverflow_ > 0) {
+        --clipOverflow_;
+        return;
+    }
     if (clipDepth_ > 0) --clipDepth_;
 }
 
@@ -82,6 +89,7 @@ void UiContext::beginInput(Window& window) {
     // own sections, so it is always empty again by the time the next frame starts -
     // and a leftover box would silently make half the window unclickable.
     clipDepth_ = 0;
+    clipOverflow_ = 0;
     // captureId_ is deliberately left alone: it describes an open popup, which lives
     // across the frame, and whoever opened it sets it before the first widget runs.
 }

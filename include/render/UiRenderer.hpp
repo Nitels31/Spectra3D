@@ -63,6 +63,9 @@ private:
     static constexpr int kMaxClips = 8;
     Clip clips_[kMaxClips];
     int clipDepth_ = 0;
+    // Pushes that arrived after the stack was full. They flush and change nothing,
+    // so their pops have to be counted too - see pushClip/popClip.
+    int clipOverflow_ = 0;
 
     TextAtlas atlas_;
     std::vector<float> colorBatch_;
