@@ -21,6 +21,7 @@ class PhysicsWorld;
 class MeshRegistry;
 struct Camera;
 struct RigidBody;
+class Window;
 
 namespace script {
 
@@ -32,6 +33,9 @@ struct ScriptState {
     PhysicsWorld* world = nullptr;
     MeshRegistry* meshes = nullptr;
     Camera* camera = nullptr;
+    // The window, for the input bindings. Same deal as the other three: a
+    // pointer the host keeps fresh, never one a script ever sees.
+    Window* window = nullptr;
 
     // Script-authored groups. Members are body indices; removeBody() keeps them
     // in step with the erase it performs on the world, and clearScene() drops
@@ -82,6 +86,7 @@ int registerBindings(asIScriptEngine* engine, const Binding* bindings, size_t co
 int registerEngineBindings(asIScriptEngine* engine);
 int registerSceneBindings(asIScriptEngine* engine);
 int registerCameraBindings(asIScriptEngine* engine);
+int registerInputBindings(asIScriptEngine* engine);
 #endif
 
 } // namespace script

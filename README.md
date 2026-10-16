@@ -27,7 +27,8 @@ src/                 implementation (.cpp), split by layer
   scene/             BodyFactory, SceneSerializer
   i18n/              Localizer
   editor/            Editor, panels/, Picking, Gizmo, AssetBrowser
-  script/            ScriptHost, Bindings, BindEngine, BindScene, BindCamera, BindString
+  script/            ScriptHost, Bindings, BindEngine, BindScene, BindCamera,
+                   BindInput, BindString
   app/               Application, Launcher, FixedClock, main
 
 include/             every engine header, same layer split + json/
@@ -319,21 +320,60 @@ A helper `void makeForest()` next to `onInit` therefore **does not** run on its
 own - the entry point calls it (otherwise the scene is built twice). `shared`
 removes a function from the entry point rule entirely.
 
-The host also knows three optional hooks - they are addressed by declaration through
-`script::Host::callFunction()` (`kOnInitDeclaration`, `kOnUpdateDeclaration`,
-`kOnStopDeclaration`):
+Note what "first `void()`" means: **no parameters**. A hook that takes `dt` is not an
+entry point, so `void onUpdate(float dt)` never runs on load - only from the frame
+loop. (`void onStop()` has no parameters, so a script that declares *only* `onStop`
+still runs it on load. That is the old rule unchanged.)
 
-| Hook | When it should run |
+### Hooks
+
+Four optional declarations. All of them are optional, and a script that declares none
+of them is completely normal:
+
+| Hook | When it runs | `dt` means |
+|---|---|---|
+| `void onInit()` | once, when the module is executed (see the rule above) | - |
+| `void onUpdate(float dt)` | **once per rendered frame**, before physics | the real frame time |
+| `void onFixedUpdate(float dt)` | **once per physics step**, inside the accumulator | always the fixed step |
+| `void onStop()` | once, when Play finishes, after the scene is restored | - |
+| `void onUpdate()` | legacy: every frame, **only if no `dt` form exists anywhere** | - |
+
+The two update hooks exist because the difference matters. `onUpdate` is driven by the
+display, so `position += speed * dt` moves at the same visual speed on any monitor but
+does **not** simulate the same physics. `onFixedUpdate` is driven by the fixed
+accumulator, so it always advances by exactly 1/60 s: use it for anything that should
+behave identically on a 60 Hz laptop and a 144 Hz desktop. It runs at most twice per
+frame - see the step budget below.
+
+If two scripts declare the same hook, the first one loaded is the one that gets called
+and the engine logs a warning saying so, rather than silently dropping the other.
+
+**Step budget:** the accumulator runs at 60 Hz with a cap of **2 catch-up steps per
+frame**. A frame longer than 100 ms is capped by `kMaxFrameTime` anyway, so the loop
+can never spiral; long stalls slow time down instead. (The previous cap of 10 was
+unreachable — 0.1 s of stall is only 6 steps — so it just looked unbounded.)
+
+### Input
+
+State only, no events - there is no queue, so a key pressed and released inside a
+single frame is not seen. Event delivery is deferred.
+
+| Call | What it does |
 |---|---|
-| `void onInit()` | once, when the module is executed (see the rule above) |
-| `void onUpdate()` | every frame while Play mode lasts |
-| `void onStop()` | once, when Play finishes |
+| `bool isKeyDown(int key)` | is a key held, `engine::KeyW`, `KeyA`, `KeyS`, `KeyD`, ... |
+| `bool isMouseButtonDown(int button)` | `engine::MouseLeft`, `MouseRight`, `MouseMiddle` |
+| `bool getMouseDelta(float &out dx, float &out dy)` | movement since the previous frame, in pixels |
+| `void setMouseCaptured(bool)` | confine the cursor to the window |
+| `bool isMouseCaptured()` | current state |
+| `float getScrollDelta()` | scroll accumulated by the window |
 
-**Current state of the code:** nobody outside `ScriptHost.cpp` calls
-`Host::callFunction()` - neither the frame loop nor `Editor::exitPlayMode()` feeds
-these hooks. So today `onUpdate()` / `onStop()` do not run at all; if a script
-declares **only** `void onUpdate()`, it runs once - as the first `void()` entry
-point. All three hooks are optional.
+All of them read the live window, so a headless host - `scripttest`, anything built
+without one - answers `false` and **zeroes** its `out` arguments instead of
+dereferencing a null pointer.
+
+`getScrollDelta()` is published so the binding set is complete, but in practice it
+answers `0`: `Application` consumes the window's scroll earlier in the frame for the
+editor.
 
 ### API
 
@@ -442,6 +482,30 @@ void onInit()
 }
 ```
 
+And something that moves, showing the two update hooks side by side:
+
+```angelscript
+int spinner;
+
+void onInit()
+{
+    spinner = engine::spawnBox(0.0f, 5.0f, 0.0f, 1.0f, 1.0f, 1.0f);
+}
+
+// Driven by the display: reads the keyboard, so it wants the real frame time.
+void onUpdate(float dt)
+{
+    if (engine::isKeyDown(engine::KeySpace))
+        engine::addImpulse(spinner, 0.0f, 40.0f, 0.0f);
+}
+
+// Driven by the fixed step: same result on every machine.
+void onFixedUpdate(float dt)
+{
+    engine::setGravity(0.0f, -9.81f, 0.0f);
+}
+```
+
 ### Checking it
 
 The entry point rule and the hooks are testable without a window and without a
@@ -453,8 +517,12 @@ cmake --build build --config Release
 build\scripttest.exe
 ```
 
-46 checks: an entry point with a helper runs once, a missing hook returns `false`
-silently, a present one runs, a compile error produces an ERROR diagnostic.
+95 checks: the entry-point rule and its interaction with hooks, a `dt` hook that is
+not an entry point, `onUpdate` / `onFixedUpdate` / `onStop` each called only on their
+own turn, a duplicate hook declaration reported as a warning, a hook that raises an
+exception mid-flight followed by a hook that still runs, the function cache dropping
+both its hits and its misses when a module is replaced, the input bindings with no
+window, and a compile error as an ERROR diagnostic.
 
 ## Features
 

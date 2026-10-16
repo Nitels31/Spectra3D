@@ -30,7 +30,7 @@ below it.
                 |
               editor      Editor, panels/, Picking, Gizmo, AssetBrowser
                 |
-              script      ScriptHost, BindEngine/BindScene/BindCamera/BindString
+              script      ScriptHost, BindEngine/BindScene/BindCamera/BindString/BindInput
                 |
               scene       BodyFactory, SceneSerializer
                 |
@@ -221,25 +221,35 @@ and execution, and diagnostics. `Bindings.hpp` describes `ScriptState` (a live
 `PhysicsWorld`/`MeshRegistry`/`Camera` plus the groups scripts create) and the
 registration tables; `BindEngine.cpp` is logging, spawning, gravity and body access;
 `BindScene.cpp` is the scene, model import and groups; `BindCamera.cpp` is the camera;
+`BindInput.cpp` is the keyboard and mouse, read from the live `Window`;
 `BindString.cpp` is the engine's own `string` type, because AngelScript has no
 standard one. The `engine` namespace is created with
 `SetDefaultNamespace("engine")`, because 2.38 does not accept a `namespace` modifier
 in `RegisterGlobalFunction`.
 
-Three things to know before changing any of it:
+Five things to know before changing any of it:
 
 - **One module per script.** `Build()` in AngelScript is atomic: an error in one file
   would zero the functions of the others. The module name comes from the file name
   without its extension (`moduleNameFor`), and `asGM_ALWAYS_CREATE` makes re-running
   a module a replacement of that module alone.
 - **Exactly one entry point per script.** `onInit` (or `main`/`start`), otherwise the
-  first global `void()`, otherwise (only `shared` functions) nothing.
+  first global `void()`, otherwise (only `shared` functions) nothing. "void()" means
+  *no parameters*, so a hook like `void onUpdate(float dt)` is **not** an entry point
+  and does not run on load — it only runs from the frame loop. A `void onStop()` is a
+  `void()`, so a script that declares nothing else will run `onStop` on load; that is
+  the pre-existing rule doing what it always did.
 - **Function lookup goes through `resolveFunction()`, not only the engine.**
   `asCScriptEngine::GetGlobalFunctionByDecl` walks only what was registered — the
   `engine::` bindings — and does **not** see functions a script declared itself. So
   `hasFunction()`/`callFunction()` ask the engine table first and then walk each
   module's functions. Without the second half, `callFunction("void onUpdate()")`
   always returned `false`.
+  That walk takes the **first** module that declares the name, in module creation
+  order. Two scripts declaring the same hook is therefore first-wins, decided by which
+  file was loaded first — so `resolveFunction()` emits a warning when it sees more
+  than one owner, once per generation. It is a warning and not an error on purpose: a
+  duplicate declaration should not stop a project from running.
 - **`str::equalsIgnoreAscii` folds only its first argument** (`Str.hpp`): `a` is
   lowercased and `b` has to be a lowercase literal already. The entry-point rule
   therefore spells the names `"oninit"`, `"main"`, `"start"` — writing `onInit`
@@ -247,6 +257,13 @@ Three things to know before changing any of it:
   i.e. to a helper.
 - **Nothing steps the world here.** The bindings mutate a live `PhysicsWorld` in
   place, so one script runs the same way in edit mode and in Play.
+- **One context, reused.** `Host` keeps a single `asIScriptContext` instead of
+  creating one per call, and calls `Unprepare()` on both the success and the exception
+  path. A context left mid-execution cannot be prepared again, so skipping this is
+  what turns one bad frame into a dead scripting layer for the rest of the session.
+- **The context is built lazily.** `runString()` only compiles; the context is created
+  on the first call that actually executes something. A script that never runs never
+  allocates one.
 
 ### `editor`
 
@@ -687,13 +704,38 @@ Facts worth keeping in mind, because they mildly contradict intuition:
   frame. A missing directory or an empty one is not an error.
 - **Entry point.** Exactly one function per module: `onInit` / `main` / `start`,
   otherwise the first global `void()` in declaration order, otherwise nothing (only
-  `shared`).
-- **Hooks.** `Host` knows `void onInit()`, `void onUpdate()`, `void onStop()` (the
-  `kOn*Declaration` constants) and can call them through
-  `callFunction()`/`hasFunction()`. But it **calls only the entry point itself**:
-  neither the frame loop nor `Editor::exitPlayMode()` calls them, so `onUpdate` and
-  `onStop` are currently dead. Wiring them up costs one line in
-  `Application::runEditorFrame()` and one in `exitPlayMode`/`consumePlayStarted`.
+  `shared`). "void()" means *no parameters* — a per-frame hook takes `dt`, so it is
+  not an entry point and does not run on load.
+- **Hooks.** `Host` knows four optional declarations and calls them itself:
+  `void onUpdate(float dt)`, `void onFixedUpdate(float dt)`, `void onStop()`, and the
+  legacy `void onUpdate()` with no arguments. They are all optional and a script that
+  declares none of them is normal, not an error.
+  - `onUpdate(float dt)` runs **once per rendered frame**, before the physics
+    accumulator — it sees the real frame delta, so movement it writes scales with the
+    display's refresh rate.
+  - `onFixedUpdate(float dt)` runs **once per fixed step**, inside the accumulator, so
+    it always sees the same `dt` regardless of frame rate. That is what makes
+    physics-driving script behaviour identical on a 60 Hz and a 144 Hz machine, and it
+    is why it is a separate function instead of a flag on `onUpdate`.
+  - `onStop()` runs when Play ends, after the edit-mode snapshot is restored, so a
+    script can undo whatever it created.
+  - The old `void onUpdate()` still works and is only used when no `dt` form is
+    declared anywhere; declaring both is reported by the duplicate-owner warning.
+- **Step budget.** `FixedClock` is constructed as `{60.0, 2}` — 60 Hz with at most 2
+  catch-up steps per frame. `kMaxFrameTime = 0.1` already caps a frame at 6 steps of
+  1/60 s, so the previous cap of 10 was unreachable and only meant the `for` loop
+  looked unbounded. A long stall therefore slows time down instead of spiralling.
+  Since `onFixedUpdate` runs per step, it runs at most twice per frame.
+- **Input.** `engine::isKeyDown`, `isMouseButtonDown`, `getMouseDelta`,
+  `setMouseCaptured`, `isMouseCaptured` and `getScrollDelta`, plus `engine::Key*` and
+  `engine::Mouse*` constants (`BindInput.cpp`). They read the live `Window`, so a
+  `Host` built with `nullptr` — `scripttest`, anything headless — answers `false`
+  and zeroes its `out` arguments instead of dereferencing nothing. **State only, no
+  events:** there is no queue, so an edge that is pressed and released inside one frame
+  is not seen. Event delivery is deferred.
+  - `getScrollDelta()` reads the window's accumulated scroll, which `Application`
+    consumes earlier in the frame for the editor. In practice a script sees `0`; it is
+    published so the binding set is complete, not because it is useful yet.
 - **Diagnostics.** `Host::setDiagnosticSink()` is installed before `initialize()`;
   compiler and exception messages go to `Log` with the file, line and column
   (`[script] ...` for `engine::log*`).

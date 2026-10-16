@@ -113,8 +113,12 @@ kHelpClose = 1400,
     bool consumeSingleStep();
     bool consumeTimeReset() { return std::exchange(timeResetRequested_, false); }
     // True once, on the frame the editor enters play mode. The application runs
-    // the project's scripts at that point, so they see a live world.
+    // the project's scripts at that point, so they see a live world in the first
+    // Play frame. True once more, on the frame play mode ends, so the shell can
+    // run a script's onStop() - the editor cannot call it itself, because the
+    // script host belongs to the application and the dependency only points up.
     bool consumePlayStarted() { return std::exchange(playStarted_, false); }
+    bool consumePlayStopped() { return std::exchange(playStopped_, false); }
 
     // Scene file this editor saves to and loads from. Empty falls back to
     // "scene.txt" next to the binary, which is what happens when the editor runs
@@ -495,6 +499,7 @@ private:
     bool singleStepRequested_ = false;
     bool timeResetRequested_ = false;
     bool playStarted_ = false;
+    bool playStopped_ = false;
     std::string scenePath_;
     std::vector<RigidBody> editSnapshot_;
     GravityAxis snapshotGravity_ = GravityAxis::NegY;

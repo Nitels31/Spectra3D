@@ -109,7 +109,7 @@ bool waitForFrame(Window& window, double deadline, bool wakeOnActivity) {
 } // namespace
 
 Application::Application()
-    : launcher_(localizer_), scripts_(world_, meshes_, camera_) {}
+    : launcher_(localizer_), scripts_(world_, meshes_, camera_, &window_) {}
 
 Application::~Application() = default;
 
@@ -376,6 +376,26 @@ editor_->handleInput(world_, camera_, window_, window_.framebufferWidth(),
 
     if (editor_->consumeTimeReset()) simulationTime_ = 0.0;
     if (editor_->consumePlayStarted()) runProjectScripts();
+    // After the world has been restored from the snapshot, which is the point of
+    // Stop: the script says goodbye to the edit-mode world, not to the one Play
+    // built. Placed here because the editor has no way to reach the script host
+    // and the dependency only points up.
+    if (editor_->consumePlayStopped()) scripts_.callStop();
+
+    // Once per RENDERED frame, and before the physics rather than inside it.
+    //
+    // The placement is the whole point. updateSimulation() below runs a loop of
+    // zero to kMaxStepsPerRenderedFrame fixed steps, so a hook called from inside
+    // that loop would fire up to six times in one frame on a slow machine and once
+    // on a fast one - the same script moving a body at 30 FPS and at 144 Hz.
+    // Visual work, camera smoothing and anything that wants the real frame time
+    // belongs here, where one frame is one call. Simulation belongs in
+    // onFixedUpdate, inside the loop, where the step is constant.
+    //
+    // Skipped when not simulating, so an editor that is not playing costs one
+    // boolean rather than a lookup - and a script that is not playing has no
+    // business being told about frames.
+    if (editor_->simulating()) scripts_.callUpdate(dt);
 
     updateSimulation(dt);
     renderScene();
@@ -508,6 +528,10 @@ void Application::updateSimulation(float dt) {
 
     const int steps = clock_.advance((double)dt);
     for (int i = 0; i < steps; ++i) {
+        // One call per fixed step, so a script sees the same dt on every machine
+        // and the same number of calls for the same elapsed time. Zero to
+        // kMaxStepsPerRenderedFrame of them in one frame.
+        if (editor_->simulating()) scripts_.callFixedUpdate((float)clock_.step());
         world_.step((float)clock_.step());
         simulationTime_ += clock_.step();
     }

@@ -1036,6 +1036,10 @@ void Editor::exitPlayMode(PhysicsWorld& world) {
     playing_ = false;
     timeResetRequested_ = true;
     dragAxis_ = -1;
+    // Raised for Application to pick up next frame, not taken here: the editor
+    // cannot reach the script host, and the dependency only points up. Set after
+    // the snapshot is back in place so a script's onStop sees the edit-mode world.
+    playStopped_ = true;
     Log::info(text("log.stop"));
 }
 

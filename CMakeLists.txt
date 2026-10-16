@@ -231,6 +231,7 @@ set(SPECTRA_SRC_SCRIPT
     src/script/BindEngine.cpp
     src/script/BindScene.cpp
     src/script/BindCamera.cpp
+    src/script/BindInput.cpp
     src/script/BindString.cpp
 )
 set(SPECTRA_SRC_SCENE

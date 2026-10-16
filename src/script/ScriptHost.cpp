@@ -177,8 +177,8 @@ RigidBody* resolveBody(const char* fn, int index) {
 
 // --- Host -------------------------------------------------------------------
 
-Host::Host(PhysicsWorld& world, MeshRegistry& meshes, Camera& camera)
-    : world_(world), meshes_(meshes), camera_(camera) {}
+Host::Host(PhysicsWorld& world, MeshRegistry& meshes, Camera& camera, Window* window)
+    : world_(world), meshes_(meshes), camera_(camera), window_(window) {}
 
 Host::~Host() { shutdown(); }
 
@@ -202,6 +202,7 @@ bool Host::initialize() {
     state.world = &world_;
     state.meshes = &meshes_;
     state.camera = &camera_;
+    state.window = window_;
     sink.owner = this;
     sink.callback = sink_;
     sink.list = &diagnostics_;
@@ -238,7 +239,7 @@ bool Host::initialize() {
     }
 
     if (registerEngineBindings(engine) < 0 || registerSceneBindings(engine) < 0 ||
-        registerCameraBindings(engine) < 0) {
+        registerCameraBindings(engine) < 0 || registerInputBindings(engine) < 0) {
         emit(this, MsgLevel::Error, "", 0, 0, "binding registration failed; engine disabled");
         shutdown();
         return false;
@@ -260,6 +261,14 @@ bool Host::initialize() {
 void Host::shutdown() {
 #if SPECTRA_SCRIPTING
     if (!engine_) return;
+    // The context is released before the engine that owns it. Skipping this is
+    // the one shutdown bug that would now be new: a kept context has a
+    // destructor where the per-call one had a Release() on every path.
+    if (context_) {
+        static_cast<asIScriptContext*>(context_)->Release();
+        context_ = nullptr;
+    }
+    clearFunctionCache();
     static_cast<asIScriptEngine*>(engine_)->ShutDownAndRelease();
 #endif
     engine_ = nullptr;
@@ -308,6 +317,14 @@ bool Host::buildAndRun(const std::string& moduleName, const std::string& section
     // Build() is atomic, so a module per script is what keeps one file's compile
     // error from wiping the functions of another. ALWAYS_CREATE makes a re-run
     // replace exactly this script's module and nothing else.
+    //
+    // That replacement is also why the resolved-declaration cache is dropped
+    // here and not anywhere else: asGM_ALWAYS_CREATE discards the old module and
+    // its functions, so every cached pointer that could have belonged to it is
+    // now dangling, and a cached MISS is just as wrong as a stale hit - a script
+    // that declared onUpdate thirty seconds ago can declare it now.
+    clearFunctionCache();
+
     asIScriptModule* module = engine->GetModule(moduleName.c_str(), asGM_ALWAYS_CREATE);
     if (!module) {
         emit(this, MsgLevel::Error, sectionName.c_str(), 0, 0, "script module could not be created");
@@ -346,9 +363,8 @@ bool Host::buildAndRun(const std::string& moduleName, const std::string& section
     }
     if (!entry) entry = firstEntry;
     if (!entry) return true; // a script that only declares shared helpers
-    if (!entry) return true; // a script that only declares shared helpers
 
-    return executeFunction(entry, sectionName.c_str());
+    return executeFunction(entry, sectionName.c_str(), 0.0f);
 #else
     (void)moduleName;
     (void)sectionName;
@@ -357,15 +373,42 @@ bool Host::buildAndRun(const std::string& moduleName, const std::string& section
 #endif
 }
 
-bool Host::executeFunction(void* function, const char* label) {
+void* Host::context() {
+#if SPECTRA_SCRIPTING
+    if (context_) return context_;
+    asIScriptEngine* engine = static_cast<asIScriptEngine*>(engine_);
+    if (!engine) return nullptr;
+    context_ = engine->CreateContext();
+    return context_;
+#else
+    return nullptr;
+#endif
+}
+
+void Host::clearFunctionCache() { functionCache_.clear(); }
+
+bool Host::executeFunction(void* function, const char* label, float argument) {
 #if SPECTRA_SCRIPTING
     asIScriptEngine* engine = static_cast<asIScriptEngine*>(engine_);
     asIScriptFunction* fn = static_cast<asIScriptFunction*>(function);
     if (!engine || !fn) return false;
 
-    // A context per call: an exception leaves the context mid-execution, and a
-    // per-frame hook must not inherit the one that raised it.
-    asIScriptContext* ctx = engine->CreateContext();
+    // One context for the life of the host, not one per call.
+    //
+    // The reason the old code made a context per call was right - an exception
+    // leaves a context mid-execution and a per-frame hook must not inherit the one
+    // that raised it - but AngelScript already has the answer to that, and it is
+    // Unprepare(): asCContext::Unprepare refuses only while a function is ACTIVE
+    // or SUSPENDED, and for any other status except a clean FINISH it calls
+    // CleanStack() before returning. Calling it after a failed Execute is the
+    // supported recovery, and what it leaves behind is a context that is ready
+    // for the next Prepare.
+    //
+    // So the same call has to be made on both paths, and the difference between
+    // the paths is the report, not the cleanup. A float argument is a primitive,
+    // so it never sets the context's needToCleanupArgs flag - which is the other
+    // condition Unprepare asserts on.
+    asIScriptContext* ctx = static_cast<asIScriptContext*>(context());
     if (!ctx) {
         emit(this, MsgLevel::Error, label, 0, 0, "no script context available");
         return false;
@@ -377,57 +420,122 @@ bool Host::executeFunction(void* function, const char* label) {
     if (ctx->Prepare(fn) < 0) {
         emit(this, MsgLevel::Error, label, 0, 0, "script function could not be prepared");
         ok = false;
-    } else if (ctx->Execute() != asEXECUTION_FINISHED) {
-        emitExecutionFailure(this, ctx, label, name);
-        ok = false;
+    } else {
+        // Only the per-frame hooks take an argument. An entry point is a `void()`
+        // with no parameters, and SetArgFloat(0) on one of those is an error - which
+        // is how the first version of this made every single script fail to run.
+        if (fn->GetParamCount() > 0 && ctx->SetArgFloat(0, argument) < 0) ok = false;
+        if (ok && ctx->Execute() != asEXECUTION_FINISHED) {
+            emitExecutionFailure(this, ctx, label, name);
+            ok = false;
+        }
+        // Unconditional, and before the report for a thrown exception has any way
+        // to read the context again: this is what makes the context reusable and
+        // what stops one bad frame from poisoning every frame after it.
+        ctx->Unprepare();
     }
-    if (ok) ctx->Unprepare();
-
-    ctx->Release();
     return ok;
 #else
     (void)function;
     (void)label;
+    (void)argument;
     return false;
 #endif
 }
 
-bool Host::callFunction(const char* declaration) {
+bool Host::callFunction(const char* declaration, float argument) {
 #if SPECTRA_SCRIPTING
     // A hook nobody declared is the normal case for onUpdate/onStop, so it
     // returns quietly - nothing is logged and no diagnostic is recorded, which
     // is what makes a per-frame call safe.
     void* fn = resolveFunction(declaration);
     if (!fn) return false;
-    return executeFunction(fn, declaration);
+    return executeFunction(fn, declaration, argument);
 #else
     (void)declaration;
+    (void)argument;
     return false;
 #endif
 }
 
-bool Host::hasFunction(const char* declaration) const {
-    return resolveFunction(declaration) != nullptr;
+bool Host::callUpdate(float dt) {
+#if SPECTRA_SCRIPTING
+    // The dt form first. A script written before it existed has `void onUpdate()`
+    // and gets it rather than nothing, which is the difference between "the
+    // script stopped updating" and "the script has no dt".
+    if (resolveFunction(kOnUpdateDeclaration))
+        return callFunction(kOnUpdateDeclaration, dt);
+    if (resolveFunction(kOnUpdateLegacyDeclaration))
+        return callFunction(kOnUpdateLegacyDeclaration, 0.0f);
+    return false;
+#else
+    (void)dt;
+    return false;
+#endif
 }
 
-void* Host::resolveFunction(const char* declaration) const {
+bool Host::callFixedUpdate(float dt) {
+#if SPECTRA_SCRIPTING
+    return callFunction(kOnFixedUpdateDeclaration, dt);
+#else
+    (void)dt;
+    return false;
+#endif
+}
+
+bool Host::callStop() {
+#if SPECTRA_SCRIPTING
+    return callFunction(kOnStopDeclaration);
+#else
+    return false;
+#endif
+}
+
+bool Host::hasFunction(const char* declaration) { return resolveFunction(declaration) != nullptr; }
+
+void* Host::resolveFunction(const char* declaration) {
 #if SPECTRA_SCRIPTING
     asIScriptEngine* engine = static_cast<asIScriptEngine*>(engine_);
     if (!engine || !declaration) return nullptr;
 
+    // The cache first, misses included. A per-frame call that has to parse a
+    // declaration string and sweep every module on every frame is a per-frame
+    // tax on scripts that declare nothing; a script that declares the hook pays
+    // one lookup and then a pointer.
+    for (const Resolved& entry : functionCache_)
+        if (entry.declaration == declaration) return entry.function;
+
     // First the registered `engine::` bindings, then the script globals. Both
     // lookups are needed: GetGlobalFunctionByDecl only ever reads the engine's
     // own registered table, so without the module sweep it can never see an
-    // `onUpdate()` that a script declared - which is the hook callers want.
-    if (asIScriptFunction* fn = engine->GetGlobalFunctionByDecl(declaration)) return fn;
-
-    const asUINT moduleCount = engine->GetModuleCount();
-    for (asUINT i = 0; i < moduleCount; ++i) {
-        asIScriptModule* module = engine->GetModuleByIndex(i);
-        if (!module) continue;
-        if (asIScriptFunction* fn = module->GetFunctionByDecl(declaration)) return fn;
+    // `onUpdate` that a script declared - which is the hook callers want.
+    void* found = nullptr;
+    int owners = 0;
+    if (asIScriptFunction* fn = engine->GetGlobalFunctionByDecl(declaration)) {
+        found = fn;
+    } else {
+        const asUINT moduleCount = engine->GetModuleCount();
+        for (asUINT i = 0; i < moduleCount; ++i) {
+            asIScriptModule* module = engine->GetModuleByIndex(i);
+            if (!module) continue;
+            if (asIScriptFunction* fn = module->GetFunctionByDecl(declaration)) {
+                if (!found) found = fn;
+                ++owners;
+            }
+        }
     }
-    return nullptr;
+
+    // Two scripts declaring the same hook means one of them silently never runs,
+    // and which one is decided by module creation order - which is the order the
+    // files happened to be listed in. That is not something to leave to chance
+    // now that the hooks are called every frame: say so, once per generation,
+    // instead of shipping a bug that reads as a script that forgot to update.
+    if (owners > 1)
+        emit(this, MsgLevel::Warning, declaration, 0, 0,
+             "declared by more than one script; only the first is called");
+
+    functionCache_.push_back(Resolved{declaration, found});
+    return found;
 #else
     (void)declaration;
     return nullptr;

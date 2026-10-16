@@ -79,7 +79,22 @@ private:
     ProjectInfo project_;
     bool inEditor_ = false;
 
-    FixedClock clock_{60.0, 10};
+    // 60 Hz simulation, at most TWO steps per rendered frame.
+    //
+    // Two is FixedClock's own documented number, and it is not an arbitrary
+    // safety limit: it is what keeps frame time proportional to the cost of a
+    // step. `dt` is clamped to kMaxFrameTime, so a fully clamped frame can fund
+    // six steps, and paying for six is what pins the frame rate to a plateau a
+    // slower step cannot leave - because clearing the accumulator throws the debt
+    // away instead of paying it down. See FixedClock.hpp.
+    //
+    // This used to say 10, which never bound: six is all a clamped frame can ask
+    // for, so the value was a second number that had to agree with kMaxFrameTime
+    // without agreeing with it.
+    FixedClock clock_{60.0, 2};
+    // The cap above, named because Application.cpp quotes it in a comment and a
+    // hook budget is the thing that has to be reasoned about.
+    static constexpr int kMaxStepsPerRenderedFrame = 2;
     double simulationTime_ = 0.0;
     // Start of the current one-second window, on the window clock.
     double lastTickTime_ = 0.0;

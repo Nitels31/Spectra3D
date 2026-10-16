@@ -14,6 +14,7 @@
 #include "assets/MeshRegistry.hpp"
 #include "physics/PhysicsWorld.hpp"
 #include "render/Camera.hpp"
+#include "platform/Window.hpp"
 
 namespace s3d {
 namespace script {
@@ -38,15 +39,29 @@ namespace script {
 // `shared` keeps it out of the entry-point rule altogether, the same convention
 // AngelScript uses for its own global functions.
 //
-// On top of that the host knows three optional hooks, each addressed by
+// On top of that the host knows four optional hooks, each addressed by
 // declaration through callFunction():
 //
-//   void onInit()   - runs once when the module is executed, as above;
-//   void onUpdate() - may be called every frame while play mode runs;
-//   void onStop()   - may be called once when play mode ends.
+//   void onInit()              - runs once when the module is executed, as above;
+//   void onUpdate(float dt)    - may be called once per rendered frame;
+//   void onFixedUpdate(float)  - may be called once per fixed physics step;
+//   void onStop()              - may be called once when play mode ends.
 //
-// All three are optional. A script that declares none of them is valid, and one
+// All four are optional. A script that declares none of them is valid, and one
 // that only declares `shared` helpers builds and runs nothing at all.
+//
+// **onUpdate is once per frame, onFixedUpdate is once per physics step.** Those
+// are different numbers: the fixed step runs zero to kMaxStepsPerRenderedFrame
+// times inside one frame, so a script that moves a body from onUpdate moves it
+// at a rate that depends on the frame rate, and one that does it from
+// onFixedUpdate gets the same answer on a 30 FPS laptop and a 144 Hz monitor.
+// Visual work belongs in the first, simulation in the second, and putting
+// something in the wrong one is a bug that only shows up on the machine that is
+// not the one it was written on.
+//
+// The old no-argument `void onUpdate()` is still accepted, because every script
+// written against it would otherwise stop updating the moment this shipped. It
+// gets no dt, which is the honest thing to hand it.
 class Host {
 public:
     struct Diagnostic {
@@ -59,10 +74,16 @@ public:
     // Hook declarations as hasFunction() and callFunction() expect them. Exposed
     // so the editor can ask for a hook by name instead of repeating the strings.
     static constexpr const char* kOnInitDeclaration = "void onInit()";
-    static constexpr const char* kOnUpdateDeclaration = "void onUpdate()";
+    static constexpr const char* kOnUpdateDeclaration = "void onUpdate(float)";
+    static constexpr const char* kOnUpdateLegacyDeclaration = "void onUpdate()";
+    static constexpr const char* kOnFixedUpdateDeclaration = "void onFixedUpdate(float)";
     static constexpr const char* kOnStopDeclaration = "void onStop()";
 
-    explicit Host(PhysicsWorld& world, MeshRegistry& meshes, Camera& camera);
+    // `window` may be null, and is used for nothing but the input bindings: a
+    // host with no window answers every input question with "no" and "zero",
+    // which is what makes the headless scripttest possible without a display.
+    // A script never sees the pointer, only asks it questions.
+    Host(PhysicsWorld& world, MeshRegistry& meshes, Camera& camera, Window* window);
     ~Host();
     Host(const Host&) = delete;
     Host& operator=(const Host&) = delete;
@@ -81,7 +102,9 @@ public:
     bool runString(const std::string& scriptName, const std::string& code);
     bool runFile(const std::string& path);
 
-    bool hasFunction(const char* declaration) const;
+    // Not const, because answering it may have to go and look. The lookup is
+    // cached, so a per-frame question is a vector walk and not a re-parse.
+    bool hasFunction(const char* declaration);
 
     // Calls one global function by declaration, e.g.
     // callFunction(Host::kOnUpdateDeclaration). Safe to call every frame: a
@@ -89,7 +112,19 @@ public:
     // absent optional hook is normal rather than a failure. A function that runs
     // and then fails reports through the sink and appends to diagnostics() - this
     // does not clear the diagnostics of the run that defined it.
-    bool callFunction(const char* declaration);
+    //
+    // With `argument` (may be null) the call is a one-float call, which is what
+    // the two per-frame hooks take. The float is a primitive, so it needs no
+    // cleanup and cannot leave the context in a state Unprepare() would refuse.
+    bool callFunction(const char* declaration, float argument = 0.0f);
+
+    // The two per-frame hooks, called the way the frame loop calls them. Each
+    // returns whether the script declared that hook at all, which is the caller's
+    // cue to stop asking - a script with no onUpdate costs one cached lookup per
+    // frame and nothing more.
+    bool callUpdate(float dt);
+    bool callFixedUpdate(float dt);
+    bool callStop();
 
     const std::vector<Diagnostic>& diagnostics() const; // from the last run
     void clearDiagnostics();
@@ -97,6 +132,14 @@ public:
     bool available() const; // compiled in AND the engine exists
 
 private:
+    // One resolved declaration. `function` is null for a declaration that was
+    // searched for and is not there - caching the misses is what makes a script
+    // with no hooks cost a lookup instead of a full module sweep, per frame.
+    struct Resolved {
+        std::string declaration;
+        void* function = nullptr;
+    };
+
     // Resolves a declaration to a global function, searching the registered
     // `engine::` bindings first and every module's script globals second - the
     // engine's own lookup covers only the first of those, so the hooks a script
@@ -104,24 +147,41 @@ private:
     // matches, quietly. Typed as void* so this header still never names an
     // AngelScript symbol; the module a function belongs to owns it, so the
     // caller must not release it.
-    void* resolveFunction(const char* declaration) const;
+    void* resolveFunction(const char* declaration);
 
     // Compiles `code` as one module and runs its entry points.
     bool buildAndRun(const std::string& moduleName, const std::string& sectionName,
                      const std::string& code);
 
-    // Runs one already-resolved global function in a context of its own; `label`
-    // names the script in any diagnostic. Shared by the entry point and by
-    // callFunction() so prepare/execute/report exists exactly once. `function` is
-    // an asIScriptFunction*, which this header does not name.
-    bool executeFunction(void* function, const char* label);
+    // Runs one already-resolved global function in the host's single context;
+    // `label` names the script in any diagnostic. Shared by the entry point and
+    // by callFunction() so prepare/execute/report exists exactly once.
+    // `function` is an asIScriptFunction*, which this header does not name.
+    bool executeFunction(void* function, const char* label, float argument);
+
+    // The one context, created on first use and kept until shutdown(). It is
+    // unusable while a function is executing and is returned to a clean state by
+    // Unprepare() afterwards, including after an exception - which is what lets a
+    // per-frame hook reuse it instead of allocating one per call.
+    void* context();
+
+    // Drops the resolved-declaration cache. Every module a cached pointer could
+    // have belonged to is either replaced or gone after a build, so a stale entry
+    // is worse than no entry: it would call into a module that no longer exists.
+    void clearFunctionCache();
 
     PhysicsWorld& world_;
     MeshRegistry& meshes_;
     Camera& camera_;
+    Window* window_ = nullptr;
 
-    // asIScriptEngine*, hidden so this header never has to include AngelScript.
+    // asIScriptEngine* and asIScriptContext*, hidden so this header never has to
+    // include AngelScript.
     void* engine_ = nullptr;
+    void* context_ = nullptr;
+    // Flat because there are a handful of entries and it is cleared wholesale; a
+    // map would need a hash of a const char* this class does not own.
+    std::vector<Resolved> functionCache_;
     DiagnosticSink sink_;
     std::vector<Diagnostic> diagnostics_;
     std::string version_;

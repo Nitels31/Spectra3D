@@ -67,6 +67,17 @@ int errorCount() {
     return found;
 }
 
+// The counterpart, for the one case where a warning is the whole point: two
+// scripts declaring the same hook. An error would break a working project, so the
+// engine reports it as a warning and resolves it first-wins.
+int warningCount() {
+    int found = 0;
+    for (const Host::Diagnostic& d : g_seen) {
+        if (!d.isError) ++found;
+    }
+    return found;
+}
+
 int errorCount(const std::vector<Host::Diagnostic>& list) {
     int found = 0;
     for (const Host::Diagnostic& d : list) {
@@ -94,9 +105,85 @@ const char* kHelperAndEntry =
 // the entry point and runs once during the run. The body count therefore moves
 // by one here and by one again on every callFunction() below.
 const char* kUpdateHook =
-    "void onUpdate() {\n"
+    "void onUpdate(float dt) {\n"
     "    engine::log(\"tick\");\n"
-    "    engine::spawnBox(0.0f, 20.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0);\n"
+    "    engine::spawnBox(0.0f, 20.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f);\n"
+    "}\n";
+
+// The no-argument form, which every script written before dt existed declares.
+// It has to keep working, because the alternative is that all of them stop
+// updating the moment the signature changes.
+const char* kLegacyUpdateHook =
+    "void onUpdate() {\n"
+    "    engine::log(\"legacy-tick\");\n"
+    "}\n";
+
+// The fixed-step hook. Declared alongside onUpdate so the two can be told apart
+// by what they do rather than only by what they are called.
+const char* kBothHooks =
+    "void onUpdate(float dt) {\n"
+    "    engine::log(\"frame\");\n"
+    "}\n"
+    "\n"
+    "void onFixedUpdate(float dt) {\n"
+    "    engine::log(\"fixed\");\n"
+    "}\n"
+    "\n"
+    "void onStop() {\n"
+    "    engine::log(\"stopped\");\n"
+    "}\n";
+
+// An exception raised from a hook, and a second hook behind it. The point is the
+// context: a context left mid-execution cannot be reused, so the next call has to
+// work. If the recovery path were wrong, the second hook would never run.
+//
+// assert(false, ...) and not `throw`: `throw` is not a reserved word in this
+// AngelScript build - `try` is in the token table and `throw` is not - so a script
+// that writes it does not compile, and `assert` is not a symbol the default
+// library provides here either. Integer division by zero is the exception this
+// build does raise on its own.
+const char* kThrowingHook =
+    "void onUpdate(float dt) {\n"
+    "    engine::log(\"throwing\");\n"
+    "    int a = 1;\n"
+    "    int b = 0;\n"
+    "    int c = a / b;\n"
+    "    engine::log(\"never-reached\");\n"
+    "}\n"
+    "\n"
+    "void onStop() {\n"
+    "    engine::log(\"after-throw\");\n"
+    "}\n";
+
+// The input bindings, with no window behind them. Every one of these has to
+// answer "no" or "zero" rather than dereference a null pointer - that is the whole
+// reason the window is allowed to be absent.
+//
+// Written as if/else chains of plain literals rather than string arithmetic: the
+// engine's `string` has opAdd(string) and not opAdd(int), so `"key=" + (x ? 1 : 0)`
+// is a compile error and would be testing the string type instead of the input.
+const char* kInputProbe =
+    "void onInit() {\n"
+    "    if (engine::isKeyDown(engine::KeyW)) engine::log(\"key-held\");\n"
+    "    else engine::log(\"key-free\");\n"
+    "    if (engine::isKeyDown(99999)) engine::log(\"range-bad\");\n"
+    "    else engine::log(\"range-ok\");\n"
+    "    if (engine::isKeyDown(-1)) engine::log(\"negative-bad\");\n"
+    "    else engine::log(\"negative-ok\");\n"
+    "    if (engine::isMouseButtonDown(0)) engine::log(\"button-held\");\n"
+    "    else engine::log(\"button-free\");\n"
+    "    if (engine::isMouseButtonDown(99)) engine::log(\"button-bad\");\n"
+    "    else engine::log(\"button-ok\");\n"
+    "    float dx = 1.0f, dy = 1.0f;\n"
+    "    if (engine::getMouseDelta(dx, dy)) engine::log(\"delta-some\");\n"
+    "    else engine::log(\"delta-none\");\n"
+    "    if (dx == 0.0f && dy == 0.0f) engine::log(\"delta-zeroed\");\n"
+    "    else engine::log(\"delta-leftovers\");\n"
+    "    engine::setMouseCaptured(true);\n"
+    "    if (engine::isMouseCaptured()) engine::log(\"captured-bad\");\n"
+    "    else engine::log(\"captured-ok\");\n"
+    "    if (engine::getScrollDelta() == 0.0) engine::log(\"scroll-zero\");\n"
+    "    else engine::log(\"scroll-bad\");\n"
     "}\n";
 
 // The same pair with the entry point spelled `OnInit`. str::equalsIgnoreAscii()
@@ -144,7 +231,10 @@ int main() {
     PhysicsWorld world;
     MeshRegistry meshes;
     Camera camera;
-    Host host(world, meshes, camera);
+    // No window, on purpose: the whole point of this harness is that it runs
+    // headless. It is also a test in itself - every input binding has to answer
+    // "no" rather than dereference a null window.
+    Host host(world, meshes, camera, nullptr);
     host.setDiagnosticSink(collect);
 
     heading("initialize");
@@ -196,37 +286,165 @@ int main() {
     // --- (b) an absent hook is not a failure -------------------------------
     heading("absent hook");
     check(!host.hasFunction(Host::kOnUpdateDeclaration), "hasFunction() sees no onUpdate yet");
+    check(!host.hasFunction(Host::kOnFixedUpdateDeclaration),
+          "hasFunction() sees no onFixedUpdate yet");
     Log::clear();
     const bool calledMissing = host.callFunction(Host::kOnUpdateDeclaration);
     check(!calledMissing, "callFunction() on an absent hook returns false");
+    check(!host.callUpdate(0.016f), "callUpdate() on a script with no hook returns false");
+    check(!host.callFixedUpdate(0.016f), "callFixedUpdate() does the same");
     check(Log::entries().empty(), "callFunction() on an absent hook logs nothing");
+    // Asked twice on purpose: the second answer comes from the cache, and a cache
+    // that answers differently from the search is worse than no cache.
+    check(!host.callUpdate(0.016f), "a second callUpdate() still returns false");
+    check(Log::entries().empty(), "and still logs nothing");
 
     // --- (c) a declared hook runs, every call ------------------------------
+    //
+    // onUpdate(float) is NOT an entry point: isEntryPoint() requires no
+    // parameters, and a per-frame hook that also fired on load would be a
+    // surprise. So this script runs nothing when it is built, and that is asserted
+    // rather than assumed.
     heading("declared hook");
     g_seen.clear();
     Log::clear();
     const int bodiesBeforeHook = (int)world.bodies.size();
-    check(host.runString("update_hook.as", kUpdateHook), "runString() succeeds for onUpdate");
-    check(host.hasFunction(Host::kOnUpdateDeclaration), "hasFunction() sees the declared onUpdate");
-    check(countLines("tick") == 1, "onUpdate ran once as the entry point");
+    check(host.runString("hook.as", kUpdateHook), "runString() succeeds for onUpdate");
+    check(host.hasFunction(Host::kOnUpdateDeclaration),
+          "hasFunction() sees the declared onUpdate");
+    check(!host.hasFunction(Host::kOnUpdateLegacyDeclaration),
+          "the no-argument form is NOT visible when a dt form is declared");
+    check(countLines("tick") == 0, "onUpdate(float) is not an entry point, so it ran nothing");
+    check((int)world.bodies.size() == bodiesBeforeHook, "and spawned nothing on load");
+
+    Log::clear();
+    const bool calledOnce = host.callUpdate(0.016f);
+    check(calledOnce, "callUpdate() on a declared hook returns true");
+    check(countLines("tick") == 1, "the hook ran, so it logged once");
     check((int)world.bodies.size() == bodiesBeforeHook + 1, "and spawned one body");
 
     Log::clear();
-    const bool calledOnce = host.callFunction(Host::kOnUpdateDeclaration);
-    check(calledOnce, "callFunction() on a declared hook returns true");
-    check(countLines("tick") == 1, "the hook ran, so it logged once");
+    const bool calledAgain = host.callUpdate(0.033f);
+    check(calledAgain, "a second callUpdate() also returns true");
+    check(countLines("tick") == 1, "and runs again");
     check((int)world.bodies.size() == bodiesBeforeHook + 2, "and spawned a second body");
 
     Log::clear();
-    const bool calledAgain = host.callFunction(Host::kOnUpdateDeclaration);
-    check(calledAgain, "a second callFunction() also returns true");
-    check(countLines("tick") == 1, "and runs again");
-    check((int)world.bodies.size() == bodiesBeforeHook + 3, "and spawned a third body");
-
-    Log::clear();
-    const bool calledStop = host.callFunction(Host::kOnStopDeclaration);
-    check(!calledStop, "onStop was never declared, so callFunction() returns false");
+    const bool calledStop = host.callStop();
+    check(!calledStop, "onStop was never declared, so callStop() returns false");
     check(Log::entries().empty(), "and an absent onStop logs nothing");
+
+    // --- the two per-frame hooks are separate functions --------------------
+    // A script that moves a body from onUpdate and one that moves it from
+    // onFixedUpdate look identical in the source and behave differently on a
+    // machine with a different frame rate. That difference is the whole reason the
+    // two exist, so they are counted separately here.
+    //
+    // Same module name as the previous script, so it replaces it - see the note on
+    // the legacy section below for why that matters.
+    heading("update vs fixed update");
+    g_seen.clear();
+    Log::clear();
+    check(host.runString("hook.as", kBothHooks), "a script with both hooks compiles");
+    Log::clear();
+    check(host.callUpdate(0.016f), "callUpdate() finds the frame hook");
+    check(countLines("frame") == 1, "and runs only that one");
+    check(countLines("fixed") == 0, "the fixed hook did not run with it");
+    Log::clear();
+    check(host.callFixedUpdate(0.016f), "callFixedUpdate() finds the fixed hook");
+    check(countLines("fixed") == 1, "and runs only that one");
+    check(countLines("frame") == 0, "the frame hook did not run with it");
+    Log::clear();
+    check(host.callStop(), "callStop() finds onStop");
+    check(countLines("stopped") == 1, "and runs it");
+
+    // Every hook script below is loaded under the SAME module name, so each run
+    // replaces the one before it and at most one module ever declares a hook.
+    // resolveFunction() sweeps modules in creation order and takes the first
+    // match, which is right for the engine and terrible for a test: a leftover
+    // script from three sections ago keeps answering and every count here lies.
+
+    // --- the no-argument onUpdate still works ------------------------------
+    heading("legacy onUpdate");
+    g_seen.clear();
+    Log::clear();
+    check(host.runString("hook.as", kLegacyUpdateHook),
+          "a script with the no-argument onUpdate compiles");
+    check(!host.hasFunction(Host::kOnUpdateDeclaration),
+          "the dt form is absent, so only the legacy one is found");
+    Log::clear();
+    check(host.callUpdate(0.016f), "callUpdate() falls back to the no-argument form");
+    check(countLines("legacy-tick") == 1, "and runs it");
+
+    // --- a hook that throws must not poison the next one -------------------
+    // The context is kept now, and a context left mid-execution cannot be reused.
+    // Unprepare() is the supported way out of that, and this is the test for it: a
+    // recovery that does not work shows up as a second hook that never runs.
+    //
+    // AngelScript has no throw statement, so the script raises the one exception a
+    // script can raise on its own: integer division by zero. The VM turns that into
+    // asBC_DIV's internal exception rather than producing 0, which is what makes it
+    // usable here.
+    heading("hook that throws");
+    g_seen.clear();
+    Log::clear();
+    check(host.runString("hook.as", kThrowingHook), "a throwing hook compiles");
+    Log::clear();
+    const bool threwOk = host.callUpdate(0.016f);
+    check(!threwOk, "a hook that throws reports failure");
+    check(countLines("throwing") == 1, "and ran far enough to throw");
+    check(errorCount() > 0, "the throw produced an error diagnostic");
+    Log::clear();
+    const bool afterThrow = host.callStop();
+    check(afterThrow, "a different hook still runs after the throw");
+    check(countLines("after-throw") == 1, "so the context was recovered, not abandoned");
+
+    // --- the cache cannot outlive the module it points into -----------------
+    // asGM_ALWAYS_CREATE replaces a module on every run, so a cached pointer into
+    // the old one is dangling. A MISS is just as wrong: a script that declared
+    // onUpdate a moment ago can declare it now.
+    heading("function cache");
+    g_seen.clear();
+    Log::clear();
+    check(host.runString("hook.as", kSharedOnly), "a script with no hook compiles");
+    check(!host.callUpdate(0.016f), "callUpdate() caches the miss");
+    check(host.runString("hook.as", kUpdateHook), "a later script declares onUpdate");
+    check(host.hasFunction(Host::kOnUpdateDeclaration),
+          "the cached miss did not survive the new module");
+    check(host.callUpdate(0.016f), "and the hook is callable the moment it exists");
+
+    // --- two scripts, one hook: reported, not silently swallowed ------------
+    // Last, because it is the one case that deliberately leaves two modules
+    // declaring the same hook, and everything after it would inherit that.
+    heading("hook declared twice");
+    g_seen.clear();
+    Log::clear();
+    check(host.runString("dup_a.as", kUpdateHook), "a second script declares onUpdate");
+    check(host.runString("dup_b.as", kUpdateHook), "and a third one does too");
+    check(errorCount() == 0, "loading them raises no error");
+    Log::clear();
+    check(host.callUpdate(0.016f), "the hook is still callable");
+    check(countLines("tick") == 1, "exactly one script is called, not three");
+    // Checked after the call, not before: the lookup is lazy, so the warning is
+    // emitted while callUpdate() resolves the name, and asking any earlier would
+    // be testing a question nobody has asked yet.
+    check(warningCount() > 0, "and the duplication is reported");
+
+    // --- input bindings with no window --------------------------------------
+    heading("input without a window");
+    g_seen.clear();
+    Log::clear();
+    check(host.runString("input_probe.as", kInputProbe), "the input probe compiles");
+    check(countLines("key-free") == 1, "isKeyDown() answers false with no window");
+    check(countLines("range-ok") == 1, "and false for a key out of range");
+    check(countLines("negative-ok") == 1, "and false for a negative key");
+    check(countLines("button-free") == 1, "isMouseButtonDown() answers false");
+    check(countLines("button-ok") == 1, "and false for a button out of range");
+    check(countLines("delta-none") == 1, "getMouseDelta() reports no movement");
+    check(countLines("delta-zeroed") == 1, "and zeroes the outs rather than leaving them");
+    check(countLines("captured-ok") == 1, "setMouseCaptured() is inert, isMouseCaptured() false");
+    check(countLines("scroll-zero") == 1, "getScrollDelta() answers zero");
+    check(errorCount() == 0, "none of the input bindings logged an error");
 
     // --- (d) a compile error is reported as an error -----------------------
     heading("compile error");
@@ -267,6 +485,8 @@ int main() {
     host.shutdown();
     check(!host.available(), "available() is false after shutdown()");
     check(!host.hasFunction(Host::kOnUpdateDeclaration), "hasFunction() is false after shutdown()");
+    check(!host.callUpdate(0.016f), "callUpdate() is false after shutdown()");
+    check(!host.callFixedUpdate(0.016f), "callFixedUpdate() is false after shutdown()");
     check(!host.callFunction(Host::kOnUpdateDeclaration),
           "callFunction() is false after shutdown()");
 
