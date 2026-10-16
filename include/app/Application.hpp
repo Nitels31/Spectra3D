@@ -50,7 +50,7 @@ private:
     void closeProject();
 
     void updateCameraInput(Window& window, float dt);
-    void updateSimulation(float dt);
+    void updateSimulation(float dt, bool stepping);
     void renderScene();
     void reportStartupInfo();
 

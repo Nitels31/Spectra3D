@@ -87,25 +87,6 @@ bool isEntryPoint(const asIScriptFunction* fn) {
            fn->GetReturnTypeId() == asTYPEID_VOID;
 }
 
-// Explains a context that did not reach asEXECUTION_FINISHED. The innermost
-// stack frame carries the useful line; no function object is touched, so there
-// is no refcount to get wrong.
-void emitExecutionFailure(const Host* owner, asIScriptContext* ctx, const char* moduleName,
-                          const char* functionName) {
-    if (ctx->GetState() != asEXECUTION_EXCEPTION) {
-        emit(owner, MsgLevel::Error, moduleName, 0, 0, "execution did not finish");
-        return;
-    }
-
-    int col = 0;
-    const char* section = nullptr;
-    const int row = ctx->GetLineNumber(0, &col, &section);
-    const char* reason = ctx->GetExceptionString();
-
-    const std::string text = std::string("exception in ") + (functionName ? functionName : "?") +
-                             ": " + (reason ? reason : "unknown");
-    emit(owner, MsgLevel::Error, section ? section : moduleName, row, col, text.c_str());
-}
 #endif
 
 // Module names are only labels to anything downstream, but keeping them to word
@@ -144,6 +125,45 @@ bool readWholeFile(const std::string& path, std::string& text) {
 #endif
 
 } // namespace
+
+#if SPECTRA_SCRIPTING
+
+// Explains a context that did not reach asEXECUTION_FINISHED. The innermost
+// stack frame carries the useful line; no function object is touched, so there
+// is no refcount to get wrong.
+//
+// A member, not a free function: it reads and writes lastErrorKey_ to deduplicate,
+// and a free function would need a const_cast or a public accessor to do that.
+// Defined here rather than in the anonymous namespace above because a member
+// definition has to sit in the namespace that encloses the class, not in a child
+// of it.
+void Host::emitExecutionFailure(void* ctx, const char* moduleName, const char* functionName) {
+    asIScriptContext* context = static_cast<asIScriptContext*>(ctx);
+    if (context->GetState() != asEXECUTION_EXCEPTION) {
+        emit(this, MsgLevel::Error, moduleName, 0, 0, "execution did not finish");
+        return;
+    }
+
+    int col = 0;
+    const char* section = nullptr;
+    const int row = context->GetLineNumber(0, &col, &section);
+    const char* reason = context->GetExceptionString();
+
+    const std::string text = std::string("exception in ") + (functionName ? functionName : "?") +
+                             ": " + (reason ? reason : "unknown");
+    // Deduplicated by identity: module, line, column and message. A hook that
+    // throws every frame is the common case - a script with a bug in onUpdate -
+    // and at 144 Hz that is 144 identical lines a second into a ring buffer that
+    // is sized to hold the interesting diagnostics. The first failure is always
+    // logged; only the repetition is suppressed.
+    const std::string key = std::string(moduleName ? moduleName : "?") + ":" +
+                            std::to_string(row) + ":" + std::to_string(col) + ":" + text;
+    if (key == lastErrorKey_) return;
+    lastErrorKey_ = key;
+    emit(this, MsgLevel::Error, section ? section : moduleName, row, col, text.c_str());
+}
+
+#endif
 
 // --- shared binding state ---------------------------------------------------
 
@@ -426,8 +446,12 @@ bool Host::executeFunction(void* function, const char* label, float argument) {
         // is how the first version of this made every single script fail to run.
         if (fn->GetParamCount() > 0 && ctx->SetArgFloat(0, argument) < 0) ok = false;
         if (ok && ctx->Execute() != asEXECUTION_FINISHED) {
-            emitExecutionFailure(this, ctx, label, name);
+            emitExecutionFailure(ctx, label, name);
             ok = false;
+        } else if (ok) {
+            // A clean run clears the dedup key: the next failure is a new one, not
+            // the same one repeated, and deserves its own line.
+            lastErrorKey_.clear();
         }
         // Unconditional, and before the report for a thrown exception has any way
         // to read the context again: this is what makes the context reusable and

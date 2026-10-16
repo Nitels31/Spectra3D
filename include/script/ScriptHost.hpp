@@ -169,6 +169,9 @@ private:
     // have belonged to is either replaced or gone after a build, so a stale entry
     // is worse than no entry: it would call into a module that no longer exists.
     void clearFunctionCache();
+    // A member because it reads and writes lastErrorKey_; see the .cpp. Takes void*
+    // rather than asIScriptContext* because this header hides AngelScript's types.
+    void emitExecutionFailure(void* ctx, const char* moduleName, const char* functionName);
 
     PhysicsWorld& world_;
     MeshRegistry& meshes_;
@@ -182,6 +185,13 @@ private:
     // Flat because there are a handful of entries and it is cleared wholesale; a
     // map would need a hash of a const char* this class does not own.
     std::vector<Resolved> functionCache_;
+    // The identity of the last execution failure that was reported, so a hook that
+    // throws on every call is logged once rather than once per call. A hook raising
+    // the same exception at the same line 144 times a second would otherwise fill
+    // the log ring buffer and push out the diagnostics that were actually useful.
+    // Cleared on a success, so a hook that throws, recovers and throws again is
+    // reported both times.
+    std::string lastErrorKey_;
     DiagnosticSink sink_;
     std::vector<Diagnostic> diagnostics_;
     std::string version_;

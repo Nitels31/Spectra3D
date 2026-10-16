@@ -316,6 +316,13 @@ void Application::openProject(const ProjectInfo& project) {
 }
 
 void Application::closeProject() {
+    // onStop before the editor goes. The editor holds the snapshot the world is
+    // restored from on Stop, and scripts are written against that world saying
+    // goodbye to it - so a script left running while the world is cleared never
+    // gets the callback, and whatever it spawned or changed is simply dropped
+    // without being told. Only asked when playing: there is nothing to stop in an
+    // editor that never started.
+    if (editor_ && editor_->simulating()) scripts_.callStop();
     editor_.reset();
     world_.clear();
     inEditor_ = false;
@@ -336,9 +343,14 @@ void Application::runProjectScripts() {
 }
 
 void Application::runEditorFrame(float dt) {
+    // Asked once, here, because consumeSingleStep() is CONSUMING: it clears the
+    // request, so a second call later in the frame would answer false. Both the
+    // per-frame hook and the fixed-step loop below need the same answer.
+    const bool stepping = editor_->simulating() || editor_->consumeSingleStep();
+
     updateCameraInput(window_, dt);
 
-// Gravity is part of what gets saved with the scene, so picking an axis is an
+    // Gravity is part of what gets saved with the scene, so picking an axis is an
     // edit to the document, not a view setting.
     for (int i = 0; i < 6; ++i)
         if (window_.takeKeyPress(GLFW_KEY_1 + i)) {
@@ -346,7 +358,7 @@ void Application::runEditorFrame(float dt) {
             editor_->markSceneDirty();
         }
 
-editor_->handleInput(world_, camera_, window_, window_.framebufferWidth(),
+    editor_->handleInput(world_, camera_, window_, window_.framebufferWidth(),
                          window_.framebufferHeight());
 
     // File > New Project / Open Project hand the window back to the launcher,
@@ -374,13 +386,13 @@ editor_->handleInput(world_, camera_, window_, window_.framebufferWidth(),
         break;
     }
 
-    if (editor_->consumeTimeReset()) simulationTime_ = 0.0;
-    if (editor_->consumePlayStarted()) runProjectScripts();
-    // After the world has been restored from the snapshot, which is the point of
-    // Stop: the script says goodbye to the edit-mode world, not to the one Play
-    // built. Placed here because the editor has no way to reach the script host
-    // and the dependency only points up.
+if (editor_->consumeTimeReset()) simulationTime_ = 0.0;
+    // Stop BEFORE Start. A Stop and a Play in the same frame - the user hits Play
+    // again on the same frame they hit Stop, or a script restarts itself - loads the
+    // new scripts and then says goodbye to them, so onStop runs on a script that was
+    // never told to start. The old scripts have to finish first.
     if (editor_->consumePlayStopped()) scripts_.callStop();
+    if (editor_->consumePlayStarted()) runProjectScripts();
 
     // Once per RENDERED frame, and before the physics rather than inside it.
     //
@@ -392,12 +404,15 @@ editor_->handleInput(world_, camera_, window_, window_.framebufferWidth(),
     // belongs here, where one frame is one call. Simulation belongs in
     // onFixedUpdate, inside the loop, where the step is constant.
     //
-    // Skipped when not simulating, so an editor that is not playing costs one
+// Skipped when not simulating, so an editor that is not playing costs one
     // boolean rather than a lookup - and a script that is not playing has no
-    // business being told about frames.
-    if (editor_->simulating()) scripts_.callUpdate(dt);
+    // business being told about frames. `stepping` covers the single-step button
+    // too: the world advances one fixed step on it, and a script that only runs
+    // while `simulating()` is true would watch the physics move without being
+    // told, which is exactly the divergence single-step exists to debug.
+    if (stepping) scripts_.callUpdate(dt);
 
-    updateSimulation(dt);
+    updateSimulation(dt, stepping);
     renderScene();
 }
 
@@ -520,8 +535,8 @@ void Application::updateCameraInput(Window& window, float dt) {
     camera_.translate(move, speed, dt);
 }
 
-void Application::updateSimulation(float dt) {
-    if (!editor_->simulating() && !editor_->consumeSingleStep()) {
+void Application::updateSimulation(float dt, bool stepping) {
+    if (!stepping) {
         clock_.reset();
         return;
     }
@@ -531,7 +546,7 @@ void Application::updateSimulation(float dt) {
         // One call per fixed step, so a script sees the same dt on every machine
         // and the same number of calls for the same elapsed time. Zero to
         // kMaxStepsPerRenderedFrame of them in one frame.
-        if (editor_->simulating()) scripts_.callFixedUpdate((float)clock_.step());
+        scripts_.callFixedUpdate((float)clock_.step());
         world_.step((float)clock_.step());
         simulationTime_ += clock_.step();
     }

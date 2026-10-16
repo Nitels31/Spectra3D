@@ -419,6 +419,19 @@ int main() {
     check(!threwOk, "a hook that throws reports failure");
     check(countLines("throwing") == 1, "and ran far enough to throw");
     check(errorCount() > 0, "the throw produced an error diagnostic");
+    // A hook that throws every frame is the common case - a bug in onUpdate - and
+    // at 144 Hz that is 144 identical lines a second into a ring buffer sized for
+    // the interesting diagnostics. The dedup is by identity (module, line, column,
+    // message), so the repetition is suppressed and the first failure is kept.
+    host.callUpdate(0.016f);
+    host.callUpdate(0.016f);
+    check(errorCount() == 1, "a hook that throws every frame is logged once, not per call");
+    // A clean run clears the key, so throwing again later is a new failure and is
+    // reported again rather than being swallowed as a repeat.
+    Log::clear();
+    check(host.callStop(), "onStop still runs");
+    host.callUpdate(0.016f);
+    check(errorCount() == 2, "and a throw after a success is reported again");
     Log::clear();
     const bool afterThrow = host.callStop();
     check(afterThrow, "a different hook still runs after the throw");
