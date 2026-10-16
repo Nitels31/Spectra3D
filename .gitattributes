@@ -1,0 +1,16 @@
+# Normalize line endings to LF everywhere: in the repository and on checkout.
+#
+# Without this, a file edited on Windows by an editor that writes CRLF ends up with
+# MIXED endings - some lines LF, some CRLF - and every later diff to that file is
+# mostly line-ending noise rather than the change that was actually made. Twenty
+# files in this tree were in that state.
+#
+# `eol=lf` rather than `text=auto`: `auto` would hand CRLF back out on a Windows
+# checkout, which is the same fight again. The build, the scripts and the
+# third-party sources all work with LF, so LF everywhere is the one setting that
+# cannot produce a mixed file.
+* text eol=lf
+
+# The one exception, because the platform's own ending is the one that works: a
+# .bat file with LF line endings is not guaranteed to run on Windows.
+*.bat text eol=crlf
