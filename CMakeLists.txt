@@ -19,7 +19,11 @@ endif()
 unset(SPECTRA_PROJECT_HEADER)
 unset(SPECTRA_VERSION_MATCH)
 unset(SPECTRA_ICON_DIR_MATCH)
-set(SPECTRA_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/${SPECTRA_ICON_DIR}/icon.ico")
+# kAppIconsDir already includes "assets/" - it is the path relative to the
+# executable, which is what Window::loadShippedIcon appends to the module path.
+# Prepending "assets/" here too made the path assets/assets/..., which does not
+# exist, so the icon was silently never embedded in the .exe.
+set(SPECTRA_ICON "${CMAKE_CURRENT_SOURCE_DIR}/${SPECTRA_ICON_DIR}/icon.ico")
 
 project(Spectra3D VERSION ${Spectra3D_VERSION} LANGUAGES C CXX)
 
@@ -197,8 +201,14 @@ if(WIN32 AND EXISTS "${SPECTRA_ICON}")
         enable_language(RC)
         # Generated rather than kept in the tree: the only thing in it is the path
         # to the icon, and a path belongs to the machine that built it.
+        #
+        # RELATIVE, not absolute: windres silently produces an empty object file
+        # for an absolute Windows path, and the .exe then has no icon at all with
+        # no warning from anyone. Relative to the build directory, which is where
+        # the .rc is compiled.
+        file(RELATIVE_PATH SPECTRA_ICON_REL "${CMAKE_CURRENT_BINARY_DIR}" "${SPECTRA_ICON}")
         file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/spectra.rc"
-             CONTENT "IDI_APP_ICON ICON \"${SPECTRA_ICON}\"\n")
+             CONTENT "IDI_APP_ICON ICON \"${SPECTRA_ICON_REL}\"\n")
         set(SPECTRA_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/spectra.rc")
     endif()
 endif()
