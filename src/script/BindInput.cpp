@@ -78,6 +78,49 @@ void keyConstants(asIScriptEngine* engine) {
     }
 }
 
+// Mouse buttons, by name, for the same reason as the keys. The README has listed
+// these since they were introduced; they were never registered, so a script using
+// one failed to compile on a constant that was documented as existing.
+void mouseConstants(asIScriptEngine* engine) {
+    struct Named {
+        const char* name;
+        int button;
+    };
+    static Named kButtons[] = {
+        {"MouseLeft", GLFW_MOUSE_BUTTON_LEFT},
+        {"MouseRight", GLFW_MOUSE_BUTTON_RIGHT},
+        {"MouseMiddle", GLFW_MOUSE_BUTTON_MIDDLE},
+    };
+
+    char declaration[32];
+    for (Named& named : kButtons) {
+        std::snprintf(declaration, sizeof(declaration), "const int %s", named.name);
+        engine->RegisterGlobalProperty(declaration, &named.button);
+    }
+}
+
+// The queue's types as ints, so a script can switch on eventType() without
+// depending on the C++ enum or its order.
+void eventConstants(asIScriptEngine* engine) {
+    struct Named {
+        const char* name;
+        int value;
+    };
+    static Named kTypes[] = {
+        {"EventKey", (int)InputEventType::Key},
+        {"EventKeyUp", (int)InputEventType::KeyUp},
+        {"EventMouse", (int)InputEventType::Mouse},
+        {"EventMouseUp", (int)InputEventType::MouseUp},
+        {"EventScroll", (int)InputEventType::Scroll},
+    };
+
+    char declaration[32];
+    for (Named& named : kTypes) {
+        std::snprintf(declaration, sizeof(declaration), "const int %s", named.name);
+        engine->RegisterGlobalProperty(declaration, &named.value);
+    }
+}
+
 // Level-triggered: "is the key down right now", which is what movement in a fixed
 // step needs. An edge - "was it pressed this frame" - would fire once and then go
 // quiet, and a character holding W would move for one step and stop.
@@ -139,6 +182,50 @@ double getScrollDelta() {
     return state->window->consumeScroll();
 }
 
+// --- the frame's edges -------------------------------------------------------
+//
+// Four accessors and a loop, rather than one call that hands back a struct. An
+// AngelScript object type would need registering, a factory, a destructor and a
+// handle for what is four numbers, and the loop a script actually wants to write
+// is the same length either way:
+//
+//     for (int i = 0; i < engine::eventCount(); ++i) {
+//         int t = engine::eventType(i);
+//         if (t == engine::EventKey && engine::eventCode(i) == engine::KeyW) ...
+//     }
+//
+// Read-only: the queue is cleared once per frame by the frame loop and never by a
+// script, so two scripts reading it both see the same edges. Nothing is consumed.
+
+int eventCount() {
+    ScriptState* state = activeState();
+    return (state && state->window) ? state->window->eventCount() : 0;
+}
+
+int eventType(int index) {
+    ScriptState* state = activeState();
+    InputEvent event;
+    // Out of range is a script bug and gets a defined answer instead of a crash: a
+    // loop that runs one iteration too far should read "no event", not corrupt
+    // memory, and 0 is EventKey so the extra pass is a no-op on the type at least.
+    if (!state || !state->window || !state->window->eventAt(index, event)) return 0;
+    return (int)event.type;
+}
+
+int eventCode(int index) {
+    ScriptState* state = activeState();
+    InputEvent event;
+    if (!state || !state->window || !state->window->eventAt(index, event)) return -1;
+    return event.code;
+}
+
+double eventValue(int index) {
+    ScriptState* state = activeState();
+    InputEvent event;
+    if (!state || !state->window || !state->window->eventAt(index, event)) return 0.0;
+    return event.value;
+}
+
 // --- declarations -----------------------------------------------------------
 //
 // No namespace in the strings: the host points the engine's default namespace at
@@ -155,12 +242,18 @@ const Binding kBindings[] = {
     {"void setMouseCaptured(bool capture)", asFUNCTION(setMouseCaptured)},
     {"bool isMouseCaptured()", asFUNCTION(isMouseCaptured)},
     {"double getScrollDelta()", asFUNCTION(getScrollDelta)},
+    {"int eventCount()", asFUNCTION(eventCount)},
+    {"int eventType(int index)", asFUNCTION(eventType)},
+    {"int eventCode(int index)", asFUNCTION(eventCode)},
+    {"double eventValue(int index)", asFUNCTION(eventValue)},
 };
 
 } // namespace
 
 int registerInputBindings(asIScriptEngine* engine) {
     keyConstants(engine);
+    mouseConstants(engine);
+    eventConstants(engine);
     return registerBindings(engine, kBindings, sizeof(kBindings) / sizeof(kBindings[0]));
 }
 

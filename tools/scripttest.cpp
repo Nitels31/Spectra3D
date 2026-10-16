@@ -13,7 +13,13 @@
 #include "assets/MeshRegistry.hpp"
 #include "core/Log.hpp"
 #include "physics/PhysicsWorld.hpp"
+#include "platform/InputEvents.hpp"
 #include "render/Camera.hpp"
+
+// Only for the key and button numbers below. The queue under test has no GLFW in
+// it, and the test still has to name real keys, or it would be asserting that the
+// engine agrees with itself.
+#include <GLFW/glfw3.h>
 
 #include <cstdio>
 #include <cstring>
@@ -184,6 +190,25 @@ const char* kInputProbe =
     "    else engine::log(\"captured-ok\");\n"
     "    if (engine::getScrollDelta() == 0.0) engine::log(\"scroll-zero\");\n"
     "    else engine::log(\"scroll-bad\");\n"
+    // The event queue, with no window: empty, and every accessor gives a defined
+    // answer for an index that is not there rather than reading past the end.
+    "    if (engine::eventCount() == 0) engine::log(\"queue-empty\");\n"
+    "    else engine::log(\"queue-bad\");\n"
+    "    if (engine::eventType(0) == 0) engine::log(\"type-zeroed\");\n"
+    "    else engine::log(\"type-bad\");\n"
+    "    if (engine::eventCode(0) == -1) engine::log(\"code-sentinel\");\n"
+    "    else engine::log(\"code-bad\");\n"
+    "    if (engine::eventValue(0) == 0.0) engine::log(\"value-zeroed\");\n"
+    "    else engine::log(\"value-bad\");\n"
+    // The constants themselves: a mouse button and the event types have to be
+    // distinct and known, or a switch on eventType() silently folds cases together.
+    "    if (engine::MouseLeft == 0 && engine::MouseRight == 1 && engine::MouseMiddle == 2)\n"
+    "        engine::log(\"mouse-consts-ok\");\n"
+    "    else engine::log(\"mouse-consts-bad\");\n"
+    "    if (engine::EventKey == 0 && engine::EventKeyUp == 1 && engine::EventMouse == 2\n"
+    "        && engine::EventMouseUp == 3 && engine::EventScroll == 4)\n"
+    "        engine::log(\"event-consts-ok\");\n"
+    "    else engine::log(\"event-consts-bad\");\n"
     "}\n";
 
 // The same pair with the entry point spelled `OnInit`. str::equalsIgnoreAscii()
@@ -444,7 +469,76 @@ int main() {
     check(countLines("delta-zeroed") == 1, "and zeroes the outs rather than leaving them");
     check(countLines("captured-ok") == 1, "setMouseCaptured() is inert, isMouseCaptured() false");
     check(countLines("scroll-zero") == 1, "getScrollDelta() answers zero");
+    check(countLines("queue-empty") == 1, "the event queue is empty with no window");
+    check(countLines("type-zeroed") == 1, "eventType() answers 0 for an index that is not there");
+    check(countLines("code-sentinel") == 1, "eventCode() answers -1 instead of reading past the end");
+    check(countLines("value-zeroed") == 1, "eventValue() answers 0.0");
+    check(countLines("mouse-consts-ok") == 1, "the mouse button constants exist and are GLFW's");
+    check(countLines("event-consts-ok") == 1, "the event type constants match the C++ enum order");
     check(errorCount() == 0, "none of the input bindings logged an error");
+
+    // --- the event queue itself ---------------------------------------------
+    //
+    // Driven directly rather than through a Window: the callbacks that fill it need
+    // GLFW, and everything the queue actually does - ordering, the cap, what a
+    // frame's clear() does - is this type. That it is a separate header with no
+    // GLFW in it is what makes this test possible at all.
+    heading("event queue");
+    {
+        InputEvents queue;
+        check(queue.count() == 0, "a new queue is empty");
+
+        InputEvent event;
+        check(!queue.at(0, event), "at(0) on an empty queue returns false");
+        check(!queue.at(-1, event), "at(-1) returns false rather than reading backwards");
+        check(!queue.at(1, event), "at(1) on an empty queue returns false");
+
+        // The case the bool-per-key state cannot represent at all: a key tapped
+        // entirely inside one frame. Both edges are in the queue, in order.
+        queue.push(InputEventType::Key, GLFW_KEY_W, 0.0);
+        queue.push(InputEventType::KeyUp, GLFW_KEY_W, 0.0);
+        check(queue.count() == 2, "a press and a release in one frame are two events");
+        check(queue.at(0, event) && event.type == InputEventType::Key &&
+                  event.code == GLFW_KEY_W,
+              "the press is first");
+        check(queue.at(1, event) && event.type == InputEventType::KeyUp &&
+                  event.code == GLFW_KEY_W,
+              "and the release is second, which a bool per key cannot say");
+
+        queue.push(InputEventType::Mouse, GLFW_MOUSE_BUTTON_LEFT, 0.0);
+        queue.push(InputEventType::Scroll, 0, 1.5);
+        queue.push(InputEventType::Key, GLFW_KEY_ESCAPE, 0.0);
+        check(queue.count() == 5, "five events in order");
+        check(queue.at(2, event) && event.type == InputEventType::Mouse, "the third is a mouse press");
+        check(queue.at(3, event) && event.type == InputEventType::Scroll, "the fourth is a scroll");
+        check(queue.at(4, event) && event.code == GLFW_KEY_ESCAPE, "the fifth is Escape");
+        check(!queue.at(5, event), "at(5) on five events returns false");
+
+        // The cap. 256 is two orders of magnitude more than a person produces in a
+        // frame, so this only fires for a stuck device or a window being hammered.
+        for (int i = 0; i < InputEvents::kMaxEvents + 50; ++i)
+            queue.push(InputEventType::Key, GLFW_KEY_A, 0.0);
+        check(queue.count() == InputEvents::kMaxEvents, "the queue stops at kMaxEvents");
+        check(queue.overflowed(), "and says so instead of dropping quietly");
+
+        // clear() is what the frame loop calls; it must take the overflow flag with
+        // it, or every later frame reports an overflow that already happened.
+        queue.clear();
+        check(queue.count() == 0, "clear() empties the queue");
+        check(!queue.overflowed(), "and takes the overflow flag with it");
+
+        InputEvents second;
+        second.push(InputEventType::Key, GLFW_KEY_A, 0.0);
+        check(!second.overflowed(), "a queue that never overflowed does not claim it did");
+        check(second.count() == 1, "two queues are independent");
+    }
+
+    // The script constants are the C++ enum's values, so reordering the enum would
+    // silently renumber what every existing script switches on. This pins them.
+    check((int)InputEventType::Key == 0 && (int)InputEventType::KeyUp == 1 &&
+              (int)InputEventType::Mouse == 2 && (int)InputEventType::MouseUp == 3 &&
+              (int)InputEventType::Scroll == 4,
+          "the enum order the script constants hardcode");
 
     // --- (d) a compile error is reported as an error -----------------------
     heading("compile error");

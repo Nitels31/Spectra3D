@@ -1,6 +1,8 @@
 #pragma once
 #include <GLFW/glfw3.h>
 
+#include "platform/InputEvents.hpp"
+
 namespace s3d {
 
 // The OpenGL context the engine asks for: 3.3 in the COMPATIBILITY profile, not
@@ -72,6 +74,19 @@ public:
     bool keyDown(int key) const;
     bool takeKeyPress(int key);
 
+    // The frame's edges, oldest first. Filled in the GLFW callbacks and independent
+    // of everything above: takeKeyPress() clears keyEdges_ and not this, so a script
+    // reading the queue still sees a press the editor already acted on. That is
+    // deliberate - a game wants the key the editor used for a shortcut too - and it
+    // is also why there is no "claim" or "consume" here. The queue is read-only to
+    // a reader and cleared once per frame by dropUnreadInput().
+    //
+    // Mouse movement is not an event. One pixel of movement is one GLFW callback and
+    // a cursor crossing the window is hundreds, which would make the queue grow with
+    // distance instead of with intent; mouseDelta() is the aggregate for that.
+    int eventCount() const { return events_.count(); }
+    bool eventAt(int index, InputEvent& out) const { return events_.at(index, out); }
+
     double time() const;
     void setTitle(const char* title);
     void requestClose() const;
@@ -90,6 +105,9 @@ private:
     void bindCallbacks();
 
     GLFWwindow* window_ = nullptr;
+    // See InputEvents.hpp. Kept next to the state arrays below rather than
+    // replacing them: both are asked different questions.
+    InputEvents events_;
     bool keys_[GLFW_KEY_LAST + 1] = {};
     bool keyEdges_[GLFW_KEY_LAST + 1] = {};
     bool mouseDown_[8] = {};

@@ -211,9 +211,18 @@ void Window::onKey(GLFWwindow* w, int key, int, int action, int) {
     if (action == GLFW_PRESS) {
         self->keys_[key] = true;
         self->keyEdges_[key] = true;
+        self->events_.push(InputEventType::Key, key, 0.0);
     } else if (action == GLFW_RELEASE) {
         self->keys_[key] = false;
+        // The release reaches the queue but NOT keyEdges_. A release used to be
+        // invisible to anyone reading edges, and adding an edge flag for it would
+        // make "was this key pressed this frame" answer yes on the frame the user
+        // let go of it.
+        self->events_.push(InputEventType::KeyUp, key, 0.0);
     }
+    // GLFW_REPEAT is deliberately not an event: auto-repeat is the keyboard saying
+    // "this is still held", which keys_ already says, and a held key would
+    // otherwise queue dozens of identical presses a second.
 }
 
 void Window::onMouseButton(GLFWwindow* w, int button, int action, int) {
@@ -222,14 +231,22 @@ void Window::onMouseButton(GLFWwindow* w, int button, int action, int) {
     if (action == GLFW_PRESS) {
         self->mouseDown_[button] = true;
         self->mousePressed_[button] = true;
+        self->events_.push(InputEventType::Mouse, button, 0.0);
     } else if (action == GLFW_RELEASE) {
         self->mouseDown_[button] = false;
         self->mouseReleased_[button] = true;
+        self->events_.push(InputEventType::MouseUp, button, 0.0);
     }
 }
 
 void Window::onScroll(GLFWwindow* w, double, double yoff) {
-    if (Window* self = of(w)) self->scrollAcc_ += yoff;
+    Window* self = of(w);
+    if (!self) return;
+    self->scrollAcc_ += yoff;
+    // Also an event, unlike the text buffer: a scroll is a discrete act with a
+    // direction and a magnitude, so "one notch per notch" is the useful reading and
+    // summing it into a single number first is not.
+    self->events_.push(InputEventType::Scroll, 0, yoff);
 }
 
 void Window::onChar(GLFWwindow* w, unsigned int cp) {
@@ -348,7 +365,12 @@ bool Window::peekActivity() const {
     // A frame is worth drawing if something happened, if a control is being held
     // (camera flight, a gizmo drag) or if the pointer moved, because hover
     // highlights are part of the picture.
-    bool busy = scrollAcc_ != 0.0 || textLen_ > 0 || captured_;
+    //
+    // The queue is consulted on its own account: a key RELEASE pushes an event and
+    // sets no edge flag, so a window where the only thing that happened is the user
+    // letting go of a key would otherwise sleep through the one frame that shows
+    // the result.
+    bool busy = !events_.empty() || scrollAcc_ != 0.0 || textLen_ > 0 || captured_;
     for (int key = 0; key <= GLFW_KEY_LAST && !busy; ++key)
         busy = keys_[key] || keyEdges_[key];
     for (int button = 0; button < 8 && !busy; ++button)
@@ -382,6 +404,14 @@ void Window::dropUnreadInput() {
     // key press does.
     textLen_ = 0;
     scrollAcc_ = 0.0;
+
+    // Same one-frame life as the edges above, and reported here so an overflow is
+    // next to the rest of this frame's diagnostics rather than swallowed inside the
+    // callback that caused it.
+    if (events_.overflowed())
+        Log::warn("Input: more than %d events in one frame, the rest were dropped",
+                  InputEvents::kMaxEvents);
+    events_.clear();
 }
 
 void Window::setMouseCaptured(bool capture) {

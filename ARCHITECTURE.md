@@ -134,9 +134,15 @@ directory, so a project folder is a complete unit.
 ### `platform`
 
 `Window` wraps GLFW and owns the input state as well: edge- and level-triggered
-mouse and keyboard flags, a text buffer, and the clock. The instance is reached
+mouse and keyboard flags, a text buffer, the clock, and an `InputEvents` queue holding
+the frame's edges in arrival order. The instance is reached
 from the GLFW callbacks through `glfwSetWindowUserPointer`, so there is no
 file-scope "current window".
+
+`InputEvents.hpp` is header-only and free of GLFW — a `std::vector` of
+`{type, code, value}` with a per-frame cap. It sits next to the bool arrays rather than
+replacing them, because the two answer different questions; see
+[The frame loop](#the-frame-loop) for what only the queue can see.
 
 **The window icon** is set here too. `Window::applyIcon(name)` loads
 `<exeDir>/assets/image/icons/<name>` — the name comes from `settings.ini`, so the
@@ -625,13 +631,42 @@ waits. The tick exists so a missed invalidation cannot hide for longer than a se
 
 **An edge lives exactly one frame.** After `present()` the loop calls
 `dropUnreadInput()` and clears the flags nobody read: key presses, clicks, text,
-scroll. Levels (a held key) are left alone — that *is* "someone is holding something".
-The moment is not arbitrary: after the frame, not at the top of the next iteration,
-because an event that arrived while the loop was waiting belongs to the next frame,
-and dropping it before that frame is drawn loses the keystroke that opened the
-project in the first place. Without this, one `Enter` held `consumeActivity()` at
-"yes" forever and the editor drew at display rate while drawing nothing new:
-**0.9 s of CPU per 8 s** against **0.06 s** after the step.
+scroll, and the event queue. Levels (a held key) are left alone — that *is* "someone
+is holding something". The moment is not arbitrary: after the frame, not at the top of
+the next iteration, because an event that arrived while the loop was waiting belongs
+to the next frame, and dropping it before that frame is drawn loses the keystroke
+that opened the project in the first place. Without this, one `Enter` held
+`consumeActivity()` at "yes" forever and the editor drew at display rate while drawing
+nothing new: **0.9 s of CPU per 8 s** against **0.06 s** after the step.
+
+**`InputEvents` is the ordered form of the same edges.** `keyEdges_`,
+`mousePressed_` and `mouseReleased_` are a bool per key and a bool per button, which
+answers "is this held" and "was this pressed" correctly and cannot answer "what
+happened". A bool has no room for a key **tapped** and released inside one frame: by
+the time anyone asks, it is already up, and that is a different thing from having
+pressed it. The queue (`include/platform/InputEvents.hpp`) keeps the edges in arrival
+order and is filled from the same GLFW callbacks, independently:
+
+- `takeKeyPress()` clears `keyEdges_` and **not** the queue, so a script still sees a
+  press the editor already used for a shortcut. A game wants that key too.
+- `peekActivity()` consults the queue directly. A key **release** pushes an event and
+  sets no edge flag, so without this the window would sleep through the one frame that
+  shows the result of the user letting go.
+- `GLFW_REPEAT` is not an event. Auto-repeat means "still held", which `keys_` already
+  says, and a held key would otherwise queue dozens of identical presses a second.
+- A key release is in the queue but sets no edge flag either: "was this key pressed
+  this frame" must not answer yes on the frame the user let go of it.
+- Mouse **movement** is not an event. One pixel is one GLFW callback, so the queue
+  would grow with distance instead of with intent; `mouseDelta()` is the aggregate.
+- Capped at `kMaxEvents` (256) per frame and the overflow is **reported** by
+  `Window::dropUnreadInput()`, not swallowed: a stuck input device or a window someone
+  is hammering should not grow a vector without bound over a long session. The cap
+  drops the newest edge, because the most recent one is the one whose absence is
+  noticed.
+
+There is no GLFW in `InputEvents.hpp` on purpose, the same argument
+`FixedClock.hpp` makes. The callbacks need a window; the ordering, the cap and what
+`clear()` does to a frame do not, and `scripttest` exercises those directly.
 
 **Waiting is sleeping, not polling.** `WaitForSingleObject(timer, 0)` does not sleep
 at all: the first version of this mechanism ate 95% of a core while the window just
@@ -726,16 +761,14 @@ Facts worth keeping in mind, because they mildly contradict intuition:
   1/60 s, so the previous cap of 10 was unreachable and only meant the `for` loop
   looked unbounded. A long stall therefore slows time down instead of spiralling.
   Since `onFixedUpdate` runs per step, it runs at most twice per frame.
-- **Input.** `engine::isKeyDown`, `isMouseButtonDown`, `getMouseDelta`,
-  `setMouseCaptured`, `isMouseCaptured` and `getScrollDelta`, plus `engine::Key*` and
-  `engine::Mouse*` constants (`BindInput.cpp`). They read the live `Window`, so a
-  `Host` built with `nullptr` — `scripttest`, anything headless — answers `false`
-  and zeroes its `out` arguments instead of dereferencing nothing. **State only, no
-  events:** there is no queue, so an edge that is pressed and released inside one frame
-  is not seen. Event delivery is deferred.
+- **Input: state and events, both.** `engine::isKeyDown` / `isMouseButtonDown` /
+    `getMouseDelta` / `setMouseCaptured` / `isMouseCaptured` read the live `Window`,
+    so a `Host` built with `nullptr` — `scripttest`, anything headless — answers
+    `false` and zeroes its `out` arguments instead of dereferencing nothing.
+    `eventCount()` / `eventType()` / `eventCode()` / `eventValue()` walk the frame's
+    edges; see `InputEvents` below for why both exist.
   - `getScrollDelta()` reads the window's accumulated scroll, which `Application`
-    consumes earlier in the frame for the editor. In practice a script sees `0`; it is
-    published so the binding set is complete, not because it is useful yet.
+    consumes earlier in the frame for the editor. In practice a script sees `0`.
 - **Diagnostics.** `Host::setDiagnosticSink()` is installed before `initialize()`;
   compiler and exception messages go to `Log` with the file, line and column
   (`[script] ...` for `engine::log*`).

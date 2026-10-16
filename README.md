@@ -355,8 +355,10 @@ unreachable — 0.1 s of stall is only 6 steps — so it just looked unbounded.)
 
 ### Input
 
-State only, no events - there is no queue, so a key pressed and released inside a
-single frame is not seen. Event delivery is deferred.
+Two ways to ask, and the difference is the point.
+
+**State** - "is this held right now". Good for movement, for anything that runs every
+frame regardless:
 
 | Call | What it does |
 |---|---|
@@ -365,15 +367,51 @@ single frame is not seen. Event delivery is deferred.
 | `bool getMouseDelta(float &out dx, float &out dy)` | movement since the previous frame, in pixels |
 | `void setMouseCaptured(bool)` | confine the cursor to the window |
 | `bool isMouseCaptured()` | current state |
-| `float getScrollDelta()` | scroll accumulated by the window |
 
-All of them read the live window, so a headless host - `scripttest`, anything built
-without one - answers `false` and **zeroes** its `out` arguments instead of
-dereferencing a null pointer.
+**Events** - "what happened, in order, this frame". Walk the queue:
 
-`getScrollDelta()` is published so the binding set is complete, but in practice it
-answers `0`: `Application` consumes the window's scroll earlier in the frame for the
-editor.
+| Call | What it does |
+|---|---|
+| `int eventCount()` | how many events arrived this frame |
+| `int eventType(int index)` | `EventKey`, `EventKeyUp`, `EventMouse`, `EventMouseUp`, `EventScroll` |
+| `int eventCode(int index)` | the key (`KeyW`) or the button (`MouseLeft`); `-1` for scroll |
+| `double eventValue(int index)` | scroll ticks; `0` for everything else |
+
+```angelscript
+void onUpdate(float dt)
+{
+    for (int i = 0; i < engine::eventCount(); ++i)
+    {
+        if (engine::eventType(i) == engine::EventKey &&
+            engine::eventCode(i) == engine::KeySpace)
+            jump();
+    }
+}
+```
+
+Why both: a key **tapped** and released inside one frame is state nobody can see -
+by the time `isKeyDown` is asked, it is already up, and holding it for a frame is a
+different thing from pressing it. That is the whole reason the queue exists. If your
+script only cares whether a key is held, use `isKeyDown` and skip the loop.
+
+Rules worth knowing:
+
+- **The queue is not consumed.** Nothing a script does takes an event away, so two
+  scripts both see everything. It is cleared once per frame, at the end of the frame
+  that had its chance to read it.
+- **A script sees everything, including what the editor already handled.** The queue
+  is filled in the window callbacks, separately from the editor's own edge flags, so a
+  shortcut the editor acted on is still delivered to the script.
+- **Reading it costs nothing if you do not.** `eventCount()` is a size, not a scan.
+- **Mouse movement is not an event.** One pixel of movement is one callback, so the
+  queue would grow with distance instead of with intent. `getMouseDelta()` is the
+  aggregate.
+- **One reader for the delta and the scroll.** Both are consuming: the editor gets
+  them first, so a script typically sees `0`. That is a known gap, not a bug you
+  introduced.
+
+Headless hosts - `scripttest`, anything built without a window - answer `false`,
+return `0` events, and zero their `out` arguments instead of dereferencing null.
 
 ### API
 
@@ -517,12 +555,13 @@ cmake --build build --config Release
 build\scripttest.exe
 ```
 
-95 checks: the entry-point rule and its interaction with hooks, a `dt` hook that is
+120 checks: the entry-point rule and its interaction with hooks, a `dt` hook that is
 not an entry point, `onUpdate` / `onFixedUpdate` / `onStop` each called only on their
 own turn, a duplicate hook declaration reported as a warning, a hook that raises an
 exception mid-flight followed by a hook that still runs, the function cache dropping
 both its hits and its misses when a module is replaced, the input bindings with no
-window, and a compile error as an ERROR diagnostic.
+window, the event queue's ordering and cap, and a compile error as an ERROR
+diagnostic.
 
 ## Features
 
