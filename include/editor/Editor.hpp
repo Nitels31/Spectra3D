@@ -32,10 +32,33 @@ struct EditorLayout {
 };
 
 // Panels that can be dragged between the edges and the middle of the window, the
-// way Unity's are. Four of them, four places to be: two vertical edges, one
-// bottom strip, and free float over the scene.
+// way Unity's are. Four of them, and five places to be: the two vertical edges, the
+// bottom strip, the two bottom corners and free float over the scene.
+//
+// The corners are separate zones rather than "the left edge, but lower", because a
+// panel that owns the bottom-left corner and a panel that owns the left edge both
+// exist at once - the corner is where the console stops covering the hierarchy, and
+// without its own zone there is nowhere to put a second list once the first one has
+// the bottom strip.
+//
+// `Float` is last on purpose: several tables are sized `(int)PanelZone::Float` and
+// index them by zone.
 enum class PanelId { Hierarchy = 0, Inspector = 1, Console = 2, Favorites, PanelCount };
-enum class PanelZone { Left, Right, Bottom, Float };
+enum class PanelZone { Left, Right, Bottom, BottomLeft, BottomRight, Float };
+
+// Which side of the window a zone sits on. The grip, the resize and the layout file
+// all have to ask the same question, and three comparisons per site is three places
+// to forget the third one.
+constexpr bool zoneIsBottom(PanelZone zone) {
+    return zone == PanelZone::Bottom || zone == PanelZone::BottomLeft ||
+           zone == PanelZone::BottomRight;
+}
+constexpr bool zoneIsLeft(PanelZone zone) {
+    return zone == PanelZone::Left || zone == PanelZone::BottomLeft;
+}
+constexpr bool zoneIsRight(PanelZone zone) {
+    return zone == PanelZone::Right || zone == PanelZone::BottomRight;
+}
 
 inline constexpr int kPanelCount = (int)PanelId::PanelCount;
 
@@ -69,8 +92,11 @@ public:
         kMenuRow = 1100,   // + row index
         kLayerRow = 1200,  // + body index
         kLayerToggle = 1300,
-        kHelpClose = 1400,
+kHelpClose = 1400,
         kPanelGrip = 1500,
+        // Not a widget: the id the popup capture is claimed under. Any non-zero
+        // value does, this one only has to be unlikely.
+        kPopupCapture = 1600,
     };
 
     Editor(MeshRegistry& meshes, i18n::Localizer& localizer);
@@ -373,6 +399,10 @@ private:
     // panels that hang off them can be anchored to exactly the same rectangles.
     Rect searchField_;
     Rect layersButton_;
+    // The button the layers list was actually opened from. Two strips have one - the
+    // top bar and the scene header - and a list anchored to the other strip's button
+    // opens on the far side of the window from the click that asked for it.
+    Rect layersAnchor_;
     // Scroll offset of an open dropdown, in pixels. A menu is as long as its
     // contents and Create lists every model on disk, so the bound on a dropdown is
     // the window, not an arbitrary row count.
@@ -419,6 +449,10 @@ private:
     void handlePanelDrag(PhysicsWorld& world);
     void drawPanelDragFeedback(UiRenderer& ui);
     const char* panelTitle(PanelId id) const;
+    // True while anything that floats above the panels is up. While it is, the
+    // panels stop reacting to the pointer: a dropdown is drawn after them, so their
+    // hit tests have already run by the time anyone can see that they are covered.
+    bool popupOpen() const;
     PanelZone zoneAt(float x, float y) const;
     Rect zoneRect(PanelZone zone) const;
     void commitPanelDrop();

@@ -234,3 +234,5 @@ shape.capsule=Spawn
 shape.cone=Lance
 shape.pyramid=Obelisk
 shape.prism=Shrine
+settings.icon=App icon
+settings.iconNone=No icon files, then.

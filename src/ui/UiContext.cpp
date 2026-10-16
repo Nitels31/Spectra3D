@@ -36,6 +36,35 @@ const char* NumTraits<int>::kScanFormat = "%d";
 
 } // namespace
 
+void UiContext::pushClip(const Rect& rect) {
+    if (clipDepth_ >= kMaxClips) return;
+    Rect next = rect;
+    if (clipDepth_ > 0) {
+        const Rect& outer = clips_[clipDepth_ - 1];
+        const float left = std::fmax(outer.x, next.x);
+        const float top = std::fmax(outer.y, next.y);
+        const float right = std::fmin(outer.x + outer.width, next.x + next.width);
+        const float bottom = std::fmin(outer.y + outer.height, next.y + next.height);
+        next = Rect{left, top, std::fmax(0.0f, right - left), std::fmax(0.0f, bottom - top)};
+    }
+    clips_[clipDepth_++] = next;
+}
+
+void UiContext::popClip() {
+    if (clipDepth_ > 0) --clipDepth_;
+}
+
+bool UiContext::clipContains_(const Rect& rect) const {
+    if (clipDepth_ == 0) return rect.contains(pointerX_, pointerY_);
+    // The clipped test, not the two tests joined: a rectangle that only overlaps the
+    // clip box is outside it as far as a click is concerned, and `contains &&
+    // clip.contains` would accept the sliver where the two meet.
+    const Rect& clip = clips_[clipDepth_ - 1];
+    if (pointerX_ < clip.x || pointerX_ >= clip.x + clip.width) return false;
+    if (pointerY_ < clip.y || pointerY_ >= clip.y + clip.height) return false;
+    return rect.contains(pointerX_, pointerY_);
+}
+
 void UiContext::beginInput(Window& window) {
     window_ = &window;
     double x = 0.0, y = 0.0;
@@ -49,6 +78,12 @@ void UiContext::beginInput(Window& window) {
     cameraCaptured_ = window.mouseCaptured();
     ctrlHeld_ = window.keyDown(GLFW_KEY_LEFT_CONTROL) || window.keyDown(GLFW_KEY_RIGHT_CONTROL);
     hoveredId_ = 0;
+    // The clip stack is not: a panel that clips its body pushes and pops around its
+    // own sections, so it is always empty again by the time the next frame starts -
+    // and a leftover box would silently make half the window unclickable.
+    clipDepth_ = 0;
+    // captureId_ is deliberately left alone: it describes an open popup, which lives
+    // across the frame, and whoever opened it sets it before the first widget runs.
 }
 
 bool UiContext::button(UiRenderer& ui, int id, float x, float y, float w, float h,
@@ -56,7 +91,10 @@ bool UiContext::button(UiRenderer& ui, int id, float x, float y, float w, float 
     const Rect rect{x, y, w, h};
     const bool isHovered = hovered(rect);
     if (isHovered) markHovered(id);
-    if (pointerPressed_ && isHovered) activeId_ = id;
+    // Under a popup a button still looks like a button - a disabled one would
+    // flicker on and off as the list opens - it just does not answer.
+    if (captured()) activeId_ = 0;
+    else if (pointerPressed_ && isHovered) activeId_ = id;
 
     bool clicked = false;
     if (activeId_ == id && pointerReleased_) {
@@ -89,7 +127,7 @@ bool UiContext::tab(UiRenderer& ui, float x, float y, float w, const char* label
     ui.fillRect(x, y, w, kHeight, active ? theme::panel : theme::panelDark);
     if (active) ui.fillRect(x, y + kHeight - 2.0f, w, 2.0f, theme::accent);
     ui.text(x + 8.0f, y + 4.0f, label, active ? theme::text : theme::textDim);
-    return pointerPressed_ && hovered(Rect{x, y, w, kHeight});
+    return pointerPressed() && hovered(Rect{x, y, w, kHeight});
 }
 
 void UiContext::sectionHeader(UiRenderer& ui, float x, float y, float w,
@@ -108,7 +146,7 @@ bool UiContext::checkbox(UiRenderer& ui, int id, float x, float y, float w,
     if (isHovered) markHovered(id);
 
     bool changed = false;
-    if (pointerPressed_ && isHovered) {
+    if (pointerPressed() && isHovered) {
         value = !value;
         changed = true;
     }
@@ -120,11 +158,13 @@ bool UiContext::checkbox(UiRenderer& ui, int id, float x, float y, float w,
 }
 
 void UiContext::pumpTextField(Window& window, TextField& field, bool fieldHovered) {
-    if (pointerPressed_ && fieldHovered) {
+    // A popup press is not a press on the field, so a field under an open list keeps
+    // its focus instead of blinking out of it the moment the list opens.
+    if (pointerPressed() && fieldHovered) {
         field.editing = true;
         activeId_ = field.id;
     }
-    if (pointerPressed_ && !fieldHovered) field.editing = false;
+    if (pointerPressed() && !fieldHovered) field.editing = false;
     if (!field.editing) return;
 
     char typed[64];
@@ -156,7 +196,7 @@ bool UiContext::closeValueEditorIfDone(bool fieldHovered) {
         editor.clear();
         return true;
     }
-    if (window.takeKeyPress(GLFW_KEY_ENTER) || (pointerPressed_ && !fieldHovered)) {
+    if (window.takeKeyPress(GLFW_KEY_ENTER) || (pointerPressed() && !fieldHovered)) {
         editor.editing = false;
         return true;
     }
@@ -204,7 +244,8 @@ bool UiContext::propertyNumeric(UiRenderer& ui, int id, float x, float y, float 
     valueEditor_.clear();
 
     // --- drag interaction ---------------------------------------------------
-    if (pointerPressed_ && fieldHovered) {
+    if (captured()) activeId_ = 0;
+    else if (pointerPressed_ && fieldHovered) {
         activeId_ = id;
         dragStartX_ = pointerX_;
         dragStartValue_ = (float)value;
@@ -219,7 +260,7 @@ bool UiContext::propertyNumeric(UiRenderer& ui, int id, float x, float y, float 
             changed = true;
         }
     }
-    if (pointerReleased_ && activeId_ == id) {
+    if (pointerReleased() && activeId_ == id) {
         if (std::fabs(pointerX_ - dragStartX_) < 3.0f) {
             // Formatted straight into the editor buffer: the intermediate copy
             // plus TextField::set() was a second snprintf of the same string.

@@ -234,3 +234,5 @@ shape.capsule=Powder keg
 shape.cone=Spit
 shape.pyramid=Sail
 shape.prism=Spar
+settings.icon=App icon
+settings.iconNone=No icon files, arrr

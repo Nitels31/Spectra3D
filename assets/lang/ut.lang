@@ -234,3 +234,5 @@ shape.capsule=capsule
 shape.cone=cone
 shape.pyramid=pyramid
 shape.prism=prism
+settings.icon=ICON
+settings.iconNone=(no icons)

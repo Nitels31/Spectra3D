@@ -41,6 +41,10 @@ constexpr float kMinButtonWidth = 60.0f;
 constexpr float kButtonWidth = 84.0f;
 constexpr float kDeleteButtonWidth = 74.0f;
 constexpr float kStarSize = 20.0f;
+// The settings icon dropdown is one of these, so the list cannot be longer than
+// the array the draw pass hands out. A folder with more than this many icons is
+// still usable - the extras are simply not offered.
+constexpr int kMaxIconItems = 32;
 
 // Rows reserved at the bottom of the project list for the hint row.
 constexpr float kListOverhead = kSectionHeader + kContentInset + kContentInset;
@@ -125,6 +129,11 @@ Launcher::Result Launcher::update(UiRenderer& ui, UiContext& ctx, const Window& 
     Window& input = const_cast<Window&>(window);
     ctx.beginInput(input);
 
+    // A confirmation or the folder browser covers the whole window, so while one is
+    // up nothing else may answer the pointer. The launcher is one widget layer, so
+    // this is the only place that has to say it.
+    ctx.setPointerCapture((deleteOpen_ || pickerOpen_) ? kPointerClaim : 0);
+
     requestedOpen_ = false;
     requestedPath_.clear();
     quitRequested_ = false;
@@ -137,6 +146,10 @@ Launcher::Result Launcher::update(UiRenderer& ui, UiContext& ctx, const Window& 
     // The launcher owns the whole window: claim the pointer before any widget so
     // no click can reach whatever is behind this state.
     ctx.markHovered(kPointerClaim);
+
+    // Stamped first, so a widget drawn below can tell which frame this is and
+    // refuse to act on the very press that opened it.
+    ++frame_;
 
     if (deleteOpen_) {
         // A confirmation is modal: the list behind it is not drawn and not
@@ -165,6 +178,7 @@ Launcher::Result Launcher::update(UiRenderer& ui, UiContext& ctx, const Window& 
 
 void Launcher::initialize() {
     settings_.load();
+    scanIcons();
 
     rootDraft_ = settings_.projectRoot.empty() ? Settings::defaultProjectRoot()
                                               : settings_.projectRoot;
@@ -637,9 +651,24 @@ Launcher::SelectPaint Launcher::drawSelectField(UiRenderer& ui, UiContext& ctx, 
     // Hit area is the field itself; the background is drawn here rather than
     // through UiContext::button so the open state can look like a field and not
     // like a button.
-    const bool fieldHovered = ctx.hovered(field);
+    const bool fieldHovered = ctx.hovered(field) && (openSelect_ < 0 || openSelect_ == id);
     if (fieldHovered) ctx.markHovered(id);
-    if (fieldHovered && ctx.pointerPressed()) openSelect_ = openSelect_ == id ? -1 : id;
+    if (fieldHovered && ctx.pointerPressed()) {
+        const bool opening = openSelect_ != id;
+        openSelect_ = opening ? id : -1;
+        // A fresh list starts at the top, except when reopening the one it was
+        // left on - flipping back and forth while choosing should not lose the
+        // place. Scrolling to the current value instead means "Minecraft" is
+        // visible the moment twenty-three languages open.
+        if (opening) {
+            int currentRow = 0;
+            for (int i = 0; i < count; ++i)
+                if (items[i].value == current) { currentRow = i; break; }
+            selectScroll_ = currentRow;
+            selectHoverRow_ = -1;
+            selectOpenedFrame_ = frame_;
+        }
+    }
 
     ui.fillRect(field.x, field.y, field.width, field.height,
                 openSelect_ == id ? theme::accentDim : theme::field);
@@ -666,40 +695,152 @@ int Launcher::drawSelectList(UiRenderer& ui, UiContext& ctx, const SelectPaint& 
     if (paint.id < 0 || openSelect_ != paint.id || paint.count <= 0) return -1;
 
     const float rowH = kRowHeight + 2.0f;
-    const float height = rowH * (float)paint.count;
+    const float fullHeight = rowH * (float)paint.count;
     const float below = paint.field.y + paint.field.height + 2.0f;
-    const float above = paint.field.y - 2.0f - height;
+    const float above = paint.field.y - 2.0f - fullHeight;
     // Down when it fits, up when it does not. Six languages on a short panel do fit
     // below; a long list near the bottom of the window does not, and one that runs
     // off the screen edge is a list you cannot scroll to.
+    //
+    // The clamp is what stops it covering the field it belongs to. With the list
+    // taller than the panel, `below + fullHeight` overshoots and `above` is off
+    // the top, so the old clamp pinned y to the panel's top edge - which is where
+    // the field itself sits. The list then landed on top of its own field, the
+    // pointer was already inside a row, and the click that opened the dropdown
+    // also chose a language. Pinning to the space on one side of the field keeps
+    // the two disjoint.
     float y = below;
-    if (below + height > bounds.y + bounds.height && above >= bounds.y) y = above;
-    y = clampf(y, bounds.y, std::fmax(bounds.y, bounds.y + bounds.height - height));
+    if (below + fullHeight > bounds.y + bounds.height && above >= bounds.y) y = above;
+    y = clampf(y, bounds.y, std::fmax(bounds.y, bounds.y + bounds.height - fullHeight));
+    // Whatever the height ends up being, the list stays strictly on one side of
+    // the field: never over it, or the field becomes impossible to point at again.
+    if (y + fullHeight > paint.field.y) y = std::fmin(below, paint.field.y);
+    y = std::fmax(y, bounds.y);
 
+    // Twenty-three languages are taller than the settings panel and usually taller
+    // than the viewport, so the list is clamped to what is reachable on screen and
+    // scrolled. Without this the last entries are painted below the window edge:
+    // visible in the framebuffer, impossible to click.
+    const float roomBelow = bounds.y + bounds.height - std::fmax(y, below);
+    const float roomAbove = paint.field.y - 2.0f - bounds.y;
+    // Whichever side it opened towards, it may not grow past the field or past the
+    // panel; a list clipped by its own scroll offset reads as a short list.
+    const float room = std::max(0.0f, y < paint.field.y ? roomAbove : roomBelow);
+    const float maxHeight = std::fmax(rowH, std::min(room, bounds.height));
+    const int visibleRows = std::max(1, (int)std::floor((maxHeight + 1.0f) / rowH));
+    const int maxScroll = std::max(0, paint.count - visibleRows);
+    // Opening on the current value would put a language near the end of a
+    // twenty-three row list below the fold with everything after it. Start one
+    // screen higher, so the choice and its neighbours are all on screen: the
+    // point of opening the list is to see what else there is.
+    if (frame_ == selectOpenedFrame_)
+        selectScroll_ = std::clamp(selectScroll_ - visibleRows / 2, 0, maxScroll);
+    else
+        selectScroll_ = std::clamp(selectScroll_, 0, maxScroll);
+    // Published for the key handler, which runs outside this draw and would
+    // otherwise be paging a list whose height it cannot know.
+    openSelectRows_ = visibleRows;
+    openSelectScrollMax_ = maxScroll;
+
+    const float height = rowH * (float)std::min(paint.count, visibleRows);
     const Rect list{paint.field.x, y, paint.field.width, height};
     ui.fillRect(list.x, list.y, list.width, list.height, theme::panel);
-    for (int i = 0; i < paint.count; ++i) {
+
+    // Swallow the click while the pointer is over the list. The list is painted
+    // last, after every row of the panel has already tested this frame's press and
+    // release - so a click on "Minecraft" also reached the Rescan button drawn
+    // underneath it and fired that instead. Consuming the event here is what makes
+    // the dropdown pick a language instead of pressing the button behind it.
+    // The click that opened this list is still `pointerPressed` this frame: the
+    // field is drawn among the panel's rows and the list right after it, both
+    // before the frame ends. Treating that same press as a choice is why picking a
+    // language needed no second click - the pointer never had to enter the list,
+    // so the row under it was chosen for the user. A list needs a frame to exist
+    // before it can be pointed at.
+    const bool justOpened = frame_ == selectOpenedFrame_;
+    const bool overList = ctx.hovered(list);
+
+    const int rows = std::min(paint.count, visibleRows);
+    int chosen = -1;
+    for (int i = 0; i < rows; ++i) {
+        const int item = selectScroll_ + i;
         const Rect row{list.x, list.y + (float)i * rowH, list.width, rowH - 1.0f};
         const bool hovered = ctx.hovered(row);
-        const bool selected = paint.items[i].value == paint.current;
+        const bool selected = paint.items[item].value == paint.current;
         if (hovered) {
             ui.fillRect(row.x, row.y, row.width, row.height, theme::buttonHover);
             ctx.markHovered(paint.id + 100 + i);
+            if (!justOpened) selectHoverRow_ = item;
         }
+        // The selection is stated three ways, because one is not enough to read at a
+        // glance: the accent bar, the accent text, and a tick in the gutter. The
+        // bar alone is easy to miss on a row that is also hovered.
         const Color color = selected ? theme::accent : theme::text;
-        drawText(ui, row.x + 8.0f, row.y + (row.height - kTextHeight) * 0.5f,
-                 paint.items[i].label, color, fbWidth);
-        if (selected) ui.fillRect(row.x + 2.0f, row.y, 2.0f, row.height, theme::accent);
+        drawText(ui, row.x + 18.0f, row.y + (row.height - kTextHeight) * 0.5f,
+                 paint.items[item].label, color, fbWidth);
+        if (selected) {
+            ui.fillRect(row.x + 2.0f, row.y, 2.0f, row.height, theme::accent);
+            // The tick is drawn from rows, not printed. U+2713 is outside the
+            // atlas - the alphabet stops at Latin-1 plus a handful of extras - so
+            // printing it yields a blank box, which is worse than no tick.
+            const float tickX = row.x + 7.0f;
+            const float tickY = row.y + row.height * 0.5f;
+            for (int s = 0; s < 4; ++s) {
+                const float t = (float)s / 3.0f;
+                // Short arm down-right, long arm up-right: a check without a glyph.
+                const float ax = tickX + (t * 3.0f);
+                const float ay = tickY + (2.0f - t * 2.0f);
+                ui.fillRect(ax, ay, 1.4f, 1.4f, theme::accent);
+                const float bx = tickX + 2.6f + t * 4.4f;
+                const float by = tickY + (1.0f - t * 4.4f);
+                ui.fillRect(bx, by, 1.4f, 1.4f, theme::accent);
+            }
+        }
 
-        if (hovered && ctx.pointerPressed()) {
+        if (hovered && ctx.pointerPressed() && !justOpened) {
             openSelect_ = -1;
-            return paint.items[i].value;
+            selectHoverRow_ = -1;
+            chosen = paint.items[item].value;
+            ctx.consumePointerClick();
         }
     }
 
-    // A click outside the list closes it without choosing anything.
-    if (ctx.pointerPressed() && !ctx.hovered(list) && !ctx.hovered(paint.field)) openSelect_ = -1;
-    return -1;
+    // A scrollbar, only when there is more to scroll to. Drawn as a plain trough so
+    // it cannot be mistaken for a draggable widget: the list scrolls with the wheel
+    // and with Up/Down, which is enough for a list this size.
+    if (maxScroll > 0) {
+        const float trackX = list.x + list.width - 4.0f;
+        ui.fillRect(trackX, list.y, 2.0f, list.height, theme::field);
+        const float thumb = std::fmax(18.0f, list.height * ((float)rows / (float)paint.count));
+        const float span = list.height - thumb;
+        const float thumbY = list.y + span * ((float)selectScroll_ / (float)maxScroll);
+        ui.fillRect(trackX, thumbY, 2.0f, thumb, theme::accent);
+    }
+
+    // Scrolling: the wheel over the list, and Up/Down while it is open, so the
+    // list can be walked without hunting for a scrollbar.
+    if (overList && ctx.scrollDelta() != 0.0) {
+        const int notches = (int)std::ceil(ctx.scrollDelta() / 40.0);
+        selectScroll_ = std::clamp(selectScroll_ - notches, 0, maxScroll);
+    }
+    // Keyboard walk: Down/Up page through the list, Home/End jump to the ends.
+    // A twenty-three entry list is exactly the case where reaching an entry with
+    // the mouse is not the obvious thing to do.
+    if (ctx.pointerDown() && selectHoverRow_ >= 0) {
+        // Keep the row under the pointer in view, so the list can be walked with
+        // the mouse held down rather than requiring a fresh click on every row.
+        if (selectHoverRow_ < selectScroll_) selectScroll_ = selectHoverRow_;
+        else if (selectHoverRow_ >= selectScroll_ + rows) selectScroll_ = selectHoverRow_ - rows + 1;
+        selectScroll_ = std::clamp(selectScroll_, 0, maxScroll);
+    }
+
+    // A click outside the list closes it without choosing anything - but not on the
+    // frame it opened, where that same click is the one that opened it.
+    if (ctx.pointerPressed() && !justOpened && !overList && !ctx.hovered(paint.field)) {
+        openSelect_ = -1;
+        ctx.consumePointerClick();
+    }
+    return chosen;
 }
 
 void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window, int fbWidth) {
@@ -712,6 +853,13 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
     if (body.width <= 0.0f || body.height <= 0.0f) return;
     y = body.y;
 
+    // While a dropdown is open it floats over the rows below it, but those rows
+    // have already run their own hit tests earlier in this frame - so a click on
+    // "Minecraft" also pressed the Rescan button sitting underneath it. Suppressing
+    // the panel's controls while a list is open makes the dropdown the only thing
+    // under the pointer, which is what a visible list should be.
+    const bool listOpen = openSelect_ >= 0;
+
     // Row 1: label + root path field + Browse.
     drawText(ui, body.x, y, text("settings.projectRoot"), theme::textDim, fbWidth);
     const float fieldY = y + kTextHeight + 2.0f;
@@ -719,13 +867,13 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
     const Rect browse{body.x + body.width - browseW, fieldY, browseW, kFieldHeight};
     const Rect rootField{body.x, fieldY, std::fmax(0.0f, body.width - browseW - 6.0f), kFieldHeight};
 
-    ctx.pumpTextField(window, rootField_, ctx.hovered(rootField));
+    ctx.pumpTextField(window, rootField_, ctx.hovered(rootField) && !listOpen);
     if (rootField_.editing) rootDraft_.assign(rootField_.text());
     drawFieldValue(ui, rootField, rootDraft_.c_str(), rootField_.editing, /*asPath=*/true,
                    fbWidth);
 
-    if (ctx.button(ui, kBrowseButton, browse.x, browse.y, browse.width, browse.height,
-                   text("settings.browse")))
+    if (!listOpen && ctx.button(ui, kBrowseButton, browse.x, browse.y, browse.width,
+                                browse.height, text("settings.browse")))
         openPicker();
 
     // Row 2: Apply + Reset to default. Both sized to their labels, so the pair does
@@ -738,14 +886,14 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
 
     // Apply is only meaningful when the field says something new.
     if (rootDraft_ != settings_.projectRoot) {
-        if (ctx.button(ui, kApplyButton, apply.x, apply.y, apply.width, apply.height,
-                       text("settings.apply")))
+        if (!listOpen && ctx.button(ui, kApplyButton, apply.x, apply.y, apply.width,
+                                    apply.height, text("settings.apply")))
             applyRoot(rootDraft_);
     } else {
         drawDisabledButton(ui, ctx, kApplyButton, apply, text("settings.apply"), fbWidth);
     }
-    if (ctx.button(ui, kResetButton, reset.x, reset.y, reset.width, reset.height,
-                   text("settings.reset")))
+    if (!listOpen && ctx.button(ui, kResetButton, reset.x, reset.y, reset.width,
+                                reset.height, text("settings.reset")))
         applyRoot(Settings::defaultProjectRoot());
 
     // Row 3: language. A list, like the theme below it, because there are six of
@@ -786,8 +934,8 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
     rowY += kRowHeight + 6.0f;
     const Rect rescan{body.x, rowY, buttonWidthFor(ui, text("settings.rescan"), kMinButtonWidth),
                       kRowHeight};
-    if (ctx.button(ui, kRescanButton, rescan.x, rescan.y, rescan.width, rescan.height,
-                   text("settings.rescan")))
+    if (!listOpen && ctx.button(ui, kRescanButton, rescan.x, rescan.y, rescan.width,
+                                rescan.height, text("settings.rescan")))
         applySettings();
     drawText(ui, rescan.x + rescan.width + 8.0f, rescan.y + (rescan.height - kTextHeight) * 0.5f,
              projects_.root().c_str(), theme::textDim, fbWidth);
@@ -823,6 +971,29 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
                                    settings_.frameRateCap, kFrameCapSelect, fbWidth);
         rowY += kFieldHeight + kTextHeight + 16.0f;
     }
+
+    // The application icon. A dropdown over the same list the folder holds, so a
+    // new icon is one dropped file away - and the window is repainted the moment
+    // it is chosen, which is the only way to tell two files apart by name.
+    SelectPaint iconPaint;
+    SelectItem iconItems[kMaxIconItems] = {};
+    int iconCount = 0;
+    for (size_t i = 0; i < icons_.size() && iconCount < kMaxIconItems; ++i)
+        iconItems[iconCount++] = SelectItem{icons_[i].c_str(), (int)i, icons_[i].c_str()};
+
+    if (iconCount > 0) {
+        int current = 0;
+        for (int i = 0; i < iconCount; ++i)
+            if (icons_[(size_t)iconItems[i].value] == settings_.appIcon) current = i;
+        rowY += kRowHeight + 6.0f;
+        if (rowY + kFieldHeight * 2.0f + 30.0f < body.y + body.height) {
+            iconPaint = drawSelectField(ui, ctx, Rect{body.x, rowY, selectW, 0.0f},
+                                        text("settings.icon"), iconItems, iconCount, current,
+                                        kIconSelect, fbWidth);
+            rowY += kFieldHeight + kTextHeight + 16.0f;
+        }
+    }
+
     // Row 6: how many projects the current root yields, so an empty list has a
     // number attached to it instead of looking broken.
     rowY += 6.0f;
@@ -833,6 +1004,11 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
         drawText(ui, body.x, rowY + (kRowHeight - kTextHeight) * 0.5f, buffer, theme::textDim,
                  fbWidth);
     }
+    // Said only when there is nothing to pick: an empty dropdown is a control that
+    // does not answer, and this one would have no rows at all.
+    if (iconCount == 0 && rowY + kRowHeight < body.y + body.height)
+        drawText(ui, body.x, rowY + (kRowHeight - kTextHeight) * 0.5f, text("settings.iconNone"),
+                 theme::textDim, fbWidth);
 
     // The open list, last: over every row above it, and after a flush. Only one
     // select can be open, so at most one of these draws anything.
@@ -844,10 +1020,12 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
         if (paint.id == kLanguageSelect) setLanguage((LanguageTag)chosen);
         else if (paint.id == kThemeSelect) setTheme((theme::ThemeId)chosen);
         else if (paint.id == kFrameCapSelect) setFrameRateCap(chosen);
+        else if (paint.id == kIconSelect) setAppIcon(chosen, window);
     };
     paintOpen(languagePaint);
     paintOpen(themePaint);
     paintOpen(capPaint);
+    paintOpen(iconPaint);
 }
 
 void Launcher::drawAccount(UiRenderer& ui, UiContext& ctx, int fbWidth) {
@@ -1138,6 +1316,7 @@ void Launcher::handleKeys(Window& window) {
         // choosing a setting never leaves the page or the app.
         if (openSelect_ >= 0) {
             openSelect_ = -1;
+            selectHoverRow_ = -1;
             return;
         }
         // Back out of a sub-view first, and only leave the app from the list.
@@ -1150,6 +1329,36 @@ void Launcher::handleKeys(Window& window) {
     }
 
     const bool typing = nameField_.editing || rootField_.editing;
+
+    // An open dropdown owns the arrows while it is up. Without this the list
+    // scrolls with the wheel but not with the keyboard, and the project list
+    // behind it would move on every keypress - visible scrolling happening
+    // somewhere other than where the pointer is.
+    if (openSelect_ >= 0) {
+        const int step = window.takeKeyPress(GLFW_KEY_DOWN) ? 1
+                        : (window.takeKeyPress(GLFW_KEY_UP) ? -1 : 0);
+        if (step != 0) {
+            selectScroll_ = std::clamp(selectScroll_ + step, 0, openSelectScrollMax_);
+            return;
+        }
+        if (window.takeKeyPress(GLFW_KEY_PAGE_DOWN)) {
+            selectScroll_ = std::clamp(selectScroll_ + openSelectRows_, 0, openSelectScrollMax_);
+            return;
+        }
+        if (window.takeKeyPress(GLFW_KEY_PAGE_UP)) {
+            selectScroll_ = std::clamp(selectScroll_ - openSelectRows_, 0, openSelectScrollMax_);
+            return;
+        }
+        if (window.takeKeyPress(GLFW_KEY_HOME)) {
+            selectScroll_ = 0;
+            return;
+        }
+        if (window.takeKeyPress(GLFW_KEY_END)) {
+            selectScroll_ = openSelectScrollMax_;
+            return;
+        }
+    }
+
     // Arrows belong to the text field while it has the focus, so they are
     // consumed either way - otherwise they would move the project selection
     // behind the caret.
@@ -1342,6 +1551,47 @@ void Launcher::setTheme(theme::ThemeId id) {
     settings_.theme = tag;
     settings_.save();
     theme::setActiveTheme(id);
+}
+
+void Launcher::scanIcons() {
+    icons_.clear();
+    // The one directory Window::applyIcon() reads, spelled the same way: relative
+    // to the binary, through kAppIconsDir. Not through the asset root, which
+    // already points AT assets/ and would make this assets/assets/image/icons.
+    // .ico only: the shell loads those natively at every size the title bar and the
+    // task bar ask for, and a PNG here would be a choice the picker offers and the
+    // window cannot show.
+    const std::string dir = str::join(fs::executableDir(), kAppIconsDir);
+    for (const std::string& path : fs::listFilesByExtension(dir, {".ico"}))
+        icons_.push_back(str::fileName(path));
+
+    // The shipped default first, so a folder whose only file is not the default
+    // still opens on something, and so the list order is stable across machines
+    // that added different extra icons.
+    for (size_t i = 0; i < icons_.size(); ++i) {
+        if (icons_[i] != kAppIconFile) continue;
+        icons_.erase(icons_.begin() + (long)i);
+        icons_.insert(icons_.begin(), kAppIconFile);
+        break;
+    }
+    if (icons_.empty())
+        Log::warn("Launcher: no icon files in '%s' - falling back to the drawn mark",
+                  dir.c_str());
+    else
+        Log::info("Launcher: %d icon file(s) in '%s'", (int)icons_.size(), dir.c_str());
+}
+
+void Launcher::setAppIcon(int index, Window& window) {
+    if (index < 0 || index >= (int)icons_.size()) return;
+    const std::string name = icons_[(size_t)index];
+    if (name == settings_.appIcon) return;
+    settings_.appIcon = name;
+    settings_.save();
+    // Straight away, not on the next launch: the point of the setting is to see
+    // which icon is which, and a title bar that only changes after a restart is a
+    // settings screen that has to be trusted instead of used.
+    window.applyIcon(name.c_str());
+    Log::info("Launcher: application icon '%s'", name.c_str());
 }
 
 void Launcher::setFrameRateCap(int cap) {

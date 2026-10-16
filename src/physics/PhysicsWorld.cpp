@@ -108,21 +108,28 @@ int collideBoxes(const RigidBody& A, const RigidBody& B, SatPoint out[4]) {
     const Vec3 t = B.position - A.position;
     const Vec3 ta{dot(t, fa.u[0]), dot(t, fa.u[1]), dot(t, fa.u[2])};
 
-    float bestSep = 1e30f;
+    // Every axis gives a separation that is negative while the boxes overlap, and
+    // positive means "this axis proves they are apart". The axis we want is the
+    // one of LEAST penetration - the largest separation, i.e. the one closest to
+    // zero. Tracking the smallest value instead picks the deepest overlap, which
+    // is usually a side face rather than the face the boxes are resting on; the
+    // manifold then gets built against that wrong face and the solver shoves the
+    // pair sideways instead of holding it up.
+    float bestSep = -1e30f;
     int bestAxis = -1; // 0..2 = A face, 3..5 = B face, 6..14 = edge cross
 
     for (int i = 0; i < 3; ++i) { // A's face normals
         const float rb = fb.h.x * AbsR[i][0] + fb.h.y * AbsR[i][1] + fb.h.z * AbsR[i][2];
         const float sep = std::fabs(component(ta, i)) - (component(fa.h, i) + rb);
         if (sep > 0.0f) return 0;
-        if (sep < bestSep) { bestSep = sep; bestAxis = i; }
+        if (sep > bestSep) { bestSep = sep; bestAxis = i; }
     }
     for (int j = 0; j < 3; ++j) { // B's face normals
         const float ra = fa.h.x * AbsR[0][j] + fa.h.y * AbsR[1][j] + fa.h.z * AbsR[2][j];
         const float sep = std::fabs(ta.x * R[0][j] + ta.y * R[1][j] + ta.z * R[2][j]) -
                           (ra + component(fb.h, j));
         if (sep > 0.0f) return 0;
-        if (sep < bestSep) { bestSep = sep; bestAxis = 3 + j; }
+        if (sep > bestSep) { bestSep = sep; bestAxis = 3 + j; }
     }
     for (int i = 0; i < 3; ++i) { // nine edge-edge cross products
         for (int j = 0; j < 3; ++j) {
@@ -136,7 +143,7 @@ int collideBoxes(const RigidBody& A, const RigidBody& B, SatPoint out[4]) {
             // face axis win instead.
             const float lenSq = 1.0f - R[i][j] * R[i][j];
             if (lenSq < 0.95f * 0.95f) continue;
-            if (sep < bestSep) { bestSep = sep; bestAxis = 6 + i * 3 + j; }
+            if (sep > bestSep) { bestSep = sep; bestAxis = 6 + i * 3 + j; }
         }
     }
 
@@ -171,8 +178,13 @@ int collideBoxes(const RigidBody& A, const RigidBody& B, SatPoint out[4]) {
     const BoxFrame& inc = refIsA ? fb : fa;
     const int refAxis = bestAxis % 3;
 
+    // The reference face is the one FACING the incident box, so its outward normal
+    // must point from ref toward inc. Orienting it the other way picks the far
+    // face of the reference box: refFaceCentre then lands on the wrong side, every
+    // depth comes out with the wrong sign, and the solver pushes the pair apart
+    // instead of holding it up - a stack of cubes falls through the floor.
     Vec3 refNormal = ref.u[refAxis];
-    if (dot(refNormal, ref.c - inc.c) < 0.0f) refNormal = -refNormal;
+    if (dot(refNormal, inc.c - ref.c) < 0.0f) refNormal = -refNormal;
     const int ru = (refAxis + 1) % 3, rv = (refAxis + 2) % 3;
     const Vec3 tanU = ref.u[ru], tanV = ref.u[rv];
     const Vec3 refFaceCentre = ref.c + refNormal * component(ref.h, refAxis);
@@ -189,13 +201,19 @@ int collideBoxes(const RigidBody& A, const RigidBody& B, SatPoint out[4]) {
         const float d = dot(inc.u[i], refNormal);
         if (d < bestDot) { bestDot = d; incAxis = i; }
     }
+    // Build the face whose OUTWARD normal is anti-parallel to refNormal. `incAxis`
+    // is the axis with the most negative dot product, and the two faces on that
+    // axis have outward normals -inc.u[incAxis] (dot positive) and
+    // +inc.u[incAxis] (dot negative). So the face we want is the one whose bit is
+    // SET exactly when the dot came out negative.
     const int signBit = (dot(inc.u[incAxis], refNormal) < 0.0f) ? (1 << incAxis) : 0;
     const int a1 = (incAxis + 1) % 3, a2 = (incAxis + 2) % 3;
     Vec3 poly[8];
     int count = 0;
-    for (int c1 = 0; c1 < 2; ++c1)
-        for (int c2 = 0; c2 < 2; ++c2)
-            poly[count++] = cornerOf(inc, signBit | (c1 ? (1 << a1) : 0) | (c2 ? (1 << a2) : 0));
+    const int c1_arr[4] = {0, 0, 1, 1};
+    const int c2_arr[4] = {0, 1, 1, 0};
+    for (int k = 0; k < 4; ++k)
+        poly[count++] = cornerOf(inc, signBit | (c1_arr[k] ? (1 << a1) : 0) | (c2_arr[k] ? (1 << a2) : 0));
 
     // Clip against the reference face's four side planes.
     const float hu = component(ref.h, ru), hv = component(ref.h, rv);
@@ -349,10 +367,6 @@ currentStepDt_ = dt;
     for (int i = 0; i < kSolverIterations; ++i)
         if (!solveIteration()) break;
     storeWarmStart();
-    // This step's results become next step's seeds. Done after storeWarmStart so
-    // the swap sees the finished impulses.
-    pairWarmKeys_.swap(pairWarmNextKeys_);
-    pairWarmValues_.swap(pairWarmNextValues_);
 
     for (RigidBody& b : bodies) {
         if (b.asleep || b.material.isStatic) continue;
@@ -372,6 +386,14 @@ currentStepDt_ = dt;
 
     resolvePenetrations();
     updateSleep(dt);
+
+    // This step's results become next step's seeds. Deliberately last: the
+    // penetration pass above indexes pairWarmNextKeys_ by the pairIndex the
+    // contacts were built with, so swapping first would hand it the PREVIOUS
+    // step's key table and correct the wrong pairs - which is what let boxes sink
+    // a little further every frame instead of being pushed back out.
+    pairWarmKeys_.swap(pairWarmNextKeys_);
+    pairWarmValues_.swap(pairWarmNextValues_);
 }
 
 void PhysicsWorld::integrateForces(float dt) {

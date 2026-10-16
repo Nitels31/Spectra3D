@@ -28,7 +28,7 @@ public:
     // Paints the application icon into the title bar and the task bar. Drawn from
     // code instead of shipped as a file: one mark, two sizes, no asset to go
     // missing from a build. A no-op where the window system has no use for it.
-    void applyIcon();
+    void applyIcon(const char* iconName = nullptr);
     void setSizeLimits(int minW, int minH, int maxW, int maxH);
     bool pumpEvents();
     void present();

@@ -3,8 +3,11 @@
 #include "core/Log.hpp"
 #include "core/Project.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <vector>
 
 #if defined(_WIN32)
 // windows.h trimmed here rather than from the command line: rapidobj.hpp defines
@@ -21,7 +24,6 @@
 // only pulls in windows.h - when this is defined before the include.
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
-#include <vector>
 #endif
 
 namespace s3d {
@@ -35,10 +37,15 @@ void glfwErrorCallback(int code, const char* desc) {
 
 // --- the application mark ---------------------------------------------------
 //
-// The editor sketch draws a small prism in front of the window title: a triangle
-// with a lit core. It is rasterised here instead of loaded, because a 32x32 icon
-// in a file is one more thing a build can lose, and this costs eight lines of
-// arithmetic once per launch.
+// Two sources, one result: a file out of assets/image/icons, and - when there is no
+// readable file - a small prism drawn from code. The drawn one is the fallback the
+// editor sketch calls for: a 32x32 mark in a file is one more thing a build can
+// lose, and this costs eight lines of arithmetic once per launch.
+//
+// Both go through iconFromPixels, which is forward declared because the two are
+// mutually recursive in reading order: the mark is written first and the helper it
+// hands its pixels to is defined with the other icon loaders.
+HICON iconFromPixels(const unsigned char* pixels, int size);
 
 struct Rgb {
     float r, g, b;
@@ -99,12 +106,20 @@ HICON makeMarkIcon(int size) {
             out[3] = (unsigned char)(255.0f * (alpha > 1.0f ? 1.0f : alpha));
         }
     }
+    return iconFromPixels(pixels.data(), size);
+}
 
+// A 32bpp icon out of a straight BGRA buffer, `size` square. The drawn mark above
+// is the only source that needs this: a file goes straight to LoadImageW, which
+// hands back every size a .ico carries already scaled. CreateIconIndirect copies
+// what it needs, so the source bitmap is ours to drop and only the HICON outlives
+// this call.
+HICON iconFromPixels(const unsigned char* pixels, int size) {
     BITMAPINFO info{};
     info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     info.bmiHeader.biWidth = size;
-    // Negative height: the rows are stored top-down, which is the order the loop
-    // above wrote them in.
+    // Negative height: the rows are stored top-down, which is the order both
+    // sources above write them in.
     info.bmiHeader.biHeight = -size;
     info.bmiHeader.biPlanes = 1;
     info.bmiHeader.biBitCount = 32;
@@ -115,37 +130,45 @@ HICON makeMarkIcon(int size) {
     HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
     ReleaseDC(nullptr, screen);
     if (!bitmap || !bits) return nullptr;
-    std::memcpy(bits, pixels.data(), pixels.size());
+    std::memcpy(bits, pixels, (size_t)size * size * 4);
 
     ICONINFO iconInfo{};
     iconInfo.fIcon = TRUE;
     iconInfo.hbmMask = nullptr;  // a 32bpp icon carries its own mask in the alpha
     iconInfo.hbmColor = bitmap;
     HICON icon = CreateIconIndirect(&iconInfo);
-    // CreateIconIndirect copied what it needs; the source bitmap is ours to drop.
     DeleteObject(bitmap);
     return icon;
 }
 
-// The icon the build ships: `icon.ico` next to the binary, one file for the
-// window, the task bar and the exe.
+// The icon the build ships: one of the files in assets/image/icons, next to the
+// binary, for the window, the task bar and the exe.
 //
-// Built wide, from the running module's own path, and loaded with LoadImageW.
-// LoadImageW is the one icon loader whose prototype is the same everywhere, and
-// the wide path is what keeps a project folder with a non-ASCII name from being
-// the reason the window has no icon.
+// Built wide, from the running module's own path. LoadImageW is the one icon
+// loader whose prototype is the same everywhere, and the wide path is what keeps a
+// project folder with a non-ASCII name from being the reason the window has no
+// icon.
 //
-// Returns null when the file is missing, unreadable or not an icon. That is not
-// an error: makeMarkIcon() below is the fallback, which is why the mark is still
-// drawn here instead of being dropped in favour of the file.
-HICON loadShippedIcon(int width, int height) {
+// Returns null when the file is missing, unreadable or not an icon. That is not an
+// error: makeMarkIcon() below is the fallback, which is why the mark is still drawn
+// here instead of the file being the only path.
+//
+// `iconName` is a bare file name, never a path: everything below this function is
+// appending it to a directory the engine owns, and a name with a ".." in it would
+// turn that into a read of somewhere else entirely.
+HICON loadShippedIcon(int width, int height, const char* iconName) {
+    std::string name = (iconName && iconName[0]) ? iconName : kAppIconFile;
+    if (name.find('/') != std::string::npos || name.find('\\') != std::string::npos ||
+        name.find("..") != std::string::npos)
+        return nullptr;
+
     wchar_t path[MAX_PATH] = {};
     const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
     if (length == 0 || length >= MAX_PATH) return nullptr;
 
-    // Cut the file name off the module path, then append the icon's. The name
-    // comes from kAppIconFile so there is one literal for it; it is ASCII, which
-    // is what makes the widening below a cast instead of a conversion.
+    // Cut the file name off the module path, then append the icons folder and the
+    // file. Both literals are ASCII, which is what makes the widening below a cast
+    // instead of a conversion.
     size_t at = 0;
     for (size_t i = length; i > 0; --i) {
         const wchar_t c = path[i - 1];
@@ -154,17 +177,25 @@ HICON loadShippedIcon(int width, int height) {
         break;
     }
     if (at == 0) return nullptr;  // no directory to put the icon in
-    const char* name = kAppIconFile;
-    for (const char* c = name; *c; ++c) {
+
+    for (const char* c = kAppIconsDir; *c; ++c) {
+        if (at >= MAX_PATH - 2) return nullptr;
+        path[at++] = (*c == '/') ? L'\\' : (wchar_t)(unsigned char)*c;
+    }
+    path[at++] = L'\\';
+    for (const char* c = name.c_str(); *c; ++c) {
         if (at >= MAX_PATH - 1) return nullptr;
         path[at++] = (wchar_t)(unsigned char)*c;
     }
     path[at] = L'\0';
 
-    // width and height are the size being asked for, and the loader hands back
-    // the entry closest to it - the shipped file carries 16, 32, 64, 128 and 256.
-    return static_cast<HICON>(LoadImageW(nullptr, path, IMAGE_ICON, width, height,
-                                        LR_LOADFROMFILE));
+    // width and height are the size being asked for, and the loader hands back the
+    // entry closest to it - a shipped .ico carries 16, 32, 64, 128 and 256, and the
+    // shell scales rather than our code doing it. Null means the file is missing,
+    // unreadable, or not an icon, which is not an error: makeMarkIcon() above is
+    // the fallback and is what a missing file leaves behind.
+    return static_cast<HICON>(
+        LoadImageW(nullptr, path, IMAGE_ICON, width, height, LR_LOADFROMFILE));
 }
 #endif  // _WIN32
 
@@ -273,7 +304,7 @@ void Window::setSizeLimits(int minW, int minH, int maxW, int maxH) {
     if (window_) glfwSetWindowSizeLimits(window_, minW, minH, maxW, maxH);
 }
 
-void Window::applyIcon() {
+void Window::applyIcon(const char* iconName) {
 #if defined(_WIN32)
     if (!window_) return;
     HWND handle = glfwGetWin32Window(window_);
@@ -289,8 +320,8 @@ void Window::applyIcon() {
     // The shipped file first, the drawn mark as the fallback, per size: a file
     // that is there but unreadable leaves the window with the mark instead of no
     // icon at all, which is the whole reason both paths exist.
-    HICON small = loadShippedIcon(smallSize, smallSize);
-    HICON big = loadShippedIcon(bigSize, bigSize);
+    HICON small = loadShippedIcon(smallSize, smallSize, iconName);
+    HICON big = loadShippedIcon(bigSize, bigSize, iconName);
     if (!small) small = makeMarkIcon(smallSize);
     if (!big) big = makeMarkIcon(bigSize);
 

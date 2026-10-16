@@ -1,8 +1,29 @@
-# Архітектура Spectra3D
+# Spectra3D Architecture
 
-Движок розбито на шари за напрямом залежностей. Правило просте:
-**залежності йдуть лише вгору за схемою нижче.** Шар ніколи не включає
-заголовок шару, який нижче нього.
+Spectra3D is a small 3D engine with a built-in editor. This document is the map:
+what the layers are, which way dependencies point, and the handful of rules that
+exist because breaking them produced a specific, reproducible bug. Where a rule
+looks arbitrary, the reason is given; that is the point of the section.
+
+- [The layer graph](#the-layer-graph)
+- [Rules that hold the structure together](#rules-that-hold-the-structure-together)
+- [The layers](#the-layers)
+- [The UI frame contract](#the-ui-frame-contract)
+- [Docks, zones and the saved workspace](#docks-zones-and-the-saved-workspace)
+- [The launcher](#the-launcher)
+- [The application state machine](#the-application-state-machine)
+- [When a frame is drawn](#when-a-frame-is-drawn)
+- [On-disk formats](#on-disk-formats)
+- [The scripting layer](#the-scripting-layer)
+- [Defects this rewrite fixed](#defects-this-rewrite-fixed)
+- [How it is verified](#how-it-is-verified)
+
+---
+
+## The layer graph
+
+Dependencies point **upward only**. A layer never includes a header from a layer
+below it.
 
 ```
               app        Application, Launcher, FixedClock, main
@@ -13,7 +34,7 @@
                 |
               scene       BodyFactory, SceneSerializer
                 |
-                ui         Theme (палітри), UiContext
+                ui         Theme (palettes), UiContext
                 |
               render      Camera, Color, SceneRenderer, UiRenderer,
                 |          TextAtlas, PrimitiveCache, GlInfo
@@ -23,7 +44,7 @@
                 |
              +------+------+
              |             |
-          platform        i18n       Window, Filesystem      Localizer
+         platform        i18n       Window, Filesystem      Localizer
              |                         (core + platform)
              +------+------+
                     |
@@ -32,344 +53,462 @@
    third_party/     glfw, freetype, cgltf, rapidobj, miniply, ufbx, angelscript
 ```
 
-`ui` стоїть над `render`, бо `UiContext.hpp` бере `Rect`/`Color` звідти, а
-`Theme.hpp` — лише кольори. `script` лежить над `scene` ( `BindEngine.cpp`
-створює тіла через `BodyFactory`) і під `editor`, бо `Application` запускає
-його разом із `MeshRegistry` та камерою. `GlInfo.hpp` лежить у `render`, бо це
-про контекст, і читає `kGlVersionMajor` з `platform/Window.hpp` — залежність
-вгору.
+`ui` sits above `render` because `UiContext.hpp` takes `Rect` and `Color` from
+there, while `Theme.hpp` is only colours. `script` sits above `scene` —
+`BindEngine.cpp` creates bodies through `BodyFactory` — and below `editor`, because
+`Application` runs it alongside the `MeshRegistry` and the camera. `GlInfo.hpp`
+lives in `render` because it is about the context, and it reads `kGlVersionMajor`
+from `platform/Window.hpp`: a dependency upward, which is exactly where it belongs.
 
-## Правила, які тримають структуру
+## Rules that hold the structure together
 
-1. **Один напрям залежностей.** `physics` не знає про `assets`, `render` —
-   про `editor`, `editor` — про `app`. Порушення цього правила видно
-   одразу: рухаєте функцію на шар вище.
-2. **Жодних глобалів, крім логу.** Усе живе в екземплярі, який комусь
-   належить. Єдиний виняток — `s3d::Log`: його читають усі шари, зокрема
-   завантажувачі моделей, і протягувати його інстанс через усі стеки
-   викликів не дає нічого.
-   *Виняток у самому скриптовому шарі:* `ScriptHost.cpp` тримає
-   `g_state`/`g_sink` — глобальні функції AngelScript не мають receiver'а,
-   тому єдиний активний `ScriptState` публікується через `activeState()`.
-   Інстанс лише один: другий `Host::initialize()` відмовляє.
-3. **Жодних `namespace`- глобальних імен.** Увесь код у просторі `s3d`.
-4. **Заголовки — в `include/`, реалізація — в `src/`.** Каталог `include/` має
-   ту саму розкладку, що й `src/`: `include/core/Log.hpp` до
-   `src/core/Log.cpp`. У `include path` додається **корінь `include/`**, тому
-   будь-який файл пише `#include "core/Log.hpp"` — однаковий шлях з
-   `.cpp`, з іншого шару і з `tools/`, і жодних `../`, які ламаються, коли
-   файл переїжджає. Третє стороннє — `include/json/json.hpp` (header-only
-   nlohmann, ціль `spectra_json`), там самої.
-5. **Сторонні бібліотеки — в `third_party/`, дані — в `assets/`.** Корінь
-   репозиторію тримає лише `CMakeLists.txt`, `README.md`, `ARCHITECTURE.md`,
-   `build_windows.bat`, `build_linux.sh`, `.gitignore`, `icon.ico` та каталоги
-   `src/ include/ third_party/ assets/ tools/ build/`. Каталог `build/` створює
-   CMake і він же у `.gitignore`.
-6. **`CMakeLists.txt` — єдине джерело правди для збірки.** `bat`/`sh` лише
-   викликають CMake. Список файлів движка не дублюється; окремо лише
-   `third_party/angelscript/source/*.cpp` береться `file(GLOB)`, бо там
-   близько сотні файлів. Опції: `SPECTRA_SCRIPTING` (ON) і
-   `SPECTRA_BUILD_TOOLS` (OFF).
+1. **One direction.** `physics` does not know about `assets`; `render` does not know
+   about `editor`; `editor` does not know about `app`. A violation is visible
+   immediately: the function you are writing belongs a layer up.
 
-## Шари
+2. **No globals, except the log.** Everything lives in an instance somebody owns.
+   The single exception is `s3d::Log`, which every layer reads — the model loaders
+   included — and threading an instance of it through every call stack buys nothing.
+   *The scripting layer is the one exception to the exception:* AngelScript's global
+   functions have no receiver, so `ScriptHost.cpp` keeps `g_state`/`g_sink` and
+   publishes the single active `ScriptState` through `activeState()`. There is only
+   ever one: a second `Host::initialize()` refuses.
+
+3. **Everything is in `namespace s3d`.** No namespace-level globals by convention,
+   and the ones that do exist are `inline constexpr` in a header so they have one
+   address and one spelling.
+
+4. **Headers in `include/`, implementations in `src/`.** Both directories use the
+   same layer split, so `include/core/Log.hpp` sits beside `src/core/Log.cpp`. The
+   **root of `include/`** is what goes on the include path, which is why every file
+   writes `#include "core/Log.hpp"` — the same spelling from a `.cpp`, from another
+   layer and from `tools/`, with no `../` that breaks when a file moves. The
+   vendored `include/json/json.hpp` (header-only nlohmann) lives there too, behind
+   the same rule.
+
+5. **Third-party libraries in `third_party/`, data in `assets/`.** The repository
+   root holds only `CMakeLists.txt`, the two build wrappers, the docs, the licence
+   and the directories. `build/` is created by CMake and is in `.gitignore`.
+
+6. **`CMakeLists.txt` is the single source of truth for the build.** The `.bat` and
+   `.sh` files only call CMake. The engine's file list is not duplicated anywhere
+   else; the single `file(GLOB)` is AngelScript's ~100 sources, with
+   `CONFIGURE_DEPENDS` so a new file is picked up on the next build. Options:
+   `SPECTRA_SCRIPTING` (ON), `SPECTRA_BUILD_TOOLS` (OFF), `SPECTRA_WERROR` (OFF).
+   The project version and the icon directory are *read out of
+   `include/core/Project.hpp`* rather than written a second time.
+
+---
+
+## The layers
 
 ### `core`
-`Math.hpp` (`Vec3`/`Quat`/`Mat3`, `clampf`, `lerpf`), `Log` (stderr +
-`engine.log` + кільце буфер для консолі редактора), `Str` (UTF-8, шляхи,
-розширення) і `Project` (`Settings`, `ProjectLibrary`, `ProjectInfo`,
-константи назв файлів проєкту). Не залежать ні від чого, крім стандартної
-бібліотеки. `Project.cpp` — єдине місце, де `core` дозволяє собі `#include
-"platform/Filesystem.hpp"`: перелік директорій і шлях до виконуваного файлу
-потрібні і скануванню проєктів, і читанню/запису файлів.
+
+`Math.hpp` (`Vec3`/`Quat`/`Mat3`, `clampf`, `lerpf`), `Log` (stderr + `engine.log` +
+the ring buffer the editor console reads), `Str` (UTF-8, paths, extensions) and
+`Project` (`Settings`, `ProjectLibrary`, `ProjectInfo`, the project file-name
+constants). Nothing above the standard library.
+
+`Project.cpp` is the one place `core` allows itself `#include
+"platform/Filesystem.hpp"`: enumerating directories and finding the executable are
+both needed to scan projects and to read and write files. It is a deliberate,
+named exception rather than a habit.
+
+`Settings` is machine-level and lives next to the binary (`settings.ini`), so the
+installation is portable. `ProjectInfo` is project-level and lives in the project
+directory, so a project folder is a complete unit.
 
 ### `platform`
-`Window` — обгортка GLFW, яка тримає й стан вводу (edge- та level-triggered
-прапорці миші й клавіатури, текстовий буфер, час). Інстанс дістається з
-GLFW-колбеків через `glfwSetWindowUserPointer`, тому файлового «поточного
-вікна» немає. Тут же ставиться значок вікна: `Window::applyIcon()` бере
-`icon.ico` поруч із бінарником (`kAppIconFile`) і віддає його через
-`WM_SETICON` у двох розмірах, які просить заголовок і панель завдань. Шлях
-будується **широким** (`GetModuleFileNameW` + `LoadImageW`), а не з
-`fs::executableDir()`: у `LoadImageW` одна й та сама сигнатура на всіх
-компіляторах, а вузький шлях не віддався б на теці з не-ASCII назвою.
-Якщо файлу немає або він не читається — значок малюється кодом (призма з
-`makeMarkIcon()`): втрата файлу не має лишати вікно без значка. Той самий
-файл CMake вбудовує в `.exe` через ресурс, якщо компілятор ресурсів є
-(MinGW — `windres`, MSVC — `rc.exe`), а на Linux його немає, тому це
-необов'язково. `Filesystem` — єдине місце з
-`#ifdef _WIN32` для роботи з файловою системою (лістинг директорій, шлях до
-виконуваного файлу, пошук кореня ассетів, `adoptAssetWorkingDir()`). Окремого
-завантажувача GL немає: проєкт цілеспрямовано працює на фіксованому конвеєрі
-OpenGL 2.1 і бере `<GL/gl.h>` напряму.
+
+`Window` wraps GLFW and owns the input state as well: edge- and level-triggered
+mouse and keyboard flags, a text buffer, and the clock. The instance is reached
+from the GLFW callbacks through `glfwSetWindowUserPointer`, so there is no
+file-scope "current window".
+
+**The window icon** is set here too. `Window::applyIcon(name)` loads
+`<exeDir>/assets/image/icons/<name>` — the name comes from `settings.ini`, so the
+icon is a setting rather than a constant — and hands it to the shell through
+`WM_SETICON` at both sizes the title bar and the task bar ask for. The path is
+built **wide** (`GetModuleFileNameW` + `LoadImageW`) rather than through
+`fs::executableDir()`: `LoadImageW` has the same prototype on every compiler, and a
+narrow path would fail on a folder whose name is not ASCII. A missing or unreadable
+file is not an error — `makeMarkIcon()` draws a small prism instead, so losing the
+file costs the icon and nothing else. The same file is embedded into the `.exe` by
+CMake as a resource when a resource compiler exists (MinGW: `windres`, MSVC:
+`rc.exe`); on Linux there is none, which is why it is optional.
+
+`Filesystem` is the only place with `#ifdef _WIN32` for filesystem work: directory
+listing, the executable path, finding the asset root, `adoptAssetWorkingDir()`, and
+the shell folder dialog. There is no separate GL loader — the engine targets the
+fixed-function pipeline and includes `<GL/gl.h>` directly.
 
 ### `physics`
-`RigidBody` (маса, інерція, габарити, warm-start кеш, `Material`) і
-`PhysicsWorld` (гравітація, генерація контактів, солвер, сон). Не знає про
-моделі: тіло зберігає лише індекс `mesh` — розв'язується рендерером.
+
+`RigidBody` (mass, inertia, bounds, warm-start cache, `Material`) and
+`PhysicsWorld` (gravity, contact generation, solver, sleeping). It knows nothing
+about models: a body stores a mesh *index*, which the renderer resolves.
 
 ### `assets`
-`MeshAsset`, `MeshRegistry` (власник усіх імпортованих моделей; глобального
-реєстру більше немає), `MeshUtil` (спільні межі/нормалі/автопідгонка
-розміру) та окремий файл на кожен формат у `loaders/`.
+
+`MeshAsset`, `MeshRegistry` (the owner of every imported model — there is no global
+registry any more), `MeshUtil` (shared bounds/normals/size fitting) and one file per
+format in `loaders/`.
 
 ### `render`
-`Camera`, `Color`, `PrimitiveCache` (display lists), `TextAtlas` (FreeType),
-`UiRenderer` (батчер 2D + `pushClip`/`popClip` через scissor), `SceneRenderer`
-(3D-сцена, відсікання, гізмо). 3D і 2D розділені: редактор не малює через
-`SceneRenderer` і навпаки.
 
-`TextAtlas` — фіксована таблиця на 240 гліфів: ASCII, кирилиця U+0410..U+044F,
-вісім додаткових кириличних літер і **Latin-1** (U+00C0..U+00FF плюс `« » œ Œ ¡ ¿`).
-Latin-1 додано разом з німецькою, французькою, італійською та іспанською: без
-нього `ä ö ü ß`, `é è ê ë à ç ù`, `á í ó ñ ü` і `¿` малювалися б порожніми
-прямокутниками, а тим часом мовний файл містить 211 ключів, які нікуди не
-діваються. В Atlas поміщається все: сторінка 1024×1024, рядки по 18 пікселів.
+`Camera`, `Color`, `PrimitiveCache` (display lists), `TextAtlas` (FreeType),
+`UiRenderer` (the batched 2D renderer with `pushClip`/`popClip` over the scissor),
+`SceneRenderer` (the 3D scene, cutouts, the gizmo). 3D and 2D are separate: the
+editor never draws through `SceneRenderer` and the scene never draws through
+`UiRenderer`.
+
+`TextAtlas` is a fixed table of 240 glyphs: ASCII, Cyrillic `U+0410..U+044F`, eight
+extra Cyrillic letters, and **Latin-1** (`U+00C0..U+00FF` plus `« » œ Œ ¡ ¿`).
+Latin-1 arrived with German, French, Italian and Spanish: without it `ä ö ü ß`,
+`é è ê ë à ç ù`, `á í ó ñ ü` and `¿` drew as empty boxes while the language files
+carried two hundred keys that went nowhere. Everything fits: one 1024×1024 page,
+18-pixel rows.
 
 ### `ui`
-`Theme` (кольори й метрики) та `UiContext` — негайний режим: тримає знімок
-вводу, id ховерів/активних віджетів і вбудований числовий редактор. Панелі
-описують лише геометрію.
+
+`Theme` (colours and metrics) and `UiContext` — immediate mode. `UiContext` owns the
+input snapshot, the hover/active widget ids, the inline numeric editor and the
+clip stack for hit testing. Panels describe geometry only; see
+[the UI frame contract](#the-ui-frame-contract).
+
+The theme colours are variables rather than constants on purpose: switching a theme
+has to be visible to every panel that says `theme::panel`, and there are hundreds of
+those references. A function returning a reference would mean the same edit in each
+one; a mutable definition means none. `ui` is the only place allowed to write them
+(`setActiveTheme`); everything else reads.
 
 ### `scene`
-`BodyFactory` (усі шляхи створення тіл) і `SceneSerializer` (текстовий
-формат сцени, посилання на моделі за іменами).
+
+`BodyFactory` (every way a body gets created) and `SceneSerializer` (the text scene
+format, with models referenced by name).
 
 ### `i18n`
-`Localizer` — інстанс замість глобальної таблиці; усі панелі беруть його
-через посилання. Мови завантажуються з `assets/lang/{en,uk,de,fr,it,es}.lang` і
-перемикаються з `Launcher`. Перелік мов живе двічі — `i18n::Language` для
-рендеру й `LanguageTag` для `settings.ini` та `project.spectra` — і
-`Launcher::applySettings()` єдине місце, що їх зводить.
+
+`Localizer` is an instance, not a global table; every panel holds it by reference.
+Bundles are loaded from `assets/lang/*.lang` — 23 of them — and switched from the
+launcher. The list of languages lives twice, on purpose: `i18n::Language` for the
+runtime and `LanguageTag` for `settings.ini` and `project.spectra`, because `core`
+must not depend on the localisation layer. `Launcher::applySettings()` is the one
+function that translates between them. The same applies to themes (`ThemeTag` vs
+`theme::ThemeId`).
+
+There is **no fallback**: a key a bundle does not carry is rendered as the key. That
+is deliberate — a silent English string under a Ukrainian label is a bug report
+nobody can file, and a visible `settings.icon` is one everybody can.
 
 ### `script`
-`ScriptHost` — AngelScript-рушій (`asCreateScriptEngine`), компіляція й
-запуск модулів, діагностика. `Bindings.hpp` описує `ScriptState` (світі
-`PhysicsWorld`/`MeshRegistry`/`Camera` плюс групи, створені скриптами) і
-таблиці реєстрації; `BindEngine.cpp` — логування, спавн, гравітація, доступ
-до тіл; `BindScene.cpp` — сцена, імпорт моделей, групи; `BindCamera.cpp` —
-камера; `BindString.cpp` — власний тип `string` (в AngelScript немає
-стандартного). Простір імен `engine` створюється через
-`SetDefaultNamespace("engine")`, бо 2.38 не приймає модифікатор `namespace` у
-`RegisterGlobalFunction`.
 
-Три рішення, які варто знати перед правками:
+`ScriptHost` is the AngelScript engine (`asCreateScriptEngine`), module compilation
+and execution, and diagnostics. `Bindings.hpp` describes `ScriptState` (a live
+`PhysicsWorld`/`MeshRegistry`/`Camera` plus the groups scripts create) and the
+registration tables; `BindEngine.cpp` is logging, spawning, gravity and body access;
+`BindScene.cpp` is the scene, model import and groups; `BindCamera.cpp` is the camera;
+`BindString.cpp` is the engine's own `string` type, because AngelScript has no
+standard one. The `engine` namespace is created with
+`SetDefaultNamespace("engine")`, because 2.38 does not accept a `namespace` modifier
+in `RegisterGlobalFunction`.
 
-- **Один модуль на скрипт.** `Build()` в AngelScript атомарний: помилка в
-  одному файлі обнулила б функції інших. Ім'я модуля походить із імені файлу
-  без розширення (`moduleNameFor`), а `asGM_ALWAYS_CREATE` робить повторний
-  запуск заміною лише свого модуля.
-- **Рівно одна точка входу на скрипт.** `onInit` (або `main`/`start`), інакше
-  перша глобальна `void()`; `shared`-функції з правила виключені.
-- **Пошук функції — через `resolveFunction()`, а не лише рушій.**
-  `asCScriptEngine::GetGlobalFunctionByDecl` переглядає тільки
-  `RegisterGlobalFunction`, тобто біндінги `engine::`, і **не бачить** функцій,
-  які оголосив скрипт. Тому `hasFunction()`/`callFunction()` спершу шукають у
-  таблиці рушія, а потім перебирають функції кожного модуля. Без цього
-  `callFunction("void onUpdate()")` завжди повертав би `false`.
-- **`str::equalsIgnoreAscii` згортає лише перший аргумент** (`Str.hpp`):
-  порівняння робиться з уже зниженим `a`, а `b` має бути літералом у нижньому
-  регістрі. Тому в правилі точки входу імена пишуться як `"oninit"`, `"main"`,
-  `"start"` — інакше `onInit` не знайшовся б і правило тихо перетворилося на
-  «перша `void()`», тобто на допоміжник.
-- **Світ не крокують тут.** Біндінги мутують живий `PhysicsWorld` на місці,
-  тому один скрипт личиться і в редагуванні, і в Play.
+Three things to know before changing any of it:
+
+- **One module per script.** `Build()` in AngelScript is atomic: an error in one file
+  would zero the functions of the others. The module name comes from the file name
+  without its extension (`moduleNameFor`), and `asGM_ALWAYS_CREATE` makes re-running
+  a module a replacement of that module alone.
+- **Exactly one entry point per script.** `onInit` (or `main`/`start`), otherwise the
+  first global `void()`, otherwise (only `shared` functions) nothing.
+- **Function lookup goes through `resolveFunction()`, not only the engine.**
+  `asCScriptEngine::GetGlobalFunctionByDecl` walks only what was registered — the
+  `engine::` bindings — and does **not** see functions a script declared itself. So
+  `hasFunction()`/`callFunction()` ask the engine table first and then walk each
+  module's functions. Without the second half, `callFunction("void onUpdate()")`
+  always returned `false`.
+- **`str::equalsIgnoreAscii` folds only its first argument** (`Str.hpp`): `a` is
+  lowercased and `b` has to be a lowercase literal already. The entry-point rule
+  therefore spells the names `"oninit"`, `"main"`, `"start"` — writing `onInit`
+  would not be found and the rule would silently degrade to "the first `void()`",
+  i.e. to a helper.
+- **Nothing steps the world here.** The bindings mutate a live `PhysicsWorld` in
+  place, so one script runs the same way in edit mode and in Play.
 
 ### `editor`
-`Editor` — лише оркестрація: вибір, режим Play, маршрутизація вводу, розкладка.
-Малювання рознесено по `panels/*.cpp`, геометрія — в `Picking`/`Gizmo`,
-пошук моделей — в `AssetBrowser`. `Editor::handleHotkeys()` порожня свідомо:
-Play/Pause/Stop, збереження, завантаження й видалення живуть на кнопках і
-пунктах меню верхньої смуги.
 
-Панелі — по одному файлу на зону екрана, щоб вони не накладалися один на одного
-за домовленістю, а кожна мала свою розкладку:
+`Editor` is orchestration only: selection, play mode, input routing, layout. Drawing
+is split across `panels/*.cpp`, geometry lives in `Picking`/`Gizmo`, and the model
+list lives in `AssetBrowser`. `Editor::handleHotkeys()` is empty on purpose: play,
+pause, stop, save, load and delete live on buttons and menu rows, because every one
+of them mutates or discards the scene and a stray keypress while typing used to throw
+work away.
 
-| Файл | Зона |
+One file per region of the screen, so they cannot overlap by convention and each one
+owns its own arrangement:
+
+| File | Region |
 |---|---|
-| `panels/TopBar.cpp` | верхня смуга: меню, інструменти, транспорт, лічильник, пошук/Шари/довідка |
-| `panels/TopBarOverlay.cpp` | усе, що з неї опускається: меню, збіги пошуку, «Шари», довідка |
-| `panels/LeftColumn.cpp` | ієрархія з пошуком, зірками обраного та фільтром обраного |
-| `panels/FavoritesDock.cpp` | обране: список зірок, з тим самим жестом у тій самій колонці |
-| `panels/ScenePanel.cpp` | смуга «Сцена» з тулбаром виду, колонка інструментів, навігаційні кулі |
-| `panels/InspectorDock.cpp` | інспектор із фільтром, секціями та прокруткою |
-| `panels/BottomBar.cpp` | консоль із фільтрами за рівнем |
+| `panels/TopBar.cpp` | the top bar: menus, tools, transport, counter, search/layers/help |
+| `panels/TopBarOverlay.cpp` | everything that drops out of it: menus, search results, Layers, help |
+| `panels/LeftColumn.cpp` | the hierarchy with its filter, the stars and the "only favorites" toggle |
+| `panels/FavoritesDock.cpp` | favorites: the starred bodies, the same gesture in the same column |
+| `panels/ScenePanel.cpp` | the "Scene" strip, the tool column, the navigation balls |
+| `panels/InspectorDock.cpp` | the inspector: filter, sections, scrolling |
+| `panels/BottomBar.cpp` | the console with its per-level filters |
 
-Три речі, які варто знати перед правками цих панелей:
+**Rotating with a gizmo ring.** Rings turn around the body's **world** axes:
+`gizmo::axesFor()` rotates them for scale only. Local axes in a rotation meant the
+ring travelled with the body, the angle was read in a frame that moves under the
+cursor, and the body ended up somewhere else the moment it stopped being axis
+aligned.
 
-* **`UiRenderer::flush()` існує не просто так.** Батчер малює спершу всі
-  прямокутники, потім увесь текст. Без flush оверлей (меню, «Шари», довідка)
-  отримує свій фон під текстом панелі, яку він перекриває: панель видно,
-  напис — ні.
-* **Стан не можна змінювати після малювання.** З малюванням лише за потреби
-  зміна, яка не потрапила в жоден кадр, висить на екрані доти, доки не
-  прокинутись якийсь інший подія. Тому меню має `overlayOpenedThisFrame_`: той
-  самий натиск, що відкрив меню, не закриває його. Що відкривається —
-  вирішує `drawTopBar()`, а натиски на рядках читає вже `drawTopBarOverlay()`.
-* **Панелі не мають вкладок заради вкладок.** Ліва колонка показує лише
-  ієрархію: список моделей, який не змінюється, коштував би перемальовування
-  щокадру, а самі моделі переїхали в меню «Створити». Те саме з рядком стану:
-  його немає, лічильник «вибрано / тіл» стоїть у смузі.
-* **Довший за свій док контент не виходить за межі дока.** Інспектор із усіма
-  секціями вищий за половину екрана, тож тіло малюється під `pushClip`/`popClip`
-  (scissor) і скролиться колесом над самим доком; смуга праворуч показує, скільки
-  змісту поза екраном. Колесо належить докові під курсором: раніше прокручувалася
-  ієрархія з будь-якої точки вікна, а інспектор не рухався взагалі. Scissor — це
-  стан GL, тому `UiRenderer::begin()`/`end()` гасять його явно: рамка, що
-  залишилася від попереднього кадру, мовчки з'їдала наступний.
-* **Довше за вікно меню.** «Створити» перелічує кожну модель у `assets/models`,
-  без жодного скорочення: список, який тихо обривається на десятому рядку, не
-  відрізняється від каталогу з десятьма файлами. Меню, що не вмістилося у вікно,
-  обмежене вікном і гортається колесом, а внизу показує, скільки рядків лишилося
-  нижче.
-* **У редакторі немає FOV.** Це властивість ігрової камери, а камера редактора
-  має одну роботу: дивитися на сцену. Кнопки в тулбарі виду й пунктів
-  60/70/90 у меню «Вигляд» немає, `Action::Fov` теж — інакше їх доведеться
-  тримати в наявності. `Camera::fovDeg`, `cameraFov` у манifestі та
-  `engine::setCameraFov` лишаються: це API для гри, а не елемент редактора.
+The angle is taken **on screen**: `Editor::ringScreenAngle()` computes `atan2` around
+the body's projected centre, and `applyGizmoDrag()` adds the frame's **shortest
+step** (`std::remainder(delta, 2π)`) to an accumulated angle. One measurement per
+frame removed three failure modes at once:
 
-### Обертання за кільцем гізмо
+- `atan2` has a discontinuity at ±180°: crossing the back of the ring produced a
+  difference of a whole turn and the body spun 360°;
+- a ray nearly parallel to the ring's plane has no answer, and the answer used to be
+  zero — the body snapped to a wrong orientation;
+- near the rim, one pixel of movement moved the intersection a long way, so rotation
+  either jumped or froze.
 
-Кільця крутяться по **світових** осях: `gizmo::axesFor()` повертає осі тіла
-лише для масштабу. Місцеві осі в обертанні означали, що кільце їде разом із
-тілом, кут читається в системі, що рухається під курсором, і тіло повертається
-не туди, щойно перестає бути осьовим.
+The sign of the step depends on which way the camera looks: an axis pointing **at**
+the camera turns the other way on screen. A ring seen exactly edge-on projects to a
+line, which is true in every editor.
 
-Кут береться **на екрані** — `Editor::ringScreenAngle()` рахує `atan2` навколо
-проекції центру тіла, а `applyGizmoDrag()` додає що кадру **найкоротший крок**
-(`std::remainder(різниця, 2π)`) до накопиченого кута. Один вимір на кадр
-усунув відразу три вади вимірювання в світі:
+**The File menu and the dialogs.** Ten items, in Unity's order: New Scene, Open
+Scene, Save, Save As, New Project, Open Project, Save Project, Build Settings, Build
+and Run, Exit. Each does what it says; the ones that throw the scene away ask about
+unsaved work first.
 
-- `atan2` має розрив на ±180°: рух через тил кільця давав різницю в цілий
-  оберт, і тіло прокручувалося на 360°;
-- промінь, майже паралельний площині кільця, не має відповіді, а відповіддю
-  був нуль — тіло стрибало в неправильну орієнтацію;
-- біля краю кільця піксель руху зміщував перетин на багато, і обертання або
-  стрибало, або завмирало.
+A dialog is a `Modal` and `Editor::drawModal()`: one centred panel, a title, fields,
+and two buttons at the bottom right.
 
-Знак кроку залежить від того, куди дивиться камера: вісь, спрямована **від**
-камери, на екрані крутиться в інший бік. Кільце, яке видно точно збоку,
-проектується в пряму — це те саме, що в будь-якому редакторі.
-
-### Панелі, які можна переміщувати
-
-Чотири панелі — ієрархія, інспектор, консоль і обране — живуть у чотирьох місцях:
-ліва крайка, права крайка, нижня смуга і вільне плавання над сценою. Модель
-тримає `Editor::Panel{PanelZone, Rect floatRect, bool open}`, розкладку рахує
-`zoneRect()`, а `recomputeLayout()` визначає вікно сцени з того, **які крайки
-зайняті**: плаваюча панель віддає сцені місце, якого не займає.
-
-- Тягнуть панель можна за заголовок (сім крапок — `drawPanelChrome`, спільна для
-  всіх чотирьох). Кинеш на іншу крайку — ті, що там була, іде на звільнене місце
-  (**обмін**, не витіснення); кинеш у сцену — панель стає плаваючою з рамкою й
-  тінню, малюється поверх пришпилених і не дублюється.
-- Внутрішній край docked-панелі — це ручка зміни розміру (`handlePanelDrag`,
-  тримає `leftWidth_`/`rightWidth_`/`bottomHeight_`). Плаваючу панель міняє розмір
-  будь-якою з чотирьох крайок і будь-яким кутом (`panelGripsAt` → маска
-  `kGripLeft|kGripRight|kGripTop|kGripBottom`), а її прямокутник уселюється в
-  вікно, щоб плаваюче вікно не могло загубитися поза екраном.
-- Розміри панелей живуть у `Editor`, а не в `theme`: тема — це палітра, а те, що
-  користувач стягнув собі, тема не має права перезаписувати.
-
-Три речі про розмір, які варто знати перед правками `handlePanelDrag`:
-
-* **Ручка перевіряється до заголовка, а не після.** Єдиний край зміни розміру
-  нижньої смуги — це її верхня кромка, а верхня кромка — це перші шість пікселів
-  її заголовка. Перевірили б у зворотному порядку — натиск на верхню кромку
-  консолі піднімав би панель і тягнув її замість того, щоб зробити вищою: консоль
-  була нерухомою в принципі, а дві інші крайки працювали, і поломка виглядала
-  випадковою.
-* **Захоплення ручки лише на натисканні, а не на наведенні.** Інакше drag, що
-  почався в тілі панелі, перетнув би на ній роздільник і на останньому кадрі
-  стрибнув би розмір: стартовий прямокутник береться в момент натискання
-  (`resizeStartRect_`), а всі наступні кадри — це дельта від нього.
-* **Верхня крайка плаваючої панелі — це заголовок.** Тому вона береться лише у
-  кутових квадратах, а рештою — перетягування; інакше ручка, з'ївши половину
-  заголовка, зробила б з нього не ручку.
-
-Панель ховається **X** у заголовку (той самий прямокутник, що й у
-`handlePanelDrag`, тому клік, яким закривають, не може ще й рухати панель; сам
-прямокутник X виключений із ручок, інакше закриття консолі міняло б її розмір) і
-повертається пунктом у меню «Вигляд» із галочкою. Закриті панелі не займають
-крайку: `zoneRect()` і `recomputeLayout()` дивляться на `open`, тому місце
-закритого просто відходить сцені. Відкрита панель повертається туди ж, де була;
-якщо крайку вже займає інша, вона спливає — дві панелі на одній крайці не
-буває.
-
-### Збережений робочий простір
-
-`EditorLayout.cpp` читає і пише `<project>/editorlayout.txt` — розміри крайок,
-зону та прямокутник кожної панелі, які відкриті, і фільтр обраного. Файл у
-проєкті, а не в `settings.ini`: два проєкти — два робочі простори, і перенесення
-папки проєкту переносить розкладку разом із нею. Коли проєкту немає (редактор
-запущено окремо), файл пишеться поруч із бінарником.
-
-- **Читається на першому кадрі** (`handleInput`), після `recomputeLayout()`:
-  плаваюча панель, відновлена на вікно, що встигло зменшитися, має бути
-  повернута в нього. **Пишеться на наступному кадрі після зміни**, а не одразу:
-  те, що вже намальовано, і є те, що користувач бачив.
-- **Значення перевіряються, а не довіряються.** Розмір поза межами
-  обмежується (`kPanelMinWidth`/`kPanelMinHeight`/`kDockMinWidth`…), невідомий ключ
-  ігнорується, а дві панелі на одній крайці (можливі лише у файлі, правленому
-  руками) — пізніша спливає. Прямокутник нульового розміру означає «панель ще
-  не плавала» і лишає розмір, з яким редактор стартував.
-- **Розміри, які не змінювали, не пишуться.** Правець ставить `layoutDirty_`, а
-  `handleInput` пише файл один раз; це дешево (файл на 200 байт) і не дає
-  йому розростися в запис на кожен кадр перетягування.
-
-Favorites: зірка в рядку ієрархії (`RigidBody::favorite`, редакторська позначка
-поруч із `visible`/`locked`), зірка в заголовку панелі, що лишає лише обране, і
-окрема панель «Обране» (`panels/FavoritesDock.cpp`) зі списком зірок — тим самим
-жестом у тій самій колонці. Зірка ставить `sceneDirty_`, бо це дані сцени, які
-пишуться в `scene.txt`, і читається як необов'язкове поле, тому сцени, збережені
-до зір, відкриваються як є.
-
-### Меню «Файл» і діалоги
-
-Десять пунктів, як у Unity, у тому самому порядку: New Scene, Open Scene, Save,
-Save As, New Project, Open Project, Save Project, Build Settings, Build and Run,
-Exit. Кожен робить те, що написано; ті, що кидають сцену, спершу питають про
-незбережене.
-
-Діалог — це `Modal` і `Editor::drawModal()`: одне модальне вікно, заголовок, поля,
-кнопки праворуч унизу. Три речі, на які варто звернути увагу:
-
-* **Висота діалога вимірюється, а не задається.** Підказки переносяться по словах
-  (`wrapWords`), і висота рахується з того, скільки рядків вийде — український
-  текст довший за англійський, і діалог, розрахований на коротший, обрізає
-  підказку або наїжджає на кнопки.
-* **Редактор не може ані перейти в лаунчер, ані запустити процес.** Тому є
+- **Dialog height is measured, not declared.** The hints are word-wrapped
+  (`wrapWords`) and the height is computed from how many lines that produces —
+  Ukrainian runs longer than English, and a dialog sized for the shorter one either
+  clips the hint or runs into the buttons.
+- **The editor cannot reach the launcher and cannot start a process.** Hence
   `ShellRequest { None, NewProject, OpenProject, SaveProject, Build, BuildRun }`:
-  редактор просить, `Application` виконує. `Build and Run` іде без діалога —
-  береться та папка, яку показав «Параметри збірки».
-* **Три речі кидають сцену** (New Scene, Open Scene, вихід із проєкту), тому
-  `requestSceneChange()` спершу питає «Є незбережені зміни». `Pending` і
-  `pendingShell_` пам'ятають, **що** саме мало статися далі: обидва виходи з
-  проєкту ведуть до лаунчера, але «Новий проєкт» і «Відкрити проєкт» — різні
-  команди, і після діалогу лише один із них лишається розрізнюваним.
+  the editor asks, `Application` acts. Build and Run has no dialog — it takes the
+  folder Build Settings showed.
+- **Three things throw the scene away** (New Scene, Open Scene, leaving the project),
+  so `requestSceneChange()` asks first. `Pending` and `pendingShell_` remember
+  *what* was supposed to happen next: both ways out of a project lead to the
+  launcher, but "New Project" and "Open Project" are different commands and only one
+  of them is still distinguishable afterwards.
 
-`sceneDirty_` ставиться в гізмо, видаленні, дублюванні, зірці, зміні гравітації
-клавішею й після `Save`/`Open`. Автозбереження немає, тому питання «зберегти?»
-повинно з'являтися перед усім, що сцену кидає.
+`sceneDirty_` is set by the gizmo, deletion, duplication, the star, the gravity hotkey
+and after Save/Open. There is no autosave, so "save?" has to appear before everything
+that discards a scene.
 
-### `app`
-`Application` — композиційний корінь: володіє всіма підсистемами, крутить
-цикл кадру і перемикає два стани. `Launcher` — стартове меню, яке живе у
-`Launcher::Result { Stay, OpenProject, Quit }`. `FixedClock` — акумулятор
-фіксованого кроку (60 Гц, до 10 кроків на кадр). `main.cpp` — 5 рядків.
+---
 
-`stageBuild()` — це весь «Build». Окремого гравця немає: гравець і є цей .exe, тому
-збірка це програма, DLL-і поруч із нею, `assets/` і сам проєкт. Проєкт копіюється
-в `<збірка>/project/<назва>`, бо саме там зібрана програма шукатиме проєкти на
-запуску, як це робить редактор. Проєкт копіюється поentry, а не деревом: типова
-тека збірки лежить **всередині** проєкту, і копія дерева скопіювала б збірку в саму
-себе, подвоюючи її на кожній перезбірці.
+## The UI frame contract
 
-`fs::copyTree()` створює теки, яких немає (в тому числі всі батьківські — Windows
-`CreateDirectoryA` створює лише останній рівень), а файл, який зайнятий, копіює
-поруч і замінює через `MoveFileEx`: перезбірка поверх наявної збірки мусить
-працювати, бо перший же «Build» після другого — це перезапис.
+This is the part of the editor that is easiest to break, because the batcher and the
+input snapshot are both shared, one-shot, and silent when misused.
 
-## Машина станів застосунку
+**One snapshot per frame.** `UiContext::beginInput()` samples the window once, before
+the world steps. Every widget then resolves interaction against that same snapshot
+while it draws. Nothing re-reads the mouse mid-frame.
+
+**Rectangles before text.** `UiRenderer` keeps two batches and emits every rectangle
+before any text. That is why `UiRenderer::flush()` exists: an overlay drawn after a
+panel without a flush gets its background *underneath* the labels it covers. The
+editor frame is therefore cut into stages, each ending in a flush:
+
+```
+top bar          → scene header → viewport tools → docked panels
+                 → flush → floating panels
+                 → flush → dropdowns and panels hanging off the bar
+                 → flush → modal dialog
+                 → flush → drag ghost
+```
+
+The console is the reason this is written down. It is the bottom of the window, it
+is the one panel that is a wall of text, and without the flush after the docked
+panels its log lines drew straight through the background of any floating window or
+dropdown sitting on top of it.
+
+**State must not change after the frame is drawn.** With on-demand rendering, a
+change that reached no frame stays on screen until something else wakes the window.
+That is what `overlayOpenedThisFrame_` is for: the press that opens a menu must not
+also act on it, or close it, in the same frame.
+
+**A popup owns the pointer.** Every dropdown is drawn *after* the widgets it covers,
+so those widgets have already run their hit tests by the time anyone can see that
+they are covered. Without a capture, a click on a menu row also pressed the button
+underneath it — which is why the caption of a dropdown and a button below it
+produced two actions from one click.
+
+The rule lives in the shared layer rather than in each panel, because "do not react"
+has to apply to the checkbox, the numeric property, the text field *and* the raw
+`if (hovered && ui_.pointerPressed())` that panels write themselves:
+
+- `Editor::handleInput()` calls `ui_.claimPointer(kPopupCapture)` before the panel
+  drag and the viewport pick, so neither of them takes a click meant for a menu.
+- `pointerPressed()` and `pointerReleased()` return `false` while captured. Every
+  widget in the engine goes inert for free; the panels needed no edits.
+- `Editor::renderUi()` clears the capture for the top bar (which is what opens the
+  popups, and must stay live so a menu can be switched to another one), re-arms it
+  for everything below, and releases it again immediately before drawing the popups.
+- The popup code reads `rawPointerPressed()` — the same edges with the capture
+  ignored — and ignores the press that opened it.
+
+The launcher does the same thing for its two modals, and its dropdown additionally
+suppresses the rows below it and calls `consumePointerClick()` on a choice and on a
+dismissal.
+
+**Clipping is also a hit test.** A panel whose content is taller than its dock
+pushes a scissor rectangle, and a scissor box the renderer owns cannot answer "is the
+pointer in here?". `UiContext::pushClip()` mirrors it for the hit test, and the
+inspector clips both. Without the second half, a property scrolled out of view was
+still a draggable field sitting under the console.
+
+**Text is measured, never assumed.** A label that does not fit is shrunk before a
+single character is dropped — `UiRenderer::textFit` and the launcher's
+`drawTextFit`. "Без обмежень" is sixty pixels wider than "Off", and a fixed guess
+that suits one ruins the other. Paths are shrunk until they hit the floor and are
+then cut from the *front*, because the last component is the one that identifies a
+folder.
+
+---
+
+## Docks, zones and the saved workspace
+
+Four panels — hierarchy, inspector, console, favorites — live in six places: the
+left column, the right column, the bottom strip, the two bottom corners, and free
+float over the scene. The model is `Editor::Panel{PanelZone, Rect floatRect, bool
+open}`, `zoneRect()` produces the rectangle, and `recomputeLayout()` derives the
+scene rectangle from **which columns and rows are occupied** — a floating panel
+gives its space back.
+
+**Why the corners are their own zones.** The bottom-left and bottom-right corners
+are where the console stops covering the side columns. With one bottom strip, a
+panel that owns it leaves a hole on both sides of it, and there is nowhere to put a
+second list once the first one has the strip. So the bottom row is three zones and
+the whole layout is a grid of two columns and two rows:
+
+```
++---------+---------------+---------+
+|  Left   |    Bottom     |  Right  |
++---------+---------------+---------+
+|BottomLeft|    Bottom     |BottomRight
++---------+---------------+---------+
+   left          middle          right
+  column          strip          column
+```
+
+- **Drag by the title bar** (six dots — `drawPanelChrome`, shared by all four). Drop
+  it on another zone and whoever was there swaps into the zone it came from
+  (**a swap, not an eviction**); drop it over the scene and it becomes a floating
+  window with a border and a shadow, drawn over the docked ones and not drawn twice.
+- **A docked panel's inner edge is its resize grip** (`handlePanelDrag`, holding
+  `leftWidth_`/`rightWidth_`/`bottomHeight_`). A floating panel is resized from any
+  of its four edges and any of its corners (`panelGripsAt` → a
+  `kGripLeft|kGripRight|kGripTop|kGripBottom` mask), and its rectangle is clamped
+  into the window so a floating window cannot get lost off screen.
+- **Dock sizes live in `Editor`, not in `theme`.** A theme is a palette; what the
+  user dragged for themselves is not the theme's to overwrite.
+- **`zoneAt()` and `zoneRect()` must agree.** The drop preview is drawn from
+  `zoneRect(dropZone_)` and the result is `zoneRect(panel.zone)`, so the column
+  edges the hit test uses are the dock widths themselves. `zoneRect()` also counts
+  the zone being dragged towards as occupied — otherwise the bottom-left corner
+  would be previewed as a rectangle of zero width.
+
+Three things about the size to know before touching `handlePanelDrag`:
+
+- **The grip is tested before the title bar, not after.** The bottom row's only grip
+  *is* the first pixels of its title bar. Tested the other way round, a press on the
+  console's border picked the panel up and dragged it away instead of making it
+  taller — the console was immovable in principle while the other two edges worked,
+  and the breakage looked random.
+- **The grip is taken on the press, not on hover.** Otherwise a drag that started in
+  the body of a panel would cross its divider and jump its size on the last frame.
+  The start rectangle is captured at the press (`resizeStartRect_`) and every frame
+  after it is a delta from there.
+- **A floating panel's top edge is its title bar.** It is taken only in the corner
+  boxes and is a drag handle everywhere else, because a grip that ate half the title
+  bar would make it not one.
+
+A panel is closed with **X** in its header — the same rectangle in drawing and in
+the drag test, so the click that closes it cannot also move it, and the X rectangle
+is excluded from the grips, or closing the console would resize it — and comes back
+from the **View** menu with a checkmark. Closed panels do not occupy a zone:
+`zoneRect()` and `recomputeLayout()` look at `open`, so the space goes back to the
+scene. A reopened panel returns where it was; if something else is already there it
+floats, because two panels never share a zone.
+
+**Favorites** is a star in a hierarchy row (`RigidBody::favorite`, an editor mark
+next to `visible`/`locked`), a star in the panel header that narrows the tree to
+favorites, and its own panel (`panels/FavoritesDock.cpp`) listing the starred bodies
+— the same gesture in the same column. The star sets `sceneDirty_` because it is
+scene data written into `scene.txt`, and it is read as an optional field, so scenes
+saved before there were stars open as they are.
+
+**The saved workspace.** `EditorLayout.cpp` reads and writes
+`<project>/editorlayout.txt`: the dock sizes, each panel's zone, rectangle and
+whether it is open, and the favorites-only flag. The file lives in the project, not
+in `settings.ini`: two projects are two workspaces, and moving the folder moves the
+layout with it. With no project (the editor run on its own) it is written next to
+the binary.
+
+- **Read on the first frame** (`handleInput`, after `recomputeLayout()`): a floating
+  panel restored onto a window that has since shrunk has to be brought back into it.
+  **Written on the frame after a change**, not immediately — what has been drawn is
+  what the user saw.
+- **Values are validated, not trusted.** Sizes are clamped, unknown keys are
+  ignored, and two panels in one zone (only possible in a hand-edited file) send the
+  later one floating. A zero-sized rectangle means "this panel has never floated"
+  and keeps the size the editor started with.
+- **Sizes that did not change are not written.** The drag sets `layoutDirty_` and
+  `handleInput` writes the file once, which is cheap (200 bytes) and keeps a
+  frame-by-frame drag from turning into a file write per frame.
+
+---
+
+## The launcher
+
+The start menu. It owns the whole window while it is the active app state: no
+viewport, no editor panels, all input. Layout is the one from the concept sketch — a
+tab strip across the top, a sidebar down the left, and one list of project rows
+filling the rest. Each row carries its own Open and Delete buttons: there is no
+shared "selected project" action bar, because the row you are looking at is the one
+you mean.
+
+Its frame contract mirrors `Editor::renderUi()`: `initialize()` once after
+`UiRenderer::buildFonts()`, then `update()` once per frame while it is active. It
+calls `ctx.beginInput()` and `ui.begin()`/`ui.end()` itself, so the integrator must
+not call either around it. The returned `Result` says what happened, and
+`OpenProject` fills the path.
+
+**Dropdowns.** A select row is drawn in two halves, and the split is not cosmetic: a
+dropdown drawn in one pass is painted where the row is, and every row below it lands
+on top — a list with the theme and frame-cap labels showing through it is a list
+nobody can click. So the field goes with the rest of the panel and the list goes
+after all of it, with a flush.
+
+Twenty-three languages are taller than any settings panel, so the list is clamped to
+what is reachable on screen and scrolled, with Up/Down/PageUp/PageDown/Home/End
+walking it without a mouse. It opens downwards when it fits and upwards when it does
+not: a list that runs off the bottom of the window cannot be reached at all. The
+opening press is refused (`selectOpenedFrame_`), because the pointer may already be
+sitting on a row — a language that changed the moment the list opened needed no
+second click, which is not a feature.
+
+**The application icon** is one of the settings rows, and the list is a *listing* of
+`assets/image/icons/*.ico` rather than a hard-coded set of names: dropping another
+file in there is all it takes for it to appear. Choosing one repaints the window and
+the task bar entry immediately — two files are told apart by looking at them, not by
+reading their names.
+
+---
+
+## The application state machine
 
 ```
         initialize()
@@ -379,185 +518,210 @@ Exit. Кожен робить те, що написано; ті, що кидаю
         | Launcher  | ------------------------> |  Editor   |
         +-----------+                          +-----------+
               |                                    |
-        Result::Quit                      закриття вікна
+        Result::Quit                      closing the window
               |                                    |
               v                                    v
            requestClose()                        return 0
 ```
 
-- `Application::initialize()` створює вікно, вантажить мови й шрифти,
-  ініціалізує `script::Host` і запускає `Launcher::initialize()`, який читає
-  `settings.ini`, роздає корінь проєктів і мову в `ProjectLibrary` та
-  `Localizer` і сканує каталог.
-- Щокадру в `runLauncherFrame()` результат `Launcher::update()` або повертає
-  кадр у меню, або відкриває проєкт (`readManifest` → `openProject`), або
-  закриває вікно.
-- `Application::openProject()` чистить `PhysicsWorld`, застосовує гравітацію й
-  камеру з маніфесту, вантажить `scene.txt` (відсутність або порожній файл —
-  свіжий проєкт, не помилка), створює `Editor` і передає йому шлях сцени.
-- Назад у `Launcher` немає: `Application::closeProject()` існує, але жодного
-  виклика немає. Вихід із редактора — закрити вікно.
-- `Application::runEditorFrame()`: клавіатура камери й `1..6` для гравітації →
-  `Editor::handleInput()` → `consumePlayStarted()` (одноразовий сигнал) →
-  під час нього `runProjectScripts()` → фіксований крок `world_.step()` →
-  рендер.
+- `Application::initialize()` creates the window, loads the language bundles and the
+  font, initialises `script::Host` and calls `Launcher::initialize()`, which reads
+  `settings.ini`, pushes the projects root and the language into `ProjectLibrary` and
+  `Localizer`, and scans the folder. The window icon is applied *after* that,
+  because the icon is a setting.
+- Each frame, `runLauncherFrame()` either stays in the menu, opens a project
+  (`readManifest` → `openProject`) or closes the window.
+- `Application::openProject()` clears the `PhysicsWorld`, applies gravity and camera
+  from the manifest, loads `scene.txt` (a missing or empty file is a fresh project,
+  not an error), creates the `Editor` and hands it the scene path.
+- There is no way back to the launcher: `Application::closeProject()` exists and
+  nothing calls it. Leaving the editor means closing the window.
+- `Application::runEditorFrame()`: camera keys and `1..6` for gravity →
+  `Editor::handleInput()` → `consumePlayStarted()` (a one-shot signal) →
+  `runProjectScripts()` during it → a fixed `world_.step()` → render.
 
-## Коли малювати кадр
+**"Build" is `stageBuild()`.** There is no separate player: the player *is* this
+executable, so a build is the program, the DLLs beside it, `assets/` and the project
+itself. The project is copied to `<build>/project/<name>`, because that is where the
+built program will look for projects when it starts, exactly as the editor does. It
+is copied **entry by entry**, not as a tree: the usual build folder lives *inside*
+the project, and a tree copy would copy the build into itself, doubling it on every
+rebuild.
 
-Найважливіше правило циклу: **кадр малюється тоді, і тільки тоді, коли є що
-показати**. Вікно, якого не торкаються, не звертається до GPU взагалі.
+`fs::copyTree()` creates the directories that are missing — including every parent,
+because Windows' `CreateDirectoryA` makes only the last level — and replaces a file
+that is locked by writing beside it and moving it into place: rebuilding on top of an
+existing build has to work, because the first "Build" after the second one is an
+overwrite.
 
-`Application::run()` кожну ітерацію питає два питання:
+---
 
-1. `Window::consumeActivity()` — чи щось сталося. Це peek, а не читання: усі
-   фронтові прапорці лишаються на місці, бо їх далі споживають віджети. «Щось
-   сталося» — це подія, **затиснута** клавіша або кнопка (політ камери, drag
-   гізмо), рух курсора (hover — це частина зображення) або зміна розміру вікна.
-2. `isSimulating()` — чи крутиться фізика. Єдиний випадок, коли картинка змінюється
-   сама.
+## When a frame is drawn
 
-Якщо обидва «ні» і не настав секундний тік, цикл нічого не малює, а чекає. Тік раз
-на секунду потрібен, щоб помилка інвалідації не могла ховатися довше ніж секунду.
+The most important rule of the loop: **a frame is drawn when, and only when, there is
+something to show.** A window nobody touches does not talk to the GPU at all.
 
-**Ребро живе рівно один кадр.** Після `present()` цикл викликає
-`dropUnreadInput()` і знімає прапорці, які ніхто не прочитав: натиски клавіш,
-кліки, текст, скрол. Рівні (затиснута клавіша) лишаються — це і є «хтось тримає».
-Момент не довільний: саме після кадру, а не на початку наступної ітерації, бо
-подія, що прийшла під час очікування, належить наступному кадру, і скидання її
-до того, як цей кадр намалюється, губить натиск, яким проєкт відкрили. Без цього
-один `Enter` вічно тримав би `consumeActivity()` відповіддю «так» і редактор
-малював би з частотою кадру, не малюючи нічого нового: **0.9 с CPU на 8 с**
-проти **0.06 с** після кроку.
+`Application::run()` asks two questions each iteration:
 
-**Очікування — це сон, а не опитування.** `WaitForSingleObject(timer, 0)` не спить
-узагалі: перша версія цього механізму з'їдала 95% ядра, коли вікно просто стояло.
-Тепер `waitForFrame()` чекає через `MsgWaitForMultipleObjects` на таймер **або** на
-повідомлення — тож клік обробляється миттєво, а ядро спить. Waitable timer
-manual-reset, тому після спрацювання його треба `CancelWaitableTimer`, інакше
-наступне очікування повернеться одразу.
+1. `Window::consumeActivity()` — did something happen. This is a peek, not a read:
+   the front-edge flags stay in place because the widgets consume them next.
+   "Something happened" is an event, a **held** key or button (camera flight, a gizmo
+   drag), pointer movement (hover is part of the picture) or a window resize.
+2. `isSimulating()` — is the physics running. The only case where the picture changes
+   by itself.
 
-**Очікування має прокидатися на подію, а не дотерміновувати до кінця.** Під час
-паузи до тіку `waitForFrame(window, tickDue, true)` повертається щойно
-`Window::peekActivity()` побачив рух. Без цього очікування дотерміновувалося до
-кінця тіку, і наведення на кнопку підсвічувалося через секунду. Тому в `Window` є
-два запитання: `consumeActivity()` фіксує позицію курсора (для наступного кадру), а
-`peekActivity()` читає те саме, не фіксуючи — інакше рух, що розбудив очікування,
-з'їдається, і цикл знову не бачить, що щось було. У паузі між кадрами
-прокидання немає (`false`): той кадр і так надійде, тож миша не має піднімати
-частоту вище за встановлену.
+If both are "no" and the one-second tick has not come, the loop draws nothing and
+waits. The tick exists so a missed invalidation cannot hide for longer than a second.
 
-Заміряно на машині розробки (GT 540M, одностороння мідна трубка):
+**An edge lives exactly one frame.** After `present()` the loop calls
+`dropUnreadInput()` and clears the flags nobody read: key presses, clicks, text,
+scroll. Levels (a held key) are left alone — that *is* "someone is holding something".
+The moment is not arbitrary: after the frame, not at the top of the next iteration,
+because an event that arrived while the loop was waiting belongs to the next frame,
+and dropping it before that frame is drawn loses the keystroke that opened the
+project in the first place. Without this, one `Enter` held `consumeActivity()` at
+"yes" forever and the editor drew at display rate while drawing nothing new:
+**0.9 s of CPU per 8 s** against **0.06 s** after the step.
 
-| Стан | CPU за 6 с |
+**Waiting is sleeping, not polling.** `WaitForSingleObject(timer, 0)` does not sleep
+at all: the first version of this mechanism ate 95% of a core while the window just
+sat there. `waitForFrame()` now waits on `MsgWaitForMultipleObjects` for the timer
+**or** a message, so a click is handled immediately and the core sleeps. A
+manual-reset waitable timer has to be disarmed with `CancelWaitableTimer` after it
+fires, or the next wait returns instantly and the loop spins.
+
+**Waiting wakes on an event, not at the deadline.** During the pause before the tick,
+`waitForFrame(window, tickDue, true)` returns as soon as `Window::peekActivity()` sees
+movement. Without that the wait ran to the end of the tick and hovering a button lit
+up a second later. Hence the two questions in `Window`: `consumeActivity()` records
+the pointer position (for the next frame) and `peekActivity()` reads the same thing
+without recording — otherwise the movement that woke the wait is eaten and the loop
+never sees that anything happened. Between frames there is no waking (`false`): that
+frame is coming anyway, so the mouse must not raise the rate above the one that was
+asked for.
+
+Measured on the development machine (GT 540M, one-way copper):
+
+| State | CPU over 6 s |
 |---|---|
-| Меню, нічого не робиться | 0.00 с |
-| Редактор, нічого не робиться | 0.00 с |
-| «Грати», 64 тіла | 0.80 с |
-| Після «Стоп» | 0.00 с |
+| Menu, idle | 0.00 s |
+| Editor, idle | 0.00 s |
+| Play, 64 bodies | 0.80 s |
+| After Stop | 0.00 s |
 
-## Файли проєкту
+---
 
-`ProjectLibrary` у `core` — єдиний власник формату на диску; імена файлів
-задані константами в `Project.hpp`, аби редактор і скриптовий шар не
-заводили власні літерали.
+## On-disk formats
 
-| Шлях | Що це |
+`ProjectLibrary` in `core` is the only owner of the on-disk formats. The file names
+are constants in `Project.hpp` so the editor and the scripting layer cannot invent
+their own literals.
+
+| Path | What it is |
 |---|---|
-| `<projectsRoot>/<Project>/project.spectra` | маніфест: `name`, `version`, `engine`, `created`, `modified`, `language`, `gravity`, `cameraX/Y/Z`, `cameraYaw`, `cameraPitch`, `cameraFov` |
-| `<projectsRoot>/<Project>/scene.txt` | документ сцени (порожній файл створюється одразу з проєктом) |
-| `<projectsRoot>/<Project>/editorlayout.txt` | збережений робочий простір редактора: розміри крайок, зони й прямокутники панелей, які відкриті (пише `EditorLayout.cpp`) |
-| `<projectsRoot>/<Project>/scripts/` | `*.as` — скрипти, які виконуються при вході в Play |
-| `<projectsRoot>/<Project>/models/` | каталог під моделі проєкту |
+| `<projectsRoot>/<Project>/project.spectra` | the manifest: `name`, `version`, `engine`, `created`, `modified`, `language`, `gravity`, `favorite`, `cameraX/Y/Z`, `cameraYaw`, `cameraPitch`, `cameraFov` |
+| `<projectsRoot>/<Project>/scene.txt` | the scene document (an empty file is created with the project) |
+| `<projectsRoot>/<Project>/editorlayout.txt` | the saved editor workspace (written by `EditorLayout.cpp`) |
+| `<projectsRoot>/<Project>/scripts/` | `*.as`, run when Play begins |
+| `<projectsRoot>/<Project>/models/` | the project's own model folder |
+| `<exeDir>/assets/image/icons/*.ico` | the application icons the settings screen offers |
+| `<exeDir>/settings.ini` | machine-level settings: `projectRoot`, `language`, `theme`, `frameRateCap`, `appIcon`, up to 8 `recent` |
 
-Корінь проєктів — `Settings::projectRoot`, за замовчуванням
-`<exeDir>/project`; глобальні налаштування живуть у `settings.ini` поруч із
-бінарником (`projectRoot`, `language`, до 8 `recent`).
+The projects root is `Settings::projectRoot`, by default `<exeDir>/project`.
 
-Відомості, які варто тримати в голові, бо вони злегка суперечать інтуїції:
+Facts worth keeping in mind, because they mildly contradict intuition:
 
-- **Маніфест пишеться один раз.** `writeManifest()` викликає лише
-  `ProjectLibrary::create()`, тому ключі камери й гравітації у файлі лишаються
-  такими, якими їх задали під час створення, навіть якщо камеру в редакторі
-  рухали.
-- **`models/` проєкту не сканується.** `AssetBrowser::refresh()` читає
-  `assets/models` спільного бенчмарку; каталог створюється, але заповнюється
-  лише вручну або через `engine::importModel`. Список показує меню «Створити»,
-  оновлює його кнопка `⟳` у смузі або пункт «Файл → Перечитати з диска».
-- **Заголовок вікна — це значок, назва рушія, риска й назва проєкту**, і нічого
-  іншого: лічильника кадрів у ньому немає. Значок — це `icon.ico` з кореня
-  репозиторію: `Window::applyIcon()` віддає його через `WM_SETICON` у двох
-  розмірах, які просить заголовок і панель завдань, а коли файлу поруч із
-  бінарником немає — малює призму кодом; `Application::updateTitle()` змінює
-  рядок лише при відкритті та
-  закритті проєкту.
-- **Тип `LanguageTag` живе в `core`, а не в `i18n`** — інакше `core` залежав
-  би від шару локалізації. Переклад між двома переліками робить рівно одна
-  функція, `Launcher::applySettings()`.
-- **`Settings::load()` повертає false на першому запуску** — це не помилка:
-  відсутні ключі просто лишають типові значення.
+- **The manifest is written once.** `writeManifest()` is called only from
+  `ProjectLibrary::create()`, so the camera and gravity keys stay as they were set
+  at creation even after the camera has been moved in the editor.
+- **A project's `models/` is not scanned.** `AssetBrowser::refresh()` reads the
+  shared `assets/models`; the folder is created but filled only by hand or through
+  `engine::importModel`. The list feeds the Create menu, is refreshed by the `⟳`
+  button in the bar, or by File → Reload.
+- **The title bar is icon, engine name, dash, project name**, and nothing else: no
+  frame counter. `Application::updateTitle()` rewrites the string only when a project
+  is opened or closed.
+- **`Settings::load()` returns false on the first run.** That is not an error: the
+  absent keys simply leave the defaults.
 
-## Скриптовий шар у деталях
+---
 
-- **Коли.** `Application::runProjectScripts()` читає
-  `<project>/scripts/*.as` (сортування за іменем) і запускає кожен файл через
-  `Host::runFile()`. Виклик ініціює `Editor::consumePlayStarted()`, тобто
-  скрипти бачать живий світ у першому ж кадрі Play. Якщо каталогу або файлів
-  немає, це не помилка.
-- **Точка входу.** Рівно одна функція на модуль: `onInit` / `main` / `start`,
-  інакше перша глобальна `void()` у порядку оголошення, інакше (`shared`
-  лише) нічого.
-- **Хуки.** `Host` знає `void onInit()`, `void onUpdate()`, `void onStop()`
-  (константи `kOn*Declaration`) і вміє викликати їх через
-  `callFunction()`/`hasFunction()`. Але **викликає їх лише сам модуль**
-  (`onInit` — як точку входу): ні цикл кадру, ні `Editor::exitPlayMode()` їх
-  не викликають, тож `onUpdate`/`onStop` наразі мертві. Ввімкнення потребує
-  одного рядка в `Application::runEditorFrame()` і одного — в
-  `exitPlayMode`/`consumePlayStarted`.
-- **Діагностика.** `Host::setDiagnosticSink()` ставиться до `initialize()`;
-  повідомлення компілятора й винятків ідуть у `Log` з файлом, рядком і
-  колонкою (`[script] ...` для `engine::log*`).
-- **Один хост.** Глобальні функції AngelScript не мають receiver'а, тому
-  `ScriptState` публікується через `activeState()`, а другий `Host` відмовляє
-  ініціалізуватися.
-- **Збірка без скриптів.** Увесь `src/script/*.cpp` guarded-ний
-  `SPECTRA_SCRIPTING`; заголовки не містять жодного символу AngelScript, тому
-  `-DSPECTRA_SCRIPTING=OFF` просто лишає рушій вимкненим
-  (`Host::available()` == false, у банері старту `Scripting: off`).
+## The scripting layer
 
-## Виправлені під час переробки дефекти
+- **When.** `Application::runProjectScripts()` reads `<project>/scripts/*.as` (sorted
+  by name) and runs each through `Host::runFile()`. The call is triggered by
+  `Editor::consumePlayStarted()`, so the scripts see a live world on the first Play
+  frame. A missing directory or an empty one is not an error.
+- **Entry point.** Exactly one function per module: `onInit` / `main` / `start`,
+  otherwise the first global `void()` in declaration order, otherwise nothing (only
+  `shared`).
+- **Hooks.** `Host` knows `void onInit()`, `void onUpdate()`, `void onStop()` (the
+  `kOn*Declaration` constants) and can call them through
+  `callFunction()`/`hasFunction()`. But it **calls only the entry point itself**:
+  neither the frame loop nor `Editor::exitPlayMode()` calls them, so `onUpdate` and
+  `onStop` are currently dead. Wiring them up costs one line in
+  `Application::runEditorFrame()` and one in `exitPlayMode`/`consumePlayStarted`.
+- **Diagnostics.** `Host::setDiagnosticSink()` is installed before `initialize()`;
+  compiler and exception messages go to `Log` with the file, line and column
+  (`[script] ...` for `engine::log*`).
+- **One host.** AngelScript's global functions have no receiver, so `ScriptState` is
+  published through `activeState()`, and a second `Host` refuses to initialize.
+- **Building without scripting.** Every `src/script/*.cpp` is guarded by
+  `SPECTRA_SCRIPTING`; the headers contain no AngelScript symbol at all, so
+  `-DSPECTRA_SCRIPTING=OFF` simply leaves the engine off (`Host::available()` is
+  false, and the startup banner says `Scripting: off`).
 
-Ці проблеми існували в коді до рефакторингу:
+---
 
-- **Підлога арени не створювала контактів.** Генератор контактів пропускав
-  стінку, до якої спрямована гравітація, тому тіла падали крізь підлогу
-  (тодішній `World::floorWallIndex`). Тепер беруть участь усі шість стін —
+## Defects this rewrite fixed
+
+These existed in the code before the refactor:
+
+- **The arena floor generated no contacts.** The contact generator skipped the wall
+  gravity pointed at, so bodies fell through it. All six walls take part now —
   `PhysicsWorld::collectWallContacts()`.
-- **Warm-start імпульси жили вічно.** Кеш по (стінка, кут) не скидався, коли
-  контакт зникав: тіло, що відстрибнуло й знову впало на те саме місце,
-  отримувало поштовх від попереднього удару — відскоки зростали безмежно.
-  Додано `warmStamp`: кеш чиститься для поверхонь, яких немає в контакті цього кроку.
-- **Мікро-вібрація в спокої.** Контакт створювався лише при проникненні, тому
-  тіло, що лежить, кожного кроку «падало» і знову отримувало імпульс, і ніколи
-  не засинало. Тепер контакти спекулятивні (зазор до 2 см), а солвер не
-  торкається поверхонь, які не встигнуть зійтися за крок.
-- **Збірка під Linux була зламана:** `src/Lang.cpp` не був у списку файлів.
+- **Warm-start impulses lived forever.** The cache keyed by (wall, corner) was never
+  cleared when a contact went away, so a body that bounced and fell back in the same
+  place got a shove from the previous impact and the bounces grew without bound. A
+  `warmStamp` now invalidates surfaces that are not in this step's contact set.
+- **Micro-jitter at rest.** A contact was created only on penetration, so a resting
+  body fell and re-took an impulse every step and never slept. Contacts are now
+  speculative (a 2 cm gap) and the solver does not touch surfaces that cannot close
+  within the step.
+- **The popup click-through.** A click on a row of a dropdown also reached the button
+  the row happened to cover, because the popup is drawn after the widgets under it.
+  Fixed by the pointer capture in [the UI frame contract](#the-ui-frame-contract).
+- **Console text through floating windows.** The batcher emits rectangles before
+  text, so without a flush between the docked panels and the floating ones a floating
+  window's background landed under the console's log lines. Fixed by the staged
+  flushes.
+- **The bottom corners were dead space.** With a single bottom strip, the corners
+  beside it belonged to no panel at all. Fixed by the corner zones.
+- **The Linux build was broken:** `src/Lang.cpp` was not in the file list.
 
-## Як це перевірялося
+---
 
-Збірка (`cmake --build build`) без попереджень при `-Wall -Wextra`. Окремою
-перевіркою проганялися сценарії: падіння сфери та засипання, стійкість стопки
-боксів, відскок сфери від боксу, всі шість осей гравітації, ray-pick, цикл
-збереження/завантаження сцени (включно з імпортом реальної моделі з
-`assets/models/`) та формули об'єму/інерції.
+## How it is verified
 
-Для скриптового шару окремо перевірено ланцюжок у журналі: `Scripting engine
-2.38.0 ready` на старті, далі `Scripts: running N file(s) from .../scripts` і
-рядки `[script] ...` від точок входу — тобто компіляція, запуск і діагностика
-доходять від файлу до світу.
+The build is clean at `-Wall -Wextra` (add `-DSPECTRA_WERROR=ON` to make that a
+build failure rather than a note).
 
-Правила точки входу та хуків перевіряються без вікна й без проєкту —
-окремою утилітою `scripttest` (`tools/scripttest.cpp`, 46 перевірок): точка
-входу з помічником виконується рівно один раз, відсутній хук повертає `false`
-**мовчки**, наявний — виконується, помилка компіляції дає ERROR-діагностику,
-`shared`-лише скрипт збирається без помилок. Скрипт перевірки живе в
-`tools/`, а не в `src/script/`, бо це не частина рушія, а його тест.
+The scripting layer is checked headlessly by `scripttest` (46 checks,
+`tools/scripttest.cpp`): an entry point beside a helper runs exactly once, a missing
+hook returns `false` **silently**, a present one runs, a compile error produces an
+ERROR diagnostic, and a `shared`-only script compiles without complaint. `ctest` runs
+it when the tools are built.
+
+`tools/ui_language_test.ps1` drives the real `spectra3d.exe` with injected Windows
+input and checks, in order: opening the language dropdown does **not** change the
+language, hovering a row does not, scrolling does not, clicking a row does, and
+reopening changes nothing. A screenshot cannot catch that class of bug — it shows the
+dropdown open, which looks correct — only `settings.ini` before and after can. The
+clicks are computed from the constants in `Launcher.cpp` rather than from a fraction
+of the window, because a guess that lands on one machine and misses a 28-pixel gear
+on the next is a coincidence, not a test.
+
+Beyond that, scripts in the log were used to exercise a sphere falling and sleeping, a
+stack of boxes staying still, a sphere bouncing off a box, all six gravity axes,
+ray-picking, a save/load cycle of a scene (including importing a real model from
+`assets/models/`) and the volume/inertia formulas.

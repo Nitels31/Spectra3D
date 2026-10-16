@@ -33,14 +33,16 @@ include/             every engine header, same layer split + json/
   <layer>/*.hpp      Log.hpp, Camera.hpp, Editor.hpp, ... (all .cpp files write
                      #include "core/Log.hpp" - no ../)
   json/json.hpp      header-only nlohmann/json, target spectra_json
-  app/miniaudio.h    vendored single-header audio (public domain / MIT-0)
 
-third_party/         glfw, cgltf, rapidobj, miniply, ufbx, freetype, angelscript
-assets/              lang/*.lang, models/*.{glb,obj,ply,fbx}
+third_party/         glfw, cgltf, rapidobj, miniply, ufbx, freetype, angelscript,
+                     miniaudio
+assets/              lang/*.lang, image/{icons,textures}/*, models/*.{glb,obj,ply,fbx}
 tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp - standalone
                      utilities for reading assets and checking the scripting
-                     layer (46 checks)
-build/               all output: spectra3d.exe, glfw3.dll, icon.ico, engine.log,
+                     layer (46 checks); ui_language_test.ps1 drives the real
+                     window to check that a dropdown does not act on its own
+                     opening click
+build/               all output: spectra3d.exe, glfw3.dll, engine.log,
                      settings.ini, project/, a copy of assets/ (gitignored)
 ```
 
@@ -226,10 +228,13 @@ projectRoot=C:\...\build\project
 language=uk
 theme=dark
 frameRateCap=60
+appIcon=icon.ico
 recent=C:\...\build\project\MyForest
 ```
 
-`recent` holds up to 8 absolute paths, newest first.
+`recent` holds up to 8 absolute paths, newest first. `appIcon` is a bare file name
+inside `assets/image/icons`, chosen in the settings screen and applied to the window
+straight away.
 
 The project's `models/` folder is created together with the project, but the
 editor does not scan it: `AssetBrowser::refresh()` reads `assets/models` of the
@@ -463,6 +468,10 @@ silently, a present one runs, a compile error produces an ERROR diagnostic.
 - **Project creation** on its own tab, with a folder field and the system Explorer
   dialog next to it.
 - **The account record** is honestly local: no sign-in, no sync.
+- **Settings**: the projects folder, Apply / Reset, language, Rescan, theme, the
+  frame rate limit and the application icon. Everything that has more than a couple
+  of values is a dropdown rather than a row of buttons, so the page stays readable
+  and the current answer is visible without counting columns.
 
 ### Themes
 
@@ -593,12 +602,14 @@ Panels, top to bottom:
   the right: grid, vectors, **snap** (a magnet: dragging becomes a multiple of
   0.25), frame selection, reset camera, the "Layers" panel. Every button performs
   its command.
-* **Movable panels** - hierarchy, inspector, console and favorites sit on three
-  window edges, but each can be dragged by its title: to another edge (panels swap
-  places) or into the middle of the scene - then it becomes floating, with a border
-  and a shadow, above the rest. The inner edge of a docked panel drags to change
-  width or height; a floating one resizes from any of four edges and any corner.
-  The layout is always recomputed from which edges are occupied: an empty edge
+* **Movable panels** - hierarchy, inspector, console and favorites sit in six
+  places: the left column, the right column, the bottom strip, the two bottom
+  corners, and free float. Each can be dragged by its title to another place
+  (panels swap) or into the middle of the scene - then it becomes floating, with a
+  border and a shadow, above the rest. The inner edge of a docked panel drags to
+  change width or height; a floating one resizes from any of four edges and any
+  corner. The layout is always recomputed from which columns and rows are
+  occupied: an empty edge
   gives its space to the scene. Sizes, zones, floating panels and closed panels
   are remembered in `<project>/editorlayout.txt`, so a project opens the way you
   left it.
@@ -626,11 +637,12 @@ Every zone of the screen is a separate file in `src/editor/panels/`: `TopBar.cpp
 `BottomBar.cpp`.
 
 The window title is the icon, `Spectra3D`, a dash and the project name: the icon
-comes from `icon.ico` in the repository root (`Window::applyIcon`), CMake copies it
-next to the binary and embeds it in the `.exe` via a resource (`windres` / `rc.exe`,
-if a resource compiler exists), and when the file is missing it is drawn in code.
-There is no frame counter in the title: the concept does not have one, and a title
-that changed every second would also have to be rewritten during that same tick.
+comes from `assets/image/icons`, chosen in the launcher's settings and remembered in
+`settings.ini` (`Window::applyIcon`), CMake embeds the default one in the `.exe` via a
+resource (`windres` / `rc.exe`, if a resource compiler exists), and when the file is
+missing it is drawn in code. There is no frame counter in the title: the concept does
+not have one, and a title that changed every second would also have to be rewritten
+during that same tick.
 
 ### Editor (capabilities)
 
@@ -669,10 +681,13 @@ that changed every second would also have to be rewritten during that same tick.
   Favorites**), and just another panel like the other three: draggable by its
   title, resizable by edges and corners, hidden with **X**.
 - **Movable panels**: hierarchy, inspector, console and favorites can be dragged by
-  their title to another edge (panels swap places) or into the middle of the scene
-  - then the panel becomes floating, with a border and a shadow, above the rest.
-  The inner edge of a docked panel drags to change width or height, a floating one
-  resizes from any of four edges and any corner. A free edge gives its space to the
+  their title to another zone - the left column, the right column, the bottom strip,
+  either bottom corner, or free float over the scene (panels swap places in the
+  docked zones) - then the panel floats, with a border and a shadow, above the
+  rest. The corners are their own zones rather than part of a side column, so
+  favorites have a home beside the console instead of leaving a hole under it. The
+  inner edge of a docked panel drags to change width or height, a floating one
+  resizes from any of four edges and any corner. A free zone gives its space to the
   scene rather than leaving an empty dock.
 - **The workspace is remembered**: `<project>/editorlayout.txt` holds the edge
   sizes, the zone and the rectangle of each panel, and which of them are closed. The
@@ -715,9 +730,10 @@ that changed every second would also have to be rewritten during that same tick.
 
 - **Window title**: the icon, `Spectra3D`, a dash, the project name. No frame
   counter - see "Draw only when there is something to show".
-- **Icon**: `icon.ico` (16/32/64/128/256, 32 bpp) is set on the window and embedded
-  in the `.exe` itself; if the file is missing next to the binary, the editor draws
-  a prism in code.
+- **Icon**: one of the `.ico` files in `assets/image/icons`, pickable in the
+  launcher's settings and applied to the window and the task bar immediately; the
+  default is also embedded in the `.exe` itself, and if the file is missing the
+  editor draws a prism in code.
 - **Text is not truncated with "...", it shrinks.** If a string does not fit, the
   font is squeezed (`UiRenderer::textScaled`) down to 0.6, and only then are
   characters dropped. Button labels are measured: `Uncapped` is 60 pixels wider
@@ -799,12 +815,12 @@ under `third_party/`.
 | GLFW | 3.5.1 | zlib | `third_party/glfw/LICENSE.md` |
 | cgltf | - | MIT | `third_party/cgltf/LICENSE` |
 | rapidobj | - | MIT | `third_party/rapidobj/LICENSE` |
-| miniply | - | MIT | header comment in `third_party/miniply/miniply.h` |
+| miniply | - | MIT | `third_party/miniply/LICENSE` |
 | ufbx | - | MIT | `third_party/ufbx/LICENSE` |
 | FreeType | 2.14.3 | FTL | `FTL.txt` (full text), `third_party/freetype/LICENSE.TXT` |
 | AngelScript | 2.38.0 | zlib | inside `third_party/angelscript/SDK-2.38.0.zip` |
 | nlohmann/json | 3.12.0 | MIT | `include/json/json.hpp` |
-| miniaudio | 0.11.25 | public domain **or** MIT-0 | end of `include/app/miniaudio.h` |
+| miniaudio | 0.11.25 | public domain **or** MIT-0 | `third_party/miniaudio/miniaudio.h` |
 
 FreeType is dual-licensed upstream and this project uses the **FreeType License
 (FTL)**, the permissive option. The FTL requires crediting the FreeType Project in

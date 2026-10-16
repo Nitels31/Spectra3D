@@ -118,7 +118,12 @@ void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
     const Rect innerDock{dock.x, dock.y, dock.width - (needsBar ? kScrollWidth : 0.0f),
                          dock.height};
 
+    // Clipped twice on purpose: once for the drawing, so the sections cannot paint
+    // over the panel's own header, and once for the hit test, so a property that
+    // has been scrolled out of the body is not still a draggable field - it is
+    // underneath the console, and a click there belongs to the console.
     ui.pushClip(bodyRect);
+    ui_.pushClip(bodyRect);
     float y2 = bodyTop - inspectorScroll_;
     RigidBody& body = world.bodies[(size_t)activeBody_];
     drawTransformSection(ui, body, innerDock, y2);
@@ -128,6 +133,7 @@ void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
     drawAnchorSection(ui, body, innerDock, y2);
     drawStateSection(ui, world, body, innerDock, y2);
     drawNodeSection(ui, innerDock, y2);
+    ui_.popClip();
     ui.popClip();
 
     // A couple of pixels so the last row is not flush against the bottom edge.

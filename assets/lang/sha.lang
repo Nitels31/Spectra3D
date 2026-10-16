@@ -234,3 +234,5 @@ shape.capsule=Phial
 shape.cone=Spire
 shape.pyramid=Ziggurat
 shape.prism=Wedge
+settings.icon=Th' app icon
+settings.iconNone=No icon files found

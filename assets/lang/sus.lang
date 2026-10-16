@@ -234,3 +234,5 @@ shape.capsule=Pod
 shape.cone=Vent
 shape.pyramid=Ramp
 shape.prism=Wedge
+settings.icon=App icon
+settings.iconNone=No icon files, sus

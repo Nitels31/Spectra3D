@@ -446,6 +446,8 @@ bool Settings::load() {
             // 0 is a legitimate value (uncapped); anything else is clamped to a
             // range that still makes sense as a frame rate.
             if (parseInt(value, cap)) frameRateCap = std::clamp(cap, 0, 240);
+        } else if (key == "appIcon") {
+            if (!value.empty()) appIcon = value;
         } else if (key == "recent") {
             // File order is newest first, so the first occurrence wins and the
             // rest are dropped.
@@ -470,6 +472,7 @@ bool Settings::save() const {
     text += std::string("language=") + languageCode(language) + "\n";
     text += std::string("theme=") + themeTagCode(theme) + "\n";
     text += "frameRateCap=" + std::to_string(frameRateCap) + "\n";
+    text += "appIcon=" + appIcon + "\n";
     for (size_t i = 0; i < recentProjects.size() && i < kMaxRecentProjects; ++i)
         text += "recent=" + recentProjects[i] + "\n";
 

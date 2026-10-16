@@ -43,17 +43,54 @@ public:
     float pointerX() const { return pointerX_; }
     float pointerY() const { return pointerY_; }
     bool pointerDown() const { return pointerDown_; }
-    bool pointerPressed() const { return pointerPressed_; }
-    bool pointerReleased() const { return pointerReleased_; }
+    // The two edges below are what a widget reacts to, and they are false while a
+    // popup owns the pointer - see setPointerCapture().
+    bool pointerPressed() const { return pointerPressed_ && captureId_ == 0; }
+    bool pointerReleased() const { return pointerReleased_ && captureId_ == 0; }
+    // The same edges with the capture ignored. Only the popup that asked for the
+    // capture reads these; every other reader wants the guarded version.
+    bool rawPointerPressed() const { return pointerPressed_; }
+    bool rawPointerReleased() const { return pointerReleased_; }
     double scrollDelta() const { return scrollDelta_; }
     bool ctrlHeld() const { return ctrlHeld_; }
     bool cameraCaptured() const { return cameraCaptured_; }
 
-    bool hovered(const Rect& rect) const { return rect.contains(pointerX_, pointerY_); }
+    // --- popup capture ------------------------------------------------------
+    // A dropdown is drawn last in the frame, so every widget it covers has already
+    // run its hit test - which is why a click on a menu row also pressed the
+    // button sitting underneath it. A non-zero capture says "something above the
+    // widgets owns the pointer": buttons, checkboxes, numeric properties and text
+    // fields all go inert until it is cleared.
+    //
+    // The lifetime is one frame, and it has to be set from the popup state that is
+    // already known BEFORE anything is drawn: a panel opened this frame cannot be
+    // what suppressed the widgets, and clearing it for the popup's own pass is what
+    // lets the popup's rows work.
+    void setPointerCapture(int id) { captureId_ = id; }
+    int pointerCapture() const { return captureId_; }
+    bool captured() const { return captureId_ != 0; }
+    // Claim without clearing: zero means "I have nothing to say", which is how a
+    // pass that draws its own overlays first and re-arms afterwards stays in charge.
+    void claimPointer(int id) { if (id != 0) captureId_ = id; }
+
+    // --- scrolling clips ----------------------------------------------------
+    // A mirror of UiRenderer::pushClip / popClip, for the hit test rather than the
+    // drawing. The renderer can hide geometry it was handed; nothing there can say
+    // "is the pointer inside?", so a widget scrolled out of a panel still has a
+    // rectangle - visible to a click, invisible to the eye. Any panel that clips its
+    // body must clip the hit test with it, or a press drags a property nobody can see.
+    void pushClip(const Rect& rect);
+    void popClip();
+    bool clipped() const { return clipDepth_ > 0; }
+
+    bool hovered(const Rect& rect) const { return clipContains_(rect); }
     void markHovered(int id) { hoveredId_ = id; }
     int hoveredId() const { return hoveredId_; }
     void setActive(int id) { activeId_ = id; }
     int activeId() const { return activeId_; }
+
+    /// Swallow the current click so widgets underneath don't react to it.
+    void consumePointerClick() { pointerPressed_ = false; pointerReleased_ = false; activeId_ = 0; }
 
     // --- widgets ------------------------------------------------------------
     bool button(UiRenderer& ui, int id, float x, float y, float w, float h,
@@ -117,10 +154,22 @@ private:
 
     int hoveredId_ = 0;
     int activeId_ = 0;
+    // Non-zero while a popup owns the pointer. 0 for the whole of a frame with no
+    // popup, which is why every reader can treat it as a plain "is anything open?"
+    // flag instead of tracking the popup itself.
+    int captureId_ = 0;
+    // Clip boxes for the hit test. Four is plenty: a panel clips its own body, and
+    // nothing in the editor nests deeper than that.
+    static constexpr int kMaxClips = 4;
+    Rect clips_[kMaxClips] = {};
+    int clipDepth_ = 0;
     float dragStartX_ = 0.0f;
     float dragStartValue_ = 0.0f;
 
-TextField valueEditor_;
+    // The pointer, but only where the panel under it is actually allowed to draw.
+    bool clipContains_(const Rect& rect) const;
+
+    TextField valueEditor_;
     ShownText shownText_[kShownTextSlots] = {};
 };
 

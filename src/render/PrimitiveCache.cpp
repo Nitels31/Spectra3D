@@ -133,9 +133,14 @@ void PrimitiveCache::buildCube() {
         const Vec3 normal{f == 0 ? 1.0f : f == 1 ? -1.0f : 0.0f,
                           f == 2 ? 1.0f : f == 3 ? -1.0f : 0.0f,
                           f == 4 ? 1.0f : f == 5 ? -1.0f : 0.0f};
-        for (int v = 0; v < 4; ++v) {
-            pushVertex(cubeVerts_, faces[f][v], normal);
-        }
+        // Each quad is triangulated as two triangles: (0, 1, 2) and (0, 2, 3)
+        pushVertex(cubeVerts_, faces[f][0], normal);
+        pushVertex(cubeVerts_, faces[f][1], normal);
+        pushVertex(cubeVerts_, faces[f][2], normal);
+
+        pushVertex(cubeVerts_, faces[f][0], normal);
+        pushVertex(cubeVerts_, faces[f][2], normal);
+        pushVertex(cubeVerts_, faces[f][3], normal);
     }
     compileVertexList(cube_, cubeVerts_, GL_TRIANGLES);
 }
@@ -146,24 +151,32 @@ void PrimitiveCache::buildSphere() {
     for (int i = 0; i < stacks; ++i) {
         const float t0 = kPi * (float)i / (float)stacks;
         const float t1 = kPi * (float)(i + 1) / (float)stacks;
-        for (int j = 0; j <= slices; ++j) {
-            const float phi = 2.0f * kPi * (float)j / (float)slices;
-            const float cx = std::cos(phi), sx = std::sin(phi);
-            const Vec3 a{std::sin(t0) * cx, std::cos(t0), std::sin(t0) * sx};
-            const Vec3 b{std::sin(t1) * cx, std::cos(t1), std::sin(t1) * sx};
-            // Sphere normals are the normalised position on the unit sphere, so
-            // the same vector is both the vertex and its normal.
+        for (int j = 0; j < slices; ++j) {
+            const float phi0 = 2.0f * kPi * (float)j / (float)slices;
+            const float phi1 = 2.0f * kPi * (float)(j + 1) / (float)slices;
+
+            const Vec3 a{std::sin(t0) * std::cos(phi0), std::cos(t0), std::sin(t0) * std::sin(phi0)};
+            const Vec3 b{std::sin(t1) * std::cos(phi0), std::cos(t1), std::sin(t1) * std::sin(phi0)};
+            const Vec3 c{std::sin(t1) * std::cos(phi1), std::cos(t1), std::sin(t1) * std::sin(phi1)};
+            const Vec3 d{std::sin(t0) * std::cos(phi1), std::cos(t0), std::sin(t0) * std::sin(phi1)};
+
+            // Sphere normals are the normalised position on the unit sphere.
             pushVertex(sphereVerts_, a, a);
             pushVertex(sphereVerts_, b, b);
+            pushVertex(sphereVerts_, c, c);
+
+            pushVertex(sphereVerts_, a, a);
+            pushVertex(sphereVerts_, c, c);
+            pushVertex(sphereVerts_, d, d);
         }
     }
-    compileVertexList(sphere_, sphereVerts_, GL_QUAD_STRIP);
+    compileVertexList(sphere_, sphereVerts_, GL_TRIANGLES);
 }
 
 void PrimitiveCache::buildCylinder() {
     const int slices = 24;
     cylinderVerts_.clear();
-    // Side wall: one quad per slice, normals from the rim angle.
+    // Side wall: one quad (two triangles) per slice, normals from the rim angle.
     for (int i = 0; i < slices; ++i) {
         const float a0 = 2.0f * kPi * (float)i / (float)slices;
         const float a1 = 2.0f * kPi * (float)(i + 1) / (float)slices;
@@ -176,17 +189,21 @@ void PrimitiveCache::buildCylinder() {
         pushVertex(cylinderVerts_, {c1, 1.0f, s1}, {c1, 0.0f, s1});
         pushVertex(cylinderVerts_, {c0, 1.0f, s0}, {c0, 0.0f, s0});
     }
-    // Caps: triangle fans with a flat cap normal.
-    pushVertex(cylinderVerts_, {0.0f, -1.0f, 0.0f}, {0.0f, -1.0f, 0.0f});
-    for (int i = slices; i >= 0; --i) {
-        const float a = 2.0f * kPi * (float)i / (float)slices;
-        pushVertex(cylinderVerts_, {std::cos(a), -1.0f, std::sin(a)},
-                   {0.0f, -1.0f, 0.0f});
+    // Bottom cap (normal: 0, -1, 0)
+    for (int i = 0; i < slices; ++i) {
+        const float a0 = 2.0f * kPi * (float)i / (float)slices;
+        const float a1 = 2.0f * kPi * (float)(i + 1) / (float)slices;
+        pushVertex(cylinderVerts_, {0.0f, -1.0f, 0.0f}, {0.0f, -1.0f, 0.0f});
+        pushVertex(cylinderVerts_, {std::cos(a1), -1.0f, std::sin(a1)}, {0.0f, -1.0f, 0.0f});
+        pushVertex(cylinderVerts_, {std::cos(a0), -1.0f, std::sin(a0)}, {0.0f, -1.0f, 0.0f});
     }
-    pushVertex(cylinderVerts_, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
-    for (int i = 0; i <= slices; ++i) {
-        const float a = 2.0f * kPi * (float)i / (float)slices;
-        pushVertex(cylinderVerts_, {std::cos(a), 1.0f, std::sin(a)}, {0.0f, 1.0f, 0.0f});
+    // Top cap (normal: 0, 1, 0)
+    for (int i = 0; i < slices; ++i) {
+        const float a0 = 2.0f * kPi * (float)i / (float)slices;
+        const float a1 = 2.0f * kPi * (float)(i + 1) / (float)slices;
+        pushVertex(cylinderVerts_, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+        pushVertex(cylinderVerts_, {std::cos(a0), 1.0f, std::sin(a0)}, {0.0f, 1.0f, 0.0f});
+        pushVertex(cylinderVerts_, {std::cos(a1), 1.0f, std::sin(a1)}, {0.0f, 1.0f, 0.0f});
     }
     compileVertexList(cylinder_, cylinderVerts_, GL_TRIANGLES);
 }
@@ -208,11 +225,13 @@ void PrimitiveCache::buildCone() {
         pushVertex(coneVerts_, {c0, -1.0f, s0}, {c0, slope, s0});
         pushVertex(coneVerts_, {c1, -1.0f, s1}, {c1, slope, s1});
     }
-    // Base cap.
-    pushVertex(coneVerts_, {0.0f, -1.0f, 0.0f}, {0.0f, -1.0f, 0.0f});
-    for (int i = slices; i >= 0; --i) {
-        const float a = 2.0f * kPi * (float)i / (float)slices;
-        pushVertex(coneVerts_, {std::cos(a), -1.0f, std::sin(a)}, {0.0f, -1.0f, 0.0f});
+    // Base cap (normal: 0, -1, 0).
+    for (int i = 0; i < slices; ++i) {
+        const float a0 = 2.0f * kPi * (float)i / (float)slices;
+        const float a1 = 2.0f * kPi * (float)(i + 1) / (float)slices;
+        pushVertex(coneVerts_, {0.0f, -1.0f, 0.0f}, {0.0f, -1.0f, 0.0f});
+        pushVertex(coneVerts_, {std::cos(a1), -1.0f, std::sin(a1)}, {0.0f, -1.0f, 0.0f});
+        pushVertex(coneVerts_, {std::cos(a0), -1.0f, std::sin(a0)}, {0.0f, -1.0f, 0.0f});
     }
     compileVertexList(cone_, coneVerts_, GL_TRIANGLES);
 }
@@ -232,12 +251,13 @@ void PrimitiveCache::buildPyramid(int sides) {
         pushVertex(pyramidVerts_, base1, normal);
         pushVertex(pyramidVerts_, apex, normal);
     }
-    // Base cap.
-    pushVertex(pyramidVerts_, {0.0f, bottomY, 0.0f}, {0.0f, bottomY, 0.0f});
-    for (int i = sides; i >= 0; --i) {
-        const float a = 2.0f * kPi * (float)i / (float)sides;
-        pushVertex(pyramidVerts_, {std::cos(a), bottomY, std::sin(a)},
-                   {0.0f, bottomY, 0.0f});
+    // Base cap (normal: 0, -1, 0).
+    for (int i = 0; i < sides; ++i) {
+        const float a0 = 2.0f * kPi * (float)i / (float)sides;
+        const float a1 = 2.0f * kPi * (float)(i + 1) / (float)sides;
+        pushVertex(pyramidVerts_, {0.0f, bottomY, 0.0f}, {0.0f, bottomY, 0.0f});
+        pushVertex(pyramidVerts_, {std::cos(a1), bottomY, std::sin(a1)}, {0.0f, bottomY, 0.0f});
+        pushVertex(pyramidVerts_, {std::cos(a0), bottomY, std::sin(a0)}, {0.0f, bottomY, 0.0f});
     }
     compileVertexList(pyramid_, pyramidVerts_, GL_TRIANGLES);
 }

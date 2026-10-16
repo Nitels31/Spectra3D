@@ -234,3 +234,5 @@ shape.capsule=Egg
 shape.cone=Pointed
 shape.pyramid=Ramp
 shape.prism=Stairs
+settings.icon=Icon
+settings.iconNone=No icon files found

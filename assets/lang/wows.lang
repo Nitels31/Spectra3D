@@ -234,3 +234,5 @@ shape.capsule=Bottle
 shape.cone=Funnel
 shape.pyramid=Roof
 shape.prism=Wedge
+settings.icon=App icon
+settings.iconNone=no icon files, kid

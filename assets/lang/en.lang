@@ -234,3 +234,5 @@ shape.capsule=Capsule
 shape.cone=Cone
 shape.pyramid=Pyramid
 shape.prism=Prism
+settings.icon=Application icon
+settings.iconNone=No icon files found

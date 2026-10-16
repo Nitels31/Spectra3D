@@ -129,21 +129,24 @@ bool Application::initialize() {
         Log::error("Failed to create window");
         return false;
     }
-    // The mark in front of the title, before anything is drawn into the window.
-    window_.applyIcon();
     window_.setSizeLimits(kInitialWidth, kInitialHeight, 1920, 1080);
 
     localizer_.loadBundles();
     uiRenderer_.buildFonts();
     sceneRenderer_.initialize(world_.arenaMin, world_.arenaMax);
 
-// The banner shows the context the engine actually holds, not the version the
+    // The banner shows the context the engine actually holds, not the version the
     // driver likes to advertise: a 3.3 compatibility context on an NVIDIA card
     // answers "4.6.0 NVIDIA ..." to glGetString, and putting that in the menu bar
     // contradicts the title right next to it. The full driver string stays in the
     // log.
+    //
+    // The icon goes on after the launcher, because the icon is a setting: the window
+    // gets the file the user chose, not the one that happened to ship. Nothing has
+    // been drawn yet, so this is still "before anything is on screen".
     launcher_.setGraphicsInfo((const char*)glGetString(GL_RENDERER), gl::requestedVersion());
     launcher_.initialize();
+    window_.applyIcon(launcher_.settings().appIcon.c_str());
     inEditor_ = false;
 
     scripts_.setDiagnosticSink([](const script::Host::Diagnostic& d) {

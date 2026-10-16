@@ -25,10 +25,17 @@ inline constexpr const char* kProjectModelsDir = "models";
 // are two workspaces.
 inline constexpr const char* kEditorLayoutFile = "editorlayout.txt";
 inline constexpr const char* kSettingsFileName = "settings.ini";
-// The application icon, shipped next to the binary like settings.ini: one file
-// for the window, the task bar and the executable itself. A build that does not
-// have it still gets an icon - Window::applyIcon() draws one.
+// The application icon, shipped with the rest of the images and pickable in the
+// launcher's settings. One file for the window, the task bar and - when a resource
+// compiler exists - the executable itself. A build that does not have the file
+// still gets an icon: Window::applyIcon() draws one.
+//
+// The directory is a constant rather than a lookup because it is the one place the
+// runtime, the build script and the settings screen have to agree on; the icon
+// files themselves are listed at runtime, so dropping another .ico or .png in
+// there is all it takes to make it appear in the picker.
 inline constexpr const char* kAppIconFile = "icon.ico";
+inline constexpr const char* kAppIconsDir = "assets/image/icons";
 
 // Languages a project can be tagged with. Deliberately not i18n::Language:
 // core must not depend on the localisation layer, so the launcher is the one
@@ -119,6 +126,13 @@ struct Settings {
     // a cap on its own - several drivers report well over 100 FPS for a static
     // image - so this is the only thing standing between a laptop and a fan.
     int frameRateCap = 60;
+
+// Which icon file to use, by name only - the path is always
+    // assets/image/icons/, never something settings.ini can redirect. Switching it
+    // repaints the window and the task bar entry immediately and survives the next
+    // launch. A name that is not there falls back to the drawn mark, so a stale or
+    // hand-edited value costs the icon and nothing else.
+    std::string appIcon = kAppIconFile;
 
     // False when the file is missing or unreadable, which is not an error: the
     // defaults below are then the state. Keys that are absent keep the default.

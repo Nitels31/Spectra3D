@@ -85,6 +85,7 @@ private:
         kThemeSelect = 1040,
         kFrameCapSelect = 1041,
         kLanguageSelect = 1042,
+        kIconSelect = 1043,
 
         // Sidebar and tab strip are not clickable in the row sense, so they get
         // ids below kRowIdBase.
@@ -152,6 +153,10 @@ private:
     void setLanguage(LanguageTag tag);
     void setFrameRateCap(int cap);
     void setTheme(theme::ThemeId id);
+    // Repaints the window and the task bar entry with a different file from
+    // assets/image/icons/, and remembers it. Called from the settings dropdown and
+    // nowhere else, so the icon and the setting cannot disagree.
+    void setAppIcon(int index, Window& window);
     void moveSelection(int delta);
     void clampSelection();
 void toggleFavorite(int index);
@@ -170,6 +175,9 @@ void toggleFavorite(int index);
     struct SelectItem {
         const char* label;
         int value;
+        // A stable key for items whose value is not an enum - a file name, say.
+        // Empty for the rest, which are identified by `value` alone.
+        const char* id = nullptr;
     };
 
     // A dropdown is drawn in two halves, and the split is not cosmetic. Drawn in
@@ -272,6 +280,24 @@ void toggleFavorite(int index);
     // Id of the select whose list is open, or -1. Only one list at a time: two open
     // at once overlap, and the second one covers the first one's rows.
     int openSelect_ = -1;
+    // First visible row of the open dropdown, and the row kept under the pointer as
+    // it scrolls so the list can be walked without a click. Twenty-three languages
+    // are taller than any settings panel, so the list has to scroll; without this
+    // the last entries sit off the bottom of the window with no way to reach them.
+    int selectScroll_ = 0;
+    int selectHoverRow_ = -1;  // index into the items of the row the pointer is on
+    // Rows and maximum scroll of the list that is currently open, published by the
+    // draw pass so the key handler can page through the same list the mouse sees.
+    // Keeping a private copy per dropdown would mean storing the whole geometry
+    // twice; the draw pass is the only place that knows how tall the list came out.
+    int openSelectRows_ = 1;
+    int openSelectScrollMax_ = 0;
+    // The frame the current list was opened on, and a counter that only ever goes
+    // up. The click that opens a dropdown must not also land on a row inside it:
+    // the field and the list are drawn in the same frame, and without this the
+    // language changes to whatever sits under the pointer the instant it opens.
+    unsigned int frame_ = 0;
+    unsigned int selectOpenedFrame_ = 0;
     std::vector<int> visible_;  // indexes into projects_.projects()
     int selected_ = -1;         // index into visible_
     int listScroll_ = 0;        // first visible row
@@ -295,6 +321,11 @@ void toggleFavorite(int index);
     std::string graphicsRenderer_;
     std::string graphicsVersion_;
     std::string versionLabel_;
+    // The icon files in assets/image/icons, read once. Dropping another .ico in
+    // there is all it takes for it to appear in the picker, which is why this is a
+    // listing and not a hard-coded list of names.
+    std::vector<std::string> icons_;
+    void scanIcons();
     std::string diagnostics_;   // cached; rebuilt when the GL info or size changes
     bool diagnosticsDirty_ = true;
     int diagnosticsWidth_ = 0;

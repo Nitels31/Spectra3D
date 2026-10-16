@@ -136,12 +136,19 @@ void Editor::drawSceneHeader(UiRenderer& ui, PhysicsWorld& world, Camera& camera
         return rect;
     };
 
-    // Layers: the same panel the top bar opens, from here too.
+    // Layers: the same panel the top bar opens, from here too. Anchored to THIS
+    // button rather than to the one in the top bar - the two strips are a viewport's
+    // width apart, and a list that opens somewhere the pointer is not is a list the
+    // pointer has to find again.
     {
         const Rect rect = button(kSceneHeader + 40, kBarSize);
         if (ui_.button(ui, kSceneHeader + 40, rect.x, rect.y, rect.width, rect.height, "",
-                       layersOpen_))
+                       layersOpen_)) {
+            closeOverlays();
             layersOpen_ = !layersOpen_;
+            layersAnchor_ = rect;
+            overlayOpenedThisFrame_ = overlayOpenedThisFrame_ || layersOpen_;
+        }
         drawViewIcon(ui, rect, ViewIcon::Layers, layersOpen_ ? theme::accent : theme::textDim);
     }
     {

@@ -234,3 +234,5 @@ shape.capsule=Pebble
 shape.cone=Spike
 shape.pyramid=Mountain
 shape.prism=Shard
+settings.icon=App icon
+settings.iconNone=No icon files found

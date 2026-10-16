@@ -208,6 +208,10 @@ void Editor::closeOverlays() {
     openMenu_ = -1;
     layersOpen_ = false;
     helpPage_ = 0;
+    // The button that opened the layers list is forgotten with it: a list left
+    // anchored to a button in the other strip would hang a long way from where the
+    // next click expects it.
+    layersAnchor_ = Rect{};
     // Each menu starts at its top: a scroll left over from the last one opened
     // would drop a long Create menu halfway down its own list.
     menuScroll_ = 0.0f;
@@ -592,8 +596,15 @@ void Editor::drawTopBar(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Win
     const Rect layers{x - layersWidth, buttonY, layersWidth, kBarButtonHeight};
     layersButton_ = layers;
     if (ui_.button(ui, kToolbarLayers, layers.x, layers.y, layers.width, layers.height, "",
-                   layersOpen_))
+                   layersOpen_)) {
+        // One overlay at a time, like the menu captions: the layers list hangs over
+        // the same panels a menu does, and two of them open at once means the second
+        // covers the rows of the first.
+        closeOverlays();
         layersOpen_ = !layersOpen_;
+        layersAnchor_ = layers;
+        overlayOpenedThisFrame_ = overlayOpenedThisFrame_ || layersOpen_;
+    }
     ui.text(layers.x + 9.0f, layers.y + (layers.height - theme::textLineHeight) * 0.5f,
             layersLabel, layersOpen_ ? theme::text : theme::textDim);
     x = layers.x - kBarGap;
@@ -618,9 +629,17 @@ void Editor::drawTopBar(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Win
     x = search.x - kBarGap;
 
     const Rect help{x - kBarButtonHeight, buttonY, kBarButtonHeight, kBarButtonHeight};
-    if (ui_.button(ui, kToolbarHelp, help.x, help.y, help.width, help.height, ""))
-        runAction(helpPage_ == 1 ? Action::CloseOverlay : Action::Controls, 0, world, camera,
-                  window);
+    if (ui_.button(ui, kToolbarHelp, help.x, help.y, help.width, help.height, "")) {
+        closeOverlays();
+        toolbarSearch_.clear();
+        const bool opening = helpPage_ != 1;
+        runAction(opening ? Action::Controls : Action::CloseOverlay, 0, world, camera, window);
+        // The help panel is centred over the viewport, so the click that opened it is
+        // nowhere near it - but the press is still this frame's press, and without
+        // this the pass that opens it would also treat the same click as "pressed
+        // outside every panel" and close it again in the same frame.
+        overlayOpenedThisFrame_ = overlayOpenedThisFrame_ || opening;
+    }
     ui.text(help.x + (help.width - ui.textWidth("?")) * 0.5f,
             help.y + (help.height - theme::textLineHeight) * 0.5f, "?",
             helpPage_ == 1 ? theme::text : theme::textDim);

@@ -234,3 +234,5 @@ shape.capsule=Canister
 shape.cone=Nose
 shape.pyramid=Adapter
 shape.prism=Ring
+settings.icon=App icon
+settings.iconNone=No icon files. Much sad.

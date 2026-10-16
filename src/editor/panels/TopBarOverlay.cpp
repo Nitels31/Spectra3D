@@ -131,8 +131,12 @@ void drawTick(UiRenderer& ui, const Rect& row, const Color& color) {
 // covers, and its own text under nothing at all.
 //
 // Interaction is resolved here rather than in the bar: the bar decides what is
-// open, this pass draws it and reads the presses on its own rows. A press that
-// opens a panel must not also close it, which is what overlayOpenedThisFrame_ is
+// open, this pass draws it and reads the presses on its own rows. Two things keep
+// it from fighting the panels it covers. The editor claims the pointer for every
+// popup before those panels are drawn (Editor::renderUi), so a click on a row never
+// reaches the button underneath it - and the capture is released again right before
+// this pass, because the rows here are what the user was aiming at. A press that
+// opens a panel must not also act on it, which is what overlayOpenedThisFrame_ is
 // for.
 void Editor::drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& camera,
                                Window& window, int fbWidth, int fbHeight) {
@@ -141,6 +145,10 @@ void Editor::drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& came
     // True while the pointer is over a panel drawn below, so the closing press at
     // the end does not also eat the press that hit a row.
     bool insidePanel = false;
+    // The press that opened whatever is on screen. It is still this frame's press,
+    // and the pointer may well be sitting on top of a row already - a menu opening
+    // under the cursor must not run the row underneath it on the same click.
+    const bool openedNow = overlayOpenedThisFrame_;
 
     // --- help and about, centred over everything ---------------------------
     if (helpPage_ != 0) {
@@ -294,7 +302,7 @@ void Editor::drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& came
                        rowRect.y + (rowRect.height - theme::textLineHeight) * 0.5f,
                        rowRect.width - 28.0f, row.text, theme::text);
             if (row.checked) drawTick(ui, rowRect, theme::accent);
-            if (hovered && ui_.pointerPressed()) {
+            if (hovered && ui_.rawPointerPressed() && !openedNow) {
                 runAction(row.action, row.param, world, camera, window);
                 closeOverlays();
                 break;
@@ -318,11 +326,12 @@ void Editor::drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& came
         const float footer = total > rows ? kLayerRowHeight : 0.0f;
         const float height =
             headerHeight + (float)rows * kLayerRowHeight + footer + kPanelPadding;
-        // Clamped to the window: the layers button sits at the far right of the
-        // bar, so a full-width panel anchored to it would hang off the screen -
-        // which is exactly what it did before this line.
+        // Clamped to the window: the button that opened it can sit at either end of
+        // the top bar, and a full-width panel anchored to the far one would hang off
+        // the screen - which is exactly what it did before this line.
+        const Rect anchor = layersAnchor_.width > 0.0f ? layersAnchor_ : layersButton_;
         const float panelX = std::fmax(
-            4.0f, std::fmin(layersButton_.x, (float)fbWidth - kLayersPanelWidth - 4.0f));
+            4.0f, std::fmin(anchor.x, (float)fbWidth - kLayersPanelWidth - 4.0f));
         const Rect panel{panelX, layout_.menuBar.y + layout_.menuBar.height - 1.0f,
                          kLayersPanelWidth, height};
         ui.fillRect(panel.x, panel.y, panel.width, panel.height, theme::panel);
@@ -358,7 +367,7 @@ void Editor::drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& came
                        row.width - 10.0f - 2.0f * kLayerToggleSize - 16.0f, label,
                        body.visible ? theme::text : theme::textDim);
 
-            if (ui_.pointerPressed() && hovered) {
+            if (ui_.rawPointerPressed() && hovered && !openedNow) {
                 if (ui_.hovered(visibleRect))
                     runAction(Action::LayerVisible, i, world, camera, window);
                 else if (ui_.hovered(lockedRect))
@@ -408,7 +417,7 @@ void Editor::drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& came
             ui.text(rowRect.x + rowRect.width - 8.0f - ui.textWidth(caption),
                     rowRect.y + (rowRect.height - theme::textLineHeight) * 0.5f, caption,
                     theme::textDim);
-            if (hovered && ui_.pointerPressed()) pressed = i;
+            if (hovered && ui_.rawPointerPressed() && !openedNow) pressed = i;
         }
 
         if (found == 0) {
@@ -436,7 +445,7 @@ void Editor::drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& came
     // which is what overlayOpenedThisFrame_ is for. What was typed into the search
     // goes with them: a suggestion list that outlives the click that dismissed it
     // is a panel nobody can get rid of.
-    if (ui_.pointerPressed() && !insidePanel && !overlayOpenedThisFrame_) {
+    if (ui_.rawPointerPressed() && !insidePanel && !openedNow) {
         closeOverlays();
         toolbarSearch_.clear();
     }

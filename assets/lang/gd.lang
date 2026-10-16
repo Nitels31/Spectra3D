@@ -234,3 +234,5 @@ shape.capsule=Pill
 shape.cone=Spike
 shape.pyramid=Ziggurat
 shape.prism=Trapezoid
+settings.icon=App icon
+settings.iconNone=no icon files

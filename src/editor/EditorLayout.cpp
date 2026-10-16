@@ -94,6 +94,8 @@ const char* zoneName(PanelZone zone) {
     case PanelZone::Left: return "Left";
     case PanelZone::Right: return "Right";
     case PanelZone::Bottom: return "Bottom";
+    case PanelZone::BottomLeft: return "BottomLeft";
+    case PanelZone::BottomRight: return "BottomRight";
     case PanelZone::Float: return "Float";
     }
     return "Float";
@@ -103,6 +105,8 @@ PanelZone zoneFromName(const std::string& name) {
     if (name == "Left") return PanelZone::Left;
     if (name == "Right") return PanelZone::Right;
     if (name == "Bottom") return PanelZone::Bottom;
+    if (name == "BottomLeft") return PanelZone::BottomLeft;
+    if (name == "BottomRight") return PanelZone::BottomRight;
     return PanelZone::Float;
 }
 
@@ -210,10 +214,10 @@ void Editor::loadLayout() {
     if (version > kLayoutVersion)
         Log::info("Editor: layout '%s' was written by a newer build (v%d)", path.c_str(), version);
 
-    // One panel per edge. The file cannot produce two (a swap always keeps the
-    // count), but a hand-edited one can, and two panels on one edge would have
-    // them drawn on top of each other - so the later one floats instead.
-    // Float is the last zone, so this is exactly the three docked edges.
+    // One panel per zone. The file cannot produce two (a swap always keeps the
+    // count), but a hand-edited one can, and two panels in one zone would have
+    // them drawn on top of each other - so the later one floats instead. Float is
+    // the last zone, so indexing by zone covers exactly the docked ones.
     bool edgeTaken[(int)PanelZone::Float] = {};
     for (int i = 0; i < kPanelCount; ++i) {
         if (!seen[i]) continue;
