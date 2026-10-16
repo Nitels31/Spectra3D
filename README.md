@@ -1,7 +1,8 @@
 # Spectra3D
 
 A lightweight 3D engine with a **built-in editor** in the spirit of Godot, written in
-**C++17 + OpenGL 2.1 + GLFW + FreeType**. Runs on **Windows** and **Linux**. Startup
+**C++17 + OpenGL 3.3 compatibility + GLFW + FreeType**. Runs on **Windows** and
+**Linux**. Startup
 goes through a **launcher**: you pick or create a project, and the editor opens. A
 project may carry **AngelScript** scripts that run when you press Play.
 
@@ -35,7 +36,7 @@ include/             every engine header, same layer split + json/
   json/json.hpp      header-only nlohmann/json, target spectra_json
 
 third_party/         glfw, cgltf, rapidobj, miniply, ufbx, freetype, angelscript,
-                     miniaudio
+                     miniaudio, stb_vorbis
 assets/              lang/*.lang, image/{icons,textures}/*, models/*.{glb,obj,ply,fbx}
 tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp - standalone
                      utilities for reading assets and checking the scripting
@@ -44,6 +45,9 @@ tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp - standalone
                      opening click
 build/               all output: spectra3d.exe, glfw3.dll, engine.log,
                      settings.ini, project/, a copy of assets/ (gitignored)
+  lib/               the static libraries the executable links, incl.
+                     libspectra_runtime.a - every engine layer below app/ and
+                     editor/, which is the engine without an editor
 ```
 
 The repository root `include/` goes on the include path, so the same header is
@@ -821,6 +825,12 @@ under `third_party/`.
 | AngelScript | 2.38.0 | zlib | inside `third_party/angelscript/SDK-2.38.0.zip` |
 | nlohmann/json | 3.12.0 | MIT | `include/json/json.hpp` |
 | miniaudio | 0.11.25 | public domain **or** MIT-0 | `third_party/miniaudio/miniaudio.h` |
+| stb_vorbis | 1.22 | public domain **or** MIT-0 | end of `third_party/stb_vorbis/stb_vorbis.c` |
+
+miniaudio embeds dr_wav, dr_flac and dr_mp3 itself but **not** stb_vorbis: its
+Vorbis backend is behind `STB_VORBIS_INCLUDE_STB_VORBIS_H` in the header, so `.ogg`
+needs this decoder compiled alongside it. Neither one is in the build yet: the
+engine has no audio at all, and the decoder here is for when it does.
 
 FreeType is dual-licensed upstream and this project uses the **FreeType License
 (FTL)**, the permissive option. The FTL requires crediting the FreeType Project in

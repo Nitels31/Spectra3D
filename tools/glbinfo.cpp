@@ -28,10 +28,15 @@ int main(int argc, char** argv) {
                 cgltf_accessor* acc = pr.attributes[a].data;
                 printf("    attr type=%d count=%zu", (int)pr.attributes[a].type,
                        (size_t)acc->count);
-                if (acc->has_min && acc->min)
+                // has_min/has_max is the real test. `min` is a fixed
+                // cgltf_float[16] inside the accessor, so asking whether it is
+                // null asks whether an array is an array - which is always yes,
+                // which is why the compiler said so. Only the first three
+                // components are printed, so three of them have to exist.
+                if (acc->has_min && acc->count >= 3)
                     printf(" min=(%.2f %.2f %.2f)", acc->min[0], acc->min[1],
                            acc->min[2]);
-                if (acc->has_max && acc->max)
+                if (acc->has_max && acc->count >= 3)
                     printf(" max=(%.2f %.2f %.2f)", acc->max[0], acc->max[1],
                            acc->max[2]);
                 printf("\n");

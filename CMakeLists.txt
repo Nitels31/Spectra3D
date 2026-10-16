@@ -273,10 +273,20 @@ set(SPECTRA_SRC_I18N
     src/i18n/Localizer.cpp
 )
 
-add_executable(spectra3d
-    ${SPECTRA_ICON_RC}
-    ${SPECTRA_SRC_APP}
-    ${SPECTRA_SRC_EDITOR}
+# ---------------------------------------------------------------------------
+# spectra_runtime - the engine without an editor
+# ---------------------------------------------------------------------------
+#
+# Everything below app/ and editor/: the layers a game needs and nothing that
+# draws a dock. The split exists so a second executable can be the same engine
+# with an empty window and a loop - which is what "Build" already promises - and
+# so the editor and that executable cannot drift apart by accident.
+#
+# `app/` and `editor/` stay in the executable, which is the honest reading of the
+# layer graph: both sit above everything here and both are the shell, not the
+# engine. Nothing below them includes either (checked: only Application.hpp does,
+# and it is the one that owns both).
+add_library(spectra_runtime STATIC
     ${SPECTRA_SRC_SCENE}
     ${SPECTRA_SRC_UI}
     ${SPECTRA_SRC_RENDER}
@@ -287,18 +297,18 @@ add_executable(spectra3d
     ${SPECTRA_SRC_I18N}
 )
 if(SPECTRA_SCRIPTING)
-    target_sources(spectra3d PRIVATE ${SPECTRA_SRC_SCRIPT})
+    target_sources(spectra_runtime PRIVATE ${SPECTRA_SRC_SCRIPT})
 endif()
 
 # Own headers are found by layer name, never by a relative path: a file that moves
 # between directories then needs no edit, and there is no "../.." in the tree.
-target_include_directories(spectra3d PRIVATE ${SPECTRA_INCLUDE})
+target_include_directories(spectra_runtime PUBLIC ${SPECTRA_INCLUDE})
 
 # Compile-time location of the shipped assets, so the engine also runs straight
 # out of the source tree. The staged copy next to the binary is what it prefers.
-target_compile_definitions(spectra3d PRIVATE SPECTRA_ASSET_DIR="${SPECTRA_ASSETS}")
+target_compile_definitions(spectra_runtime PRIVATE SPECTRA_ASSET_DIR="${SPECTRA_ASSETS}")
 
-target_link_libraries(spectra3d PRIVATE
+target_link_libraries(spectra_runtime PUBLIC
     spectra_freetype
     spectra_ufbx
     spectra_miniply
@@ -307,14 +317,29 @@ target_link_libraries(spectra3d PRIVATE
     spectra_json
 )
 if(SPECTRA_SCRIPTING)
-    target_compile_definitions(spectra3d PRIVATE SPECTRA_SCRIPTING=1)
-    target_link_libraries(spectra3d PRIVATE spectra_angelscript)
+    target_compile_definitions(spectra_runtime PUBLIC SPECTRA_SCRIPTING=1)
+    target_link_libraries(spectra_runtime PUBLIC spectra_angelscript)
 endif()
+spectra_warnings(spectra_runtime)
+
+# ---------------------------------------------------------------------------
+# spectra3d - the editor
+# ---------------------------------------------------------------------------
+
+add_executable(spectra3d
+    ${SPECTRA_ICON_RC}
+    ${SPECTRA_SRC_APP}
+    ${SPECTRA_SRC_EDITOR}
+)
+target_link_libraries(spectra3d PRIVATE spectra_runtime)
 spectra_warnings(spectra3d)
 
 # ---------------------------------------------------------------------------
 # Platform
 # ---------------------------------------------------------------------------
+#
+# On the runtime, not the executable: the window, the GL context and the shell
+# folder dialog all live in platform/ and Filesystem.cpp is what wants COM.
 
 if(WIN32)
     # windows.h is trimmed per file instead of from here: rapidobj.hpp redefines
@@ -327,8 +352,8 @@ if(WIN32)
     # shell folder dialog's window, ole32/shell32/uuid for that dialog's COM,
     # kernel32 for the waitable timer the frame cap uses, winmm for the 1 ms timer
     # resolution it needs.
-    target_link_libraries(spectra3d PRIVATE opengl32 gdi32 user32 kernel32)
-    target_link_libraries(spectra3d PRIVATE ole32 shell32 uuid winmm)
+    target_link_libraries(spectra_runtime PUBLIC opengl32 gdi32 user32 kernel32)
+    target_link_libraries(spectra_runtime PUBLIC ole32 shell32 uuid winmm)
 
     # GLFW is vendored as a prebuilt for a handful of toolchains. The newest one
     # that exists on disk is used, so a machine with only the 2026 drop still
@@ -353,8 +378,8 @@ if(WIN32)
         message(FATAL_ERROR
             "No prebuilt GLFW found in third_party/glfw (looked for: ${SPECTRA_GLFW_VENDORS})")
     endif()
-    target_link_libraries(spectra3d PRIVATE "${SPECTRA_GLFW_LIB}")
-    target_include_directories(spectra3d SYSTEM PRIVATE third_party/glfw/include)
+    target_link_libraries(spectra_runtime PUBLIC "${SPECTRA_GLFW_LIB}")
+    target_include_directories(spectra_runtime SYSTEM PUBLIC third_party/glfw/include)
     message(STATUS "GLFW: ${SPECTRA_GLFW_LIB}")
     # The DLL travels with the binary. A build that is copied to another machine
     # and cannot start is worse than no build.
@@ -365,14 +390,14 @@ if(WIN32)
 elseif(APPLE)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GLFW REQUIRED glfw3)
-    target_include_directories(spectra3d PRIVATE ${GLFW_INCLUDE_DIRS})
-    target_link_libraries(spectra3d PRIVATE ${GLFW_LIBRARIES} ${CMAKE_DL_LIBS})
+    target_include_directories(spectra_runtime PUBLIC ${GLFW_INCLUDE_DIRS})
+    target_link_libraries(spectra_runtime PUBLIC ${GLFW_LIBRARIES} ${CMAKE_DL_LIBS})
 else()
     find_package(OpenGL REQUIRED)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GLFW REQUIRED glfw3)
-    target_include_directories(spectra3d PRIVATE ${GLFW_INCLUDE_DIRS})
-    target_link_libraries(spectra3d PRIVATE ${GLFW_LIBRARIES} OpenGL::GL ${CMAKE_DL_LIBS})
+    target_include_directories(spectra_runtime PUBLIC ${GLFW_INCLUDE_DIRS})
+    target_link_libraries(spectra_runtime PUBLIC ${GLFW_LIBRARIES} OpenGL::GL ${CMAKE_DL_LIBS})
 endif()
 
 # Assets are copied next to the binary so a fresh checkout runs without extra
@@ -397,39 +422,15 @@ if(SPECTRA_BUILD_TOOLS)
     spectra_warnings(fbxtest)
 
     if(SPECTRA_SCRIPTING)
-        # Headless check of the script host: the entry-point rule and the optional
-        # hooks, with no window and no project. It links the script layer plus the
-        # world, registry and camera the bindings mutate, which is why the asset
-        # loaders come along - MeshRegistry::importFile is one of them.
-        add_executable(scripttest
-            tools/scripttest.cpp
-            src/script/ScriptHost.cpp
-            src/script/BindEngine.cpp
-            src/script/BindScene.cpp
-            src/script/BindCamera.cpp
-            src/script/BindString.cpp
-            src/scene/BodyFactory.cpp
-            src/core/Log.cpp
-            src/physics/PhysicsWorld.cpp
-            src/physics/RigidBody.cpp
-            src/assets/MeshRegistry.cpp
-            src/assets/MeshImport.cpp
-            src/assets/MeshUtil.cpp
-            src/assets/loaders/FbxLoader.cpp
-            src/assets/loaders/GltfLoader.cpp
-            src/assets/loaders/ObjLoader.cpp
-            src/assets/loaders/PlyLoader.cpp
-            src/render/Camera.cpp
-        )
-        target_include_directories(scripttest PRIVATE
-            ${SPECTRA_INCLUDE}
-            third_party/cgltf
-            third_party/rapidobj
-            third_party/miniply
-            third_party/ufbx
-        )
-        target_compile_definitions(scripttest PRIVATE SPECTRA_SCRIPTING=1)
-        target_link_libraries(scripttest PRIVATE spectra_angelscript spectra_ufbx spectra_miniply)
+        # Headless check of the script host: the entry-point rule, the hooks and
+        # their failure modes, with no window and no project.
+        #
+        # It used to name eighteen engine source files by hand, which meant a file
+        # added to the engine was invisible here until something stopped linking -
+        # and a source list is not a dependency list. spectra_runtime is both, so
+        # this is one line and it cannot go stale.
+        add_executable(scripttest tools/scripttest.cpp)
+        target_link_libraries(scripttest PRIVATE spectra_runtime)
         spectra_warnings(scripttest)
 
         enable_testing()

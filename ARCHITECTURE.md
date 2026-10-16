@@ -98,6 +98,19 @@ from `platform/Window.hpp`: a dependency upward, which is exactly where it belon
    The project version and the icon directory are *read out of
    `include/core/Project.hpp`* rather than written a second time.
 
+7. **Two targets, and the boundary is the layer graph.** `spectra_runtime` is a
+   static library holding every layer below `app/` and `editor/`. `spectra3d` is
+   the shell: `Application`, `Launcher`, `main` and the editor, linking the
+   runtime. The split is not cosmetic - it is what lets a second executable be
+   "the same engine, an empty window and a loop", which is what Build already
+   promises, and it is what stops the editor and that executable from drifting
+   apart. Nothing below `app/` or `editor/` includes either of them (the one
+   exception is `Application.hpp`, which owns both).
+
+   `tools/scripttest` used to name eighteen engine sources by hand. It now links
+   `spectra_runtime`, because a source list is not a dependency list: the old one
+   could not see a file added to the engine until something stopped linking.
+
 ---
 
 ## The layers
@@ -304,6 +317,26 @@ and two buttons at the bottom right.
 `sceneDirty_` is set by the gizmo, deletion, duplication, the star, the gravity hotkey
 and after Save/Open. There is no autosave, so "save?" has to appear before everything
 that discards a scene.
+
+### `app`
+
+`Application` is the composition root: it owns every subsystem, runs the frame loop
+and switches between the two app states. `Launcher` is the start menu, which lives
+in `Launcher::Result { Stay, OpenProject, Quit }`. `FixedClock` is the fixed-step
+accumulator (60 Hz). `main.cpp` is five lines.
+
+`Application` and `Launcher` sit **in the executable, not in `spectra_runtime`**,
+which is rule 7 above: both are the shell around the engine, not the engine. The
+consequence is visible in the file list - the runtime stops at `i18n`.
+
+**The step cap and the frame-time clamp are two different brakes.**
+`kMaxFrameTime` (`Application.cpp`) clamps `dt` to 0.1 s, so at 60 Hz a fully
+clamped frame can fund at most **six** 16.7 ms steps. `FixedClock`'s cap is a
+second, independent brake, and the header argues for it at length: with the cap
+binding first, frame time is `cap * step + render` and stays proportional to the
+real cost; without it, a slow step is paid up to six times in a row and the frame
+rate pins itself to a plateau it cannot leave. **A cap above six never binds**,
+which makes it a second value that has to agree with the first.
 
 ---
 

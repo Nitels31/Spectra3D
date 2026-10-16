@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
         }
         if (mesh->num_faces > 0) {
             ufbx_face f = mesh->faces.data[0];
-            printf("  face0: begin=%zu num=%zu\n", f.index_begin,
+                printf("  face0: begin=%zu num=%zu\n", (size_t)f.index_begin,
                    (size_t)f.num_indices);
             if (f.num_indices > 0) {
                 ufbx_vec3 p = ufbx_get_vertex_vec3(&mesh->vertex_position,
