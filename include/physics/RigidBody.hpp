@@ -29,6 +29,13 @@ struct RigidBody {
     Vec3 force;
     Vec3 torque;
 
+    // The state BEFORE the last integration, for render interpolation. A body
+    // drawn at lerp(prevPosition, position, alpha) instead of position moves
+    // smoothly between the fixed 60 Hz physics steps instead of jumping. Only
+    // the visual read uses these; the simulation never does.
+    Vec3 prevPosition;
+    Quat prevOrientation;
+
     // --- shape -------------------------------------------------------------
     Shape shape = Shape::Box;
     Vec3 halfExtents{0.5f, 0.5f, 0.5f};

@@ -114,8 +114,8 @@ void SceneRenderer::beginFrame(int framebufferWidth, int framebufferHeight) {
 }
 
 void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& meshes,
-                                const Camera& camera, const Viewport& viewport,
-                                bool showGrid, bool showVectors) {
+                                 const Camera& camera, const Viewport& viewport,
+                                 bool showGrid, bool showVectors, float alpha) {
     if (viewport.width < 1 || viewport.height < 1) return;
 
     glEnable(GL_SCISSOR_TEST);
@@ -127,7 +127,7 @@ void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& m
     extractFrustum(projection_, view_);
 
     if (showGrid) drawArena(camera);
-    drawBodies(world, meshes);
+    drawBodies(world, meshes, alpha);
 
     if (showVectors) drawDebugVectors(world);
     glEnable(GL_LIGHTING);
@@ -317,13 +317,14 @@ void SceneRenderer::drawDebugVectors(const PhysicsWorld& world) {
 // Draws an imported mesh inside the body transform the caller already installed.
 // Returns false when the body has no usable mesh, so the caller can fall back to
 // its primitive.
-bool SceneRenderer::drawImportedMesh(const RigidBody& body, const MeshRegistry& meshes) {
+bool SceneRenderer::drawImportedMesh(const RigidBody& body, const MeshRegistry& meshes,
+                                      const Quat& orientation) {
     if (!body.hasMesh()) return false;
     const MeshAsset* mesh = meshes.at(body.mesh);
     if (!mesh) return false;
 
     const float scale = body.meshScale * mesh->scale;
-    applyRotation(body.orientation);
+    applyRotation(orientation);
     glScalef(scale, scale, scale);
     glTranslatef(-mesh->center.x, -mesh->center.y, -mesh->center.z);
 
@@ -345,11 +346,23 @@ bool SceneRenderer::drawImportedMesh(const RigidBody& body, const MeshRegistry& 
     return true;
 }
 
-void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& meshes) {
+void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& meshes, float alpha) {
     int paletteIndex = 0;
     for (const RigidBody& body : world.bodies) {
         if (!body.visible) continue;
         if (!sphereVisible(body.position, body.boundRadius)) continue;
+
+        // Interpolated between the state before the last physics step and the
+        // state after it. This is the whole point of the fixed-step accumulator:
+        // physics advances in 1/60 s jumps, and without this a 59.8 Hz display
+        // shows one frozen frame and one double-speed frame every five seconds.
+        // nlerp rather than slerp - the angle between two consecutive 1/60 s
+        // steps is small enough that normalising the lerp is indistinguishable.
+        const Vec3 drawPosition{
+            lerpf(body.prevPosition.x, body.position.x, alpha),
+            lerpf(body.prevPosition.y, body.position.y, alpha),
+            lerpf(body.prevPosition.z, body.position.z, alpha)};
+        const Quat drawOrientation = nlerp(body.prevOrientation, body.orientation, alpha);
 
         const bool hasExplicitColor = body.material.color.x != 0.0f ||
                                       body.material.color.y != 0.0f ||
@@ -362,8 +375,8 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
 
         // Exactly one push/pop per body, whichever path is taken below.
         glPushMatrix();
-        glTranslatef(body.position.x, body.position.y, body.position.z);
-        if (!drawImportedMesh(body, meshes)) {
+        glTranslatef(drawPosition.x, drawPosition.y, drawPosition.z);
+        if (!drawImportedMesh(body, meshes, drawOrientation)) {
             switch (body.shape) {
             case Shape::Sphere: {
                 const float r = body.halfExtents.x;
@@ -372,7 +385,7 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
                 break;
             }
             case Shape::Cylinder: {
-                applyRotation(body.orientation);
+                applyRotation(drawOrientation);
                 glScalef(body.cylinderRadius, body.halfExtents.y, body.cylinderRadius);
                 glCallList(primitives_.cylinder());
                 break;
@@ -380,7 +393,7 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
             case Shape::Capsule: {
                 const float r = body.capsuleRadius;
                 const float halfHeight = body.capsuleHeight * 0.5f;
-                applyRotation(body.orientation);
+                applyRotation(drawOrientation);
                 const float toTop[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, halfHeight, 0, 1};
                 glMultMatrixf(toTop);
                 glScalef(r, r, r);
@@ -396,7 +409,7 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
                 break;
             }
             case Shape::Cone: {
-                applyRotation(body.orientation);
+                applyRotation(drawOrientation);
                 glScalef(body.coneRadius, body.coneHeight * 0.5f, body.coneRadius);
                 glCallList(primitives_.cone());
                 break;
@@ -407,13 +420,13 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
                     (body.shape == Shape::Pyramid) ? body.pyramidBaseRadius : body.prismRadius;
                 const float height =
                     (body.shape == Shape::Pyramid) ? body.pyramidHeight : body.prismHeight;
-                applyRotation(body.orientation);
+                applyRotation(drawOrientation);
                 glScalef(radius, height * 0.5f, radius);
                 glCallList(primitives_.pyramid());
                 break;
             }
             default: {
-                applyRotation(body.orientation);
+                applyRotation(drawOrientation);
                 glScalef(body.halfExtents.x, body.halfExtents.y, body.halfExtents.z);
                 glCallList(primitives_.cube());
                 break;

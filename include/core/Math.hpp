@@ -77,6 +77,20 @@ struct Quat {
     }
 };
 
+// Interpolates two rotations by lerping the components and normalising. Not the
+// shortest-arc path slerp takes, but for the small angle between two consecutive
+// fixed physics steps the difference is invisible, and it is one lerp and one
+// normalise against slerp's trig. Takes the shortest way round: a quaternion and
+// its negation are the same rotation, and lerping the long way would spin the
+// long way.
+inline Quat nlerp(const Quat& a, const Quat& b, float t) {
+    const float d = a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z;
+    const float s = d < 0.0f ? -1.0f : 1.0f;
+    return Quat{lerpf(a.w, b.w * s, t), lerpf(a.x, b.x * s, t),
+                lerpf(a.y, b.y * s, t), lerpf(a.z, b.z * s, t)}
+        .normalized();
+}
+
 inline Vec3 rotate(const Quat& q, const Vec3& v) {
     const Vec3 u{q.x, q.y, q.z};
     const Vec3 t = cross(u, v) * 2.0f;

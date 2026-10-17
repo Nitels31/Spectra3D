@@ -39,6 +39,16 @@ public:
     double step() const { return step_; }
     int maxSteps() const { return maxSteps_; }
 
+    // How far into the NEXT step the accumulator is, 0..1. This is the
+    // interpolation factor: a renderer that draws `lerp(prev, curr, alpha)`
+    // instead of `curr` hides the fact that physics runs at 60 Hz while the
+    // display refreshes at whatever rate it likes. Without it, every frame
+    // where the accumulator does not advance a full step shows the same physics
+    // state twice, and the one where it advances two shows a double jump - a
+    // visible hitch whose period is 1/|refresh - 60| seconds. On a 59.8 Hz
+    // panel that is once every five seconds.
+    double alpha() const { return accumulator_ / step_; }
+
 private:
     double step_;
     int maxSteps_;

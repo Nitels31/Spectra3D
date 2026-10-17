@@ -538,6 +538,7 @@ void Application::updateCameraInput(Window& window, float dt) {
 void Application::updateSimulation(float dt, bool stepping) {
     if (!stepping) {
         clock_.reset();
+        clockAlpha_ = 0.0f;
         return;
     }
 
@@ -550,6 +551,9 @@ void Application::updateSimulation(float dt, bool stepping) {
         world_.step((float)clock_.step());
         simulationTime_ += clock_.step();
     }
+    // Read after the steps: this is how far the accumulator has spilled into the
+    // next step, which is where the body visually is between the last two.
+    clockAlpha_ = (float)clock_.alpha();
 }
 
 void Application::renderScene() {
@@ -562,7 +566,7 @@ void Application::renderScene() {
 
     sceneRenderer_.beginFrame(window_.framebufferWidth(), window_.framebufferHeight());
     sceneRenderer_.renderWorld(world_, meshes_, camera_, glViewport, editor_->showGrid(),
-                               editor_->showVectors());
+                               editor_->showVectors(), clockAlpha_);
     editor_->renderOverlay(sceneRenderer_, world_);
     editor_->renderUi(uiRenderer_, world_, camera_, window_, window_.framebufferWidth(),
                       window_.framebufferHeight());

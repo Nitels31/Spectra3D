@@ -33,9 +33,13 @@ public:
     // strip the layout has not caught up with yet.
     void beginFrame(int framebufferWidth, int framebufferHeight);
 
+    // `alpha` is the fixed-step accumulator's position into the next physics step,
+    // 0..1, from FixedClock::alpha(). A body is drawn at
+    // lerp(prevPosition, position, alpha) so the 60 Hz physics reads as smooth
+    // motion at any refresh rate. 0 reproduces the old behaviour exactly.
     void renderWorld(const PhysicsWorld& world, const MeshRegistry& meshes,
                      const Camera& camera, const Viewport& viewport, bool showGrid,
-                     bool showVectors);
+                     bool showVectors, float alpha);
 
     void renderSelection(const RigidBody& body);
 
@@ -69,12 +73,13 @@ private:
     void setViewMatrix(const Camera& camera);
     void buildArenaGrid();
     void drawArena(const Camera& camera);
-    void drawBodies(const PhysicsWorld& world, const MeshRegistry& meshes);
+    void drawBodies(const PhysicsWorld& world, const MeshRegistry& meshes, float alpha);
     void drawDebugVectors(const PhysicsWorld& world);
 
     void extractFrustum(const float* projection, const float* view);
     bool sphereVisible(const Vec3& center, float radius) const;
-    bool drawImportedMesh(const RigidBody& body, const MeshRegistry& meshes);
+    bool drawImportedMesh(const RigidBody& body, const MeshRegistry& meshes,
+                          const Quat& orientation);
 
     PrimitiveCache primitives_;
     float projection_[16] = {};

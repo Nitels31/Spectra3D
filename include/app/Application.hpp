@@ -92,6 +92,9 @@ private:
     // for, so the value was a second number that had to agree with kMaxFrameTime
     // without agreeing with it.
     FixedClock clock_{60.0, 2};
+    // How far the physics accumulator is into its next step, read by renderScene
+    // so bodies are drawn interpolated between fixed steps rather than at them.
+    float clockAlpha_ = 0.0f;
     // The cap above, named because Application.cpp quotes it in a comment and a
     // hook budget is the thing that has to be reasoned about.
     static constexpr int kMaxStepsPerRenderedFrame = 2;

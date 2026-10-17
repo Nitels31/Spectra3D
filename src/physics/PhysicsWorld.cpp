@@ -370,6 +370,11 @@ currentStepDt_ = dt;
 
     for (RigidBody& b : bodies) {
         if (b.asleep || b.material.isStatic) continue;
+        // Saved before the integration so the renderer can interpolate between
+        // the state before this step and the state after it. Bodies that did not
+        // move have prev == curr, and the interpolation is a no-op for them.
+        b.prevPosition = b.position;
+        b.prevOrientation = b.orientation;
         b.position += b.velocity * dt;
         b.orientation = integrate(b.orientation, b.angularVelocity, dt);
 
