@@ -50,7 +50,9 @@ below it.
                     |
                    core     Math, Log, Str, Project
 
-   third_party/     glfw, freetype, cgltf, rapidobj, miniply, ufbx, angelscript
+   third_party/     glfw, freetype, angelscript, miniaudio,
+                models_lib/ (cgltf, rapidobj, miniply, ufbx),
+                stb/ (stb_image, stb_vorbis), json/
 ```
 
 `ui` sits above `render` because `UiContext.hpp` takes `Rect` and `Color` from

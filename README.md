@@ -36,8 +36,9 @@ include/             every engine header, same layer split + json/
                      #include "core/Log.hpp" - no ../)
   json/json.hpp      header-only nlohmann/json, target spectra_json
 
-third_party/         glfw, cgltf, rapidobj, miniply, ufbx, freetype, angelscript,
-                     miniaudio, stb_vorbis
+third_party/         glfw, freetype, angelscript, miniaudio,
+                    models_lib/ (cgltf, rapidobj, miniply, ufbx),
+                    stb/ (stb_image, stb_vorbis), json/
 assets/              lang/*.lang, image/{icons,textures}/*, models/*.{glb,obj,ply,fbx}
 tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp - standalone
                      utilities for reading assets and checking the scripting
@@ -921,18 +922,29 @@ below is under a permissive, GPL-compatible license, so nothing here pulls the
 project away from Apache-2.0. The full text of each license ships with the component
 under `third_party/`.
 
+`third_party/` is grouped by what a component is **for**, not by one folder per
+project: `models_lib/` holds everything that turns a model file into vertices,
+`stb/` holds the public-domain single-header libraries, and `json/` the vendored
+header-only JSON parser.
+
 | Component | Version | License | Text |
 |---|---|---|---|
 | GLFW | 3.5.1 | zlib | `third_party/glfw/LICENSE.md` |
-| cgltf | - | MIT | `third_party/cgltf/LICENSE` |
-| rapidobj | - | MIT | `third_party/rapidobj/LICENSE` |
-| miniply | - | MIT | `third_party/miniply/LICENSE` |
-| ufbx | - | MIT | `third_party/ufbx/LICENSE` |
+| cgltf | - | MIT | `third_party/models_lib/cgltf/LICENSE` |
+| rapidobj | - | MIT | `third_party/models_lib/rapidobj/LICENSE` |
+| miniply | - | MIT | `third_party/models_lib/miniply/LICENSE.md` |
+| ufbx | - | MIT | `third_party/models_lib/ufbx/LICENSE` |
 | FreeType | 2.14.3 | FTL | `FTL.txt` (full text), `third_party/freetype/LICENSE.TXT` |
 | AngelScript | 2.38.0 | zlib | inside `third_party/angelscript/SDK-2.38.0.zip` |
-| nlohmann/json | 3.12.0 | MIT | `include/json/json.hpp` |
+| nlohmann/json | 3.12.0 | MIT | `third_party/json/json.hpp` |
 | miniaudio | 0.11.25 | public domain **or** MIT-0 | `third_party/miniaudio/miniaudio.h` |
-| stb_vorbis | 1.22 | public domain **or** MIT-0 | end of `third_party/stb_vorbis/stb_vorbis.c` |
+| stb_image | - | public domain **or** MIT-0 | `third_party/stb/LICENSE` (one file for the whole family) |
+| stb_vorbis | 1.22 | public domain **or** MIT-0 | `third_party/stb/LICENSE` (same) |
+
+Every stb library is released under the identical public-domain **or** MIT-0 terms,
+so `third_party/stb/LICENSE` is the single text covering `stb/` as a whole - it is
+not a copy that could drift from the individual libraries, and no `stb_image.h` or
+`stb_vorbis.c` carries a second copy of it.
 
 miniaudio embeds dr_wav, dr_flac and dr_mp3 itself but **not** stb_vorbis: its
 Vorbis backend is behind `STB_VORBIS_INCLUDE_STB_VORBIS_H` in the header, so `.ogg`

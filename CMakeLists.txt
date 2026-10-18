@@ -143,27 +143,31 @@ if(NOT MSVC)
     target_compile_options(spectra_freetype PRIVATE -w)
 endif()
 
-# Model loaders: ufbx for FBX, miniply for PLY, cgltf and rapidobj straight from
-# their headers where a target would carry no compiled code.
-add_library(spectra_ufbx STATIC third_party/ufbx/ufbx.c)
-target_include_directories(spectra_ufbx SYSTEM PUBLIC third_party/ufbx)
+# Model loaders, all four under models_lib: ufbx for FBX, miniply for PLY, cgltf
+# and rapidobj straight from their headers where a target would carry no compiled
+# code. One folder for "things that turn a model file into vertices", so adding a
+# fifth loader does not mean another top-level directory.
+add_library(spectra_ufbx STATIC third_party/models_lib/ufbx/ufbx.c)
+target_include_directories(spectra_ufbx SYSTEM PUBLIC third_party/models_lib/ufbx)
 
-add_library(spectra_miniply STATIC third_party/miniply/miniply.cpp)
-target_include_directories(spectra_miniply SYSTEM PUBLIC third_party/miniply)
+add_library(spectra_miniply STATIC third_party/models_lib/miniply/miniply.cpp)
+target_include_directories(spectra_miniply SYSTEM PUBLIC third_party/models_lib/miniply)
 
 # Header-only dependencies get an INTERFACE target rather than a bare -I. There is
 # nothing to compile, only a directory to add, but the name keeps the include in
 # the same shape as every other dependency's.
 add_library(spectra_gltf INTERFACE)
-target_include_directories(spectra_gltf SYSTEM INTERFACE third_party/cgltf)
+target_include_directories(spectra_gltf SYSTEM INTERFACE third_party/models_lib/cgltf)
 
 add_library(spectra_obj INTERFACE)
-target_include_directories(spectra_obj SYSTEM INTERFACE third_party/rapidobj)
+target_include_directories(spectra_obj SYSTEM INTERFACE third_party/models_lib/rapidobj)
 
-# nlohmann/json, vendored as a single header. Reached as "json/json.hpp", the same
-# path every other dependency has.
+# nlohmann/json, vendored as a single header under third_party/json. Reached as
+# "json/json.hpp" - the include directory is third_party itself, so the header
+# keeps its folder name as its first path component exactly as it did while it
+# lived under include/.
 add_library(spectra_json INTERFACE)
-target_include_directories(spectra_json SYSTEM INTERFACE ${SPECTRA_INCLUDE})
+target_include_directories(spectra_json SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
 # ---------------------------------------------------------------------------
 # Scripting
@@ -425,7 +429,7 @@ add_custom_command(TARGET spectra3d POST_BUILD
 
 if(SPECTRA_BUILD_TOOLS)
     add_executable(glbinfo tools/glbinfo.cpp)
-    target_include_directories(glbinfo PRIVATE third_party/cgltf)
+    target_include_directories(glbinfo PRIVATE third_party/models_lib/cgltf)
     spectra_warnings(glbinfo)
 
     add_executable(fbxtest tools/fbxtest.cpp)
