@@ -34,30 +34,34 @@ bool finalize(MeshAsset& asset) {
 }
 
 void generateFlatNormals(MeshPart& part) {
+    constexpr int kS = kMeshVertexFloats;
+    constexpr int kN = kMeshNormalOffset;
     for (size_t t = 0; t + 2 < part.indices.size(); t += 3) {
-        const unsigned a = part.indices[t] * 6;
-        const unsigned b = part.indices[t + 1] * 6;
-        const unsigned c = part.indices[t + 2] * 6;
+        const unsigned a = part.indices[t] * kS;
+        const unsigned b = part.indices[t + 1] * kS;
+        const unsigned c = part.indices[t + 2] * kS;
         const Vec3 p0{part.vertices[a], part.vertices[a + 1], part.vertices[a + 2]};
         const Vec3 p1{part.vertices[b], part.vertices[b + 1], part.vertices[b + 2]};
         const Vec3 p2{part.vertices[c], part.vertices[c + 1], part.vertices[c + 2]};
         const Vec3 n = cross(p1 - p0, p2 - p0).normalized();
-        part.vertices[a + 3] = n.x;
-        part.vertices[a + 4] = n.y;
-        part.vertices[a + 5] = n.z;
-        part.vertices[b + 3] = n.x;
-        part.vertices[b + 4] = n.y;
-        part.vertices[b + 5] = n.z;
-        part.vertices[c + 3] = n.x;
-        part.vertices[c + 4] = n.y;
-        part.vertices[c + 5] = n.z;
+        part.vertices[a + kN + 0] = n.x;
+        part.vertices[a + kN + 1] = n.y;
+        part.vertices[a + kN + 2] = n.z;
+        part.vertices[b + kN + 0] = n.x;
+        part.vertices[b + kN + 1] = n.y;
+        part.vertices[b + kN + 2] = n.z;
+        part.vertices[c + kN + 0] = n.x;
+        part.vertices[c + kN + 1] = n.y;
+        part.vertices[c + kN + 2] = n.z;
     }
 }
 
 void generateFlatNormalsIfMissing(MeshPart& part) {
-    for (size_t i = 0; i + 5 < part.vertices.size(); i += 6)
-        if (part.vertices[i + 3] == 0.0f && part.vertices[i + 4] == 0.0f &&
-            part.vertices[i + 5] == 0.0f) {
+    constexpr int kS = kMeshVertexFloats;
+    constexpr int kN = kMeshNormalOffset;
+    for (size_t i = 0; i + kS - 1 < part.vertices.size(); i += kS)
+        if (part.vertices[i + kN + 0] == 0.0f && part.vertices[i + kN + 1] == 0.0f &&
+            part.vertices[i + kN + 2] == 0.0f) {
             generateFlatNormals(part);
             return;
         }

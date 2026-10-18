@@ -81,18 +81,23 @@ bool readPlyGeometry(const std::string& path, MeshAsset& asset) {
 
     if (!vertexCount || faceIndices.empty()) return false;
 
-    part.vertices.resize((size_t)vertexCount * 6);
+    part.vertices.resize((size_t)vertexCount * kMeshVertexFloats);
     meshutil::BoundsBox box;
     for (uint32_t v = 0; v < vertexCount; ++v) {
+        constexpr int kS = kMeshVertexFloats;
         const Vec3 p{positions[v * 3 + 0], positions[v * 3 + 1], positions[v * 3 + 2]};
-        part.vertices[v * 6 + 0] = p.x;
-        part.vertices[v * 6 + 1] = p.y;
-        part.vertices[v * 6 + 2] = p.z;
+        part.vertices[v * kS + 0] = p.x;
+        part.vertices[v * kS + 1] = p.y;
+        part.vertices[v * kS + 2] = p.z;
         if (hasNormals) {
-            part.vertices[v * 6 + 3] = normals[v * 3 + 0];
-            part.vertices[v * 6 + 4] = normals[v * 3 + 1];
-            part.vertices[v * 6 + 5] = normals[v * 3 + 2];
+            part.vertices[v * kS + kMeshNormalOffset + 0] = normals[v * 3 + 0];
+            part.vertices[v * kS + kMeshNormalOffset + 1] = normals[v * 3 + 1];
+            part.vertices[v * kS + kMeshNormalOffset + 2] = normals[v * 3 + 2];
         }
+        // PLY can carry s,t per vertex and this reader does not ask for them, so
+        // the texcoord stays (0,0): resize() has already zeroed it. Leaving it
+        // implicit is the point of the fixed stride - a mesh with no UVs is not a
+        // different layout, just the same one with nothing in those two floats.
         box.add(p);
     }
     meshutil::includeBounds(asset, box);

@@ -297,6 +297,9 @@ void Application::openProject(const ProjectInfo& project) {
     camera_.fovDeg = project_.cameraFov;
 
     const std::string scenePath = ProjectLibrary::scenePath(project_);
+    // Before the scene is read: loading a model is what pulls its textures in, so
+    // the mesh registry needs to know where to put them.
+    meshes_.setTextureRegistry(&textures_);
     if (fs::exists(scenePath)) {
         // A missing or empty scene is a fresh project, not an error.
         scenes::load(world_, meshes_, scenePath);
@@ -565,8 +568,8 @@ void Application::renderScene() {
     glViewport.height = (int)viewport.height;
 
     sceneRenderer_.beginFrame(window_.framebufferWidth(), window_.framebufferHeight());
-    sceneRenderer_.renderWorld(world_, meshes_, camera_, glViewport, editor_->showGrid(),
-                               editor_->showVectors(), clockAlpha_);
+    sceneRenderer_.renderWorld(world_, meshes_, textures_, camera_, glViewport,
+                               editor_->showGrid(), editor_->showVectors(), clockAlpha_);
     editor_->renderOverlay(sceneRenderer_, world_);
     editor_->renderUi(uiRenderer_, world_, camera_, window_, window_.framebufferWidth(),
                       window_.framebufferHeight());

@@ -87,6 +87,10 @@ void appendMesh(ufbx_node* node, MeshAsset& asset) {
 
     const bool hasNormals =
         mesh->vertex_normal.values.data && mesh->vertex_normal.indices.data;
+    // Same test as the normals: the attribute has to carry both the value array
+    // and the corner-to-vertex index array, or there is nothing to read.
+    const bool hasTexcoords =
+        mesh->vertex_uv.values.data && mesh->vertex_uv.indices.data;
 
     // Exact triangle count before writing anything. FBX meshes index per face
     // corner, so geometry is duplicated per triangle and the result stays a
@@ -101,7 +105,7 @@ void appendMesh(ufbx_node* node, MeshAsset& asset) {
     }
     if (!triangles) return;
 
-    part.vertices.resize(triangles * 18);
+    part.vertices.resize(triangles * kMeshVertexFloats * 3);
     part.indices.resize(triangles * 3);
     float* const verts = part.vertices.data();
     float* v = verts;
@@ -117,7 +121,7 @@ void appendMesh(ufbx_node* node, MeshAsset& asset) {
         const ufbx_face face = mesh->faces.data[f];
         if (face.num_indices < 3) continue;
         for (size_t k = 1; k + 1 < face.num_indices; ++k) {
-            const unsigned base = (unsigned)((v - verts) / 6);
+            const unsigned base = (unsigned)((v - verts) / kMeshVertexFloats);
             idx[0] = base;
             idx[1] = base + 1;
             idx[2] = base + 2;
@@ -135,14 +139,24 @@ void appendMesh(ufbx_node* node, MeshAsset& asset) {
                 box.add(Vec3{worldPos[0], worldPos[1], worldPos[2]});
                 if (hasNormals) {
                     const ufbx_vec3 n = ufbx_get_vertex_vec3(&mesh->vertex_normal, corners[c]);
-                    transformDirection(&normalMatrix, n.x, n.y, n.z, v + 3);
-                    zeroNormalVertex |= v[3] == 0.0f && v[4] == 0.0f && v[5] == 0.0f;
+                    transformDirection(&normalMatrix, n.x, n.y, n.z, v + kMeshNormalOffset);
+                    zeroNormalVertex |= v[kMeshNormalOffset + 0] == 0.0f &&
+                                        v[kMeshNormalOffset + 1] == 0.0f &&
+                                        v[kMeshNormalOffset + 2] == 0.0f;
                 } else {
-                    v[3] = 0.0f;
-                    v[4] = 0.0f;
-                    v[5] = 0.0f;
+                    v[kMeshNormalOffset + 0] = 0.0f;
+                    v[kMeshNormalOffset + 1] = 0.0f;
+                    v[kMeshNormalOffset + 2] = 0.0f;
                 }
-                v += 6;
+                // FBX UVs are read as ufbx hands them over. ufbx exposes the raw set; the V
+                    // flip to GL's bottom-left origin is done at upload, not here,
+                    // so a model keeps the coordinates its file actually has.
+                if (hasTexcoords) {
+                    const ufbx_vec2 t = ufbx_get_vertex_vec2(&mesh->vertex_uv, corners[c]);
+                    v[kMeshTexCoordOffset + 0] = t.x;
+                    v[kMeshTexCoordOffset + 1] = t.y;
+                }
+                v += kMeshVertexFloats;
             }
         }
     }

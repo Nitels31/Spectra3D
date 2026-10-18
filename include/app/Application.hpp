@@ -3,6 +3,7 @@
 #include <string>
 
 #include "assets/MeshRegistry.hpp"
+#include "assets/TextureRegistry.hpp"
 #include "core/Project.hpp"
 #include "editor/Editor.hpp"
 #include "i18n/Localizer.hpp"
@@ -67,6 +68,10 @@ private:
     Window window_;
     PhysicsWorld world_;
     MeshRegistry meshes_;
+    // Owned here rather than by the renderer: a texture outlives any one frame
+    // and is shared by every body that uses the same image, so it belongs next to
+    // the model registry and not inside the thing that draws.
+    TextureRegistry textures_;
     i18n::Localizer localizer_;
     Camera camera_;
     SceneRenderer sceneRenderer_;

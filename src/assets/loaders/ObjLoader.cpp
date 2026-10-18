@@ -35,9 +35,16 @@ bool loadObj(const std::string& path, MeshAsset& out) {
 
     MeshAsset asset;
     meshutil::resetBounds(asset);
+    // OBJ texture references are relative to the .obj itself, so its directory is
+    // the base every map_Kd is resolved against.
+    const std::string baseDir = std::filesystem::path(path).parent_path().string();
 
     const float* positions = result.attributes.positions.data();
     const float* normals = result.attributes.normals.data();
+    // rapidobj calls these texcoords and stores them as vec2, but reads them
+    // through the same attribute accessors as positions. Absent on a model with
+    // no vt lines, which is why every use below is guarded.
+    const float* texcoords = result.attributes.texcoords.data();
 
     // Bounds reduce locally and fold into the asset once per shape.
     meshutil::BoundsBox box;
@@ -74,6 +81,16 @@ bool loadObj(const std::string& path, MeshAsset& out) {
                     part.color[0] = result.materials[material].diffuse[0];
                     part.color[1] = result.materials[material].diffuse[1];
                     part.color[2] = result.materials[material].diffuse[2];
+                    // map_Kd is the diffuse colour map - the one that actually
+                    // shows, so it is the one worth reading. The others (Ka, Ks,
+                    // bump) need a different material response to be visible.
+                    const std::string& map = result.materials[material].diffuse_texname;
+                    if (!map.empty()) {
+                        part.texture = (int)asset.texturePaths.size();
+                        asset.texturePaths.push_back(
+                            baseDir.empty() ? map
+                                            : (std::filesystem::path(baseDir) / map).string());
+                    }
                 }
                 slots.emplace_back(material, asset.parts.size());
                 counts.push_back(0);
@@ -83,7 +100,7 @@ bool loadObj(const std::string& path, MeshAsset& out) {
         }
         for (size_t slot = 0; slot < slots.size(); ++slot) {
             MeshPart& part = asset.parts[slots[slot].second];
-            part.vertices.resize(counts[slot] * 18);
+            part.vertices.resize(counts[slot] * kMeshVertexFloats);
             part.indices.resize(counts[slot] * 3);
         }
 
@@ -97,7 +114,7 @@ bool loadObj(const std::string& path, MeshAsset& out) {
             const size_t first = cursor[slot];
             cursor[slot] += 3;
 
-            float* v = part.vertices.data() + first * 6;
+            float* v = part.vertices.data() + first * kMeshVertexFloats;
             for (int k = 0; k < 3; ++k) {
                 const rapidobj::Index& index = indices[t + k];
                 const int p = index.position_index * 3;
@@ -107,16 +124,29 @@ bool loadObj(const std::string& path, MeshAsset& out) {
                 v[2] = worldPos.z;
                 if (normals && index.normal_index >= 0) {
                     const int n = index.normal_index * 3;
-                    v[3] = normals[n + 0];
-                    v[4] = normals[n + 1];
-                    v[5] = normals[n + 2];
+                    v[kMeshNormalOffset + 0] = normals[n + 0];
+                    v[kMeshNormalOffset + 1] = normals[n + 1];
+                    v[kMeshNormalOffset + 2] = normals[n + 2];
                 } else {
-                    v[3] = 0.0f;
-                    v[4] = 0.0f;
-                    v[5] = 0.0f;
+                    v[kMeshNormalOffset + 0] = 0.0f;
+                    v[kMeshNormalOffset + 1] = 0.0f;
+                    v[kMeshNormalOffset + 2] = 0.0f;
+                }
+                // (0,0) when the model has no vt, or this corner references one
+                // that does not exist. A vertex without UVs gets every texel from
+                // one corner of the image, which is the same as having no texture
+                // bound - so a model that is not textured yet draws exactly as it
+                // did before rather than picking up a colour out of the map.
+                if (texcoords && index.texcoord_index >= 0) {
+                    const int t2 = index.texcoord_index * 2;
+                    v[kMeshTexCoordOffset + 0] = texcoords[t2 + 0];
+                    v[kMeshTexCoordOffset + 1] = texcoords[t2 + 1];
+                } else {
+                    v[kMeshTexCoordOffset + 0] = 0.0f;
+                    v[kMeshTexCoordOffset + 1] = 0.0f;
                 }
                 box.add(worldPos);
-                v += 6;
+                v += kMeshVertexFloats;
             }
 
             unsigned* idx = part.indices.data() + (t / 3) * 3;

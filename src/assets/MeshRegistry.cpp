@@ -1,5 +1,6 @@
 #include "assets/MeshRegistry.hpp"
 
+#include "assets/TextureRegistry.hpp"
 #include "core/Log.hpp"
 #include "core/Str.hpp"
 #include "assets/MeshImport.hpp"
@@ -32,6 +33,16 @@ int MeshRegistry::importFile(const std::string& path, bool quiet) {
     Log::info("Imported mesh '%s': %d parts, %d triangles%s", name.c_str(),
               (int)asset.parts.size(), (int)asset.triangleCount(),
               asset.scale != 1.0f ? " (auto-fitted)" : "");
+
+    // Now that a GL context exists, turn the paths the loader could only record
+    // into real indices. Quiet: a missing map leaves the part untextured and the
+    // model still draws, which the loader's own log has already explained.
+    if (textures_ && !asset.texturePaths.empty())
+        for (MeshPart& part : asset.parts)
+            if (part.texture >= 0 && part.texture < (int)asset.texturePaths.size())
+                part.texture = textures_->loadFile(asset.texturePaths[(size_t)part.texture],
+                                                   true);
+
     return importMesh(std::move(asset));
 }
 

@@ -169,6 +169,13 @@ target_include_directories(spectra_obj SYSTEM INTERFACE third_party/models_lib/r
 add_library(spectra_json INTERFACE)
 target_include_directories(spectra_json SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
+# stb_image, for reading PNG/JPEG/BMP into GL. The vendored copy is under
+# third_party/stb/stb_image, reached as <stb_image.h>; one include directory for
+# the family, matching how the libraries are laid out.
+add_library(spectra_stb INTERFACE)
+target_include_directories(spectra_stb SYSTEM INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb/stb_image)
+
 # ---------------------------------------------------------------------------
 # Scripting
 # ---------------------------------------------------------------------------
@@ -266,6 +273,7 @@ set(SPECTRA_SRC_RENDER
 set(SPECTRA_SRC_ASSETS
     src/assets/MeshImport.cpp
     src/assets/MeshRegistry.cpp
+    src/assets/TextureRegistry.cpp
     src/assets/MeshUtil.cpp
     src/assets/loaders/GltfLoader.cpp
     src/assets/loaders/ObjLoader.cpp
@@ -330,6 +338,7 @@ target_link_libraries(spectra_runtime PUBLIC
     spectra_gltf
     spectra_obj
     spectra_json
+    spectra_stb
 )
 if(SPECTRA_SCRIPTING)
     target_compile_definitions(spectra_runtime PUBLIC SPECTRA_SCRIPTING=1)

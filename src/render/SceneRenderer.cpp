@@ -65,6 +65,12 @@ void SceneRenderer::initialize(const Vec3& arenaMin, const Vec3& arenaMax) {
     glEnable(GL_COLOR_MATERIAL);
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
 
+    // MODULATE, not REPLACE: the lit colour multiplies the texture, so a texture
+    // still darkens and tints with the light instead of glowing flat. Set once
+    // here rather than per draw call - it is part of the texture state that
+    // drawImportedMesh toggles GL_TEXTURE_2D around.
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+
     primitives_.build(arenaMin, arenaMax);
     buildArenaGrid();
 }
@@ -114,8 +120,9 @@ void SceneRenderer::beginFrame(int framebufferWidth, int framebufferHeight) {
 }
 
 void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& meshes,
-                                 const Camera& camera, const Viewport& viewport,
-                                 bool showGrid, bool showVectors, float alpha) {
+                                 const TextureRegistry& textures, const Camera& camera,
+                                 const Viewport& viewport, bool showGrid,
+                                 bool showVectors, float alpha) {
     if (viewport.width < 1 || viewport.height < 1) return;
 
     glEnable(GL_SCISSOR_TEST);
@@ -127,7 +134,7 @@ void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& m
     extractFrustum(projection_, view_);
 
     if (showGrid) drawArena(camera);
-    drawBodies(world, meshes, alpha);
+    drawBodies(world, meshes, textures, alpha);
 
     if (showVectors) drawDebugVectors(world);
     glEnable(GL_LIGHTING);
@@ -318,7 +325,7 @@ void SceneRenderer::drawDebugVectors(const PhysicsWorld& world) {
 // Returns false when the body has no usable mesh, so the caller can fall back to
 // its primitive.
 bool SceneRenderer::drawImportedMesh(const RigidBody& body, const MeshRegistry& meshes,
-                                      const Quat& orientation) {
+                                      const TextureRegistry& textures, const Quat& orientation) {
     if (!body.hasMesh()) return false;
     const MeshAsset* mesh = meshes.at(body.mesh);
     if (!mesh) return false;
@@ -328,25 +335,46 @@ bool SceneRenderer::drawImportedMesh(const RigidBody& body, const MeshRegistry& 
     glScalef(scale, scale, scale);
     glTranslatef(-mesh->center.x, -mesh->center.y, -mesh->center.z);
 
+    const size_t stride = sizeof(float) * kMeshVertexFloats;
+
     glEnableClientState(GL_VERTEX_ARRAY);
     glEnableClientState(GL_NORMAL_ARRAY);
     for (const MeshPart& part : mesh->parts) {
         glColor3f(part.color[0], part.color[1], part.color[2]);
-        glVertexPointer(3, GL_FLOAT, 24, part.vertices.data());
-        glNormalPointer(GL_FLOAT, 24, part.vertices.data() + 3);
+        glVertexPointer(3, GL_FLOAT, (GLsizei)stride, part.vertices.data() + kMeshPositionOffset);
+        glNormalPointer(GL_FLOAT, (GLsizei)stride,
+                        part.vertices.data() + kMeshNormalOffset);
+
+        // Texturing is per part, so a model with one mapped material and one flat
+        // one draws both in the same loop - the flat part just binds 0, which is
+        // what makes GL_MODULATE with an unbound texture reproduce the flat colour
+        // exactly as before.
+        const unsigned tex = textures.at(part.texture);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glEnable(GL_TEXTURE_2D);
+        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+        glTexCoordPointer(2, GL_FLOAT, (GLsizei)stride,
+                          part.vertices.data() + kMeshTexCoordOffset);
+
         if (!part.indices.empty()) {
             glDrawElements(GL_TRIANGLES, (GLsizei)part.indices.size(), GL_UNSIGNED_INT,
                            part.indices.data());
         } else {
-            glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(part.vertices.size() / 6));
+            glDrawArrays(GL_TRIANGLES, 0,
+                         (GLsizei)(part.vertices.size() / kMeshVertexFloats));
         }
+
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        glDisable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, 0);
     }
     glDisableClientState(GL_VERTEX_ARRAY);
     glDisableClientState(GL_NORMAL_ARRAY);
     return true;
 }
 
-void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& meshes, float alpha) {
+void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& meshes,
+                               const TextureRegistry& textures, float alpha) {
     int paletteIndex = 0;
     for (const RigidBody& body : world.bodies) {
         if (!body.visible) continue;
@@ -376,7 +404,7 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
         // Exactly one push/pop per body, whichever path is taken below.
         glPushMatrix();
         glTranslatef(drawPosition.x, drawPosition.y, drawPosition.z);
-        if (!drawImportedMesh(body, meshes, drawOrientation)) {
+        if (!drawImportedMesh(body, meshes, textures, drawOrientation)) {
             switch (body.shape) {
             case Shape::Sphere: {
                 const float r = body.halfExtents.x;
