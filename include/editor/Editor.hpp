@@ -430,6 +430,12 @@ private:
                     int fbWidth);
     // Dropdowns and the panels hanging off the top bar, drawn last so they can
     // overlap the panels below.
+    // Registers every open overlay's rectangle with the guard, in draw order and
+    // without drawing anything. Runs before the panels so a click under a dropdown
+    // is already suppressed when their hit tests run; drawTopBarOverlay() then
+    // paints the same rectangles. Kept separate because the hit test happens in the
+    // middle of the frame and the surfaces on top have to be known by then.
+    void declareTopBarOverlays(UiRenderer& ui, int fbWidth, int fbHeight, int bodyCount);
     void drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
                            int fbWidth, int fbHeight);
     // The centred dialogs: New Scene, Open Scene, Save As, Build Settings and the

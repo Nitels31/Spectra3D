@@ -138,6 +138,80 @@ void drawTick(UiRenderer& ui, const Rect& row, const Color& color) {
 // this pass, because the rows here are what the user was aiming at. A press that
 // opens a panel must not also act on it, which is what overlayOpenedThisFrame_ is
 // for.
+// Registers every open overlay's rectangle with the guard, in draw order, without
+// drawing anything. Runs BEFORE the panels so a click under a dropdown is already
+// suppressed when their hit tests run; drawTopBarOverlay() then paints the same
+// rectangles. Split from the draw on purpose: the hit test happens in the middle of
+// the frame, and what is on top has to be known by then.
+//
+// The rectangles are measured here rather than reused from the draw pass, because
+// the two passes are far apart in the frame. They read the same layout_, so they
+// cannot disagree - and a menu that scrolls changes shape between them, which is
+// why the scroll is applied to both.
+void Editor::declareTopBarOverlays(UiRenderer& ui, int fbWidth, int fbHeight, int bodyCount) {
+    ui_.overlays().clear();
+    if (openMenu_ < 0 && !layersOpen_ && helpPage_ == 0 && toolbarSearch_.empty()) return;
+
+    if (helpPage_ != 0) {
+        const bool about = helpPage_ == 2;
+        const int lines = about ? 4 : 7;
+        const float height =
+            kPanelPadding * 2.0f + 30.0f + (float)lines * kHelpLineHeight + 26.0f;
+        ui_.overlays().push((float)fbWidth * 0.5f - kHelpPanelWidth * 0.5f,
+                            (float)fbHeight * 0.5f - height * 0.5f, kHelpPanelWidth, height);
+    }
+
+    if (openMenu_ >= 0) {
+        float captionX = 6.0f;
+        for (int i = 0; i < openMenu_; ++i) captionX += ui.textWidth(menuCaption(i)) + 18.0f;
+
+        const int count = menuRowCount(openMenu_);
+        float width = kMenuPanelWidthMin;
+        for (int i = 0; i < count; ++i) {
+            const MenuRow& row = menuRow(openMenu_, i);
+            if (row.separator || !row.text) continue;
+            width = std::fmax(width, ui.textWidth(row.text) + 34.0f);
+        }
+        width = std::fmin(width, kMenuPanelWidthMax);
+
+        const float panelY = layout_.menuBar.y + layout_.menuBar.height - 1.0f;
+        const float available =
+            std::fmax(3.0f * kMenuRowHeight, (float)fbHeight - panelY - 8.0f);
+        const int visible =
+            std::clamp((int)((available - kPanelPadding * 2.0f) / kMenuRowHeight), 1, count);
+        const int shown = std::min(count, visible);
+        const int hidden = count - shown;
+
+        // The height is the same whatever row the list is scrolled to - only the
+        // contents move - so the rectangle does not need `first` at all. That is
+        // what lets this function skip measuring the rows a second time.
+        const int rows = shown + (hidden > 0 ? 1 : 0);
+        ui_.overlays().push(captionX, panelY, width,
+                            kPanelPadding * 2.0f + (float)rows * kMenuRowHeight);
+    }
+
+    if (layersOpen_) {
+        const int total = std::max(1, bodyCount);
+        const int rows = std::min(total, kMaxLayerRows);
+        const float footer = total > rows ? kLayerRowHeight : 0.0f;
+        const float height = 24.0f + (float)rows * kLayerRowHeight + footer + kPanelPadding;
+        const Rect anchor = layersAnchor_.width > 0.0f ? layersAnchor_ : layersButton_;
+        const float panelX = std::fmax(
+            4.0f, std::fmin(anchor.x, (float)fbWidth - kLayersPanelWidth - 4.0f));
+        ui_.overlays().push(panelX, layout_.menuBar.y + layout_.menuBar.height - 1.0f,
+                            kLayersPanelWidth, height);
+    }
+
+    if (!toolbarSearch_.empty()) {
+        // Non-blocking: the search list is a suggestion. A click that misses it
+        // belongs to the scene behind it, not to nothing at all.
+        ui_.overlays().push(OverlayRect{
+            searchField_.x, layout_.menuBar.y + layout_.menuBar.height - 1.0f,
+            searchField_.width > 0.0f ? searchField_.width : 160.0f,
+            kPanelPadding * 2.0f + 3.0f * kRowHeight, false});
+    }
+}
+
 void Editor::drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& camera,
                                Window& window, int fbWidth, int fbHeight) {
     if (openMenu_ < 0 && !layersOpen_ && helpPage_ == 0 && toolbarSearch_.empty()) return;
