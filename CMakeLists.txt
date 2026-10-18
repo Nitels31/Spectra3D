@@ -411,6 +411,26 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${SPECTRA_GLFW_DLL}" "$<TARGET_FILE_DIR:spectra3d>"
         COMMENT "Staging glfw3.dll")
+
+    # The MinGW runtime DLLs, next to the binary for the same reason - and with
+    # more force, because a missing one does not always fail here. It fails on the
+    # machine that runs it: the loader finds an older libstdc++-6.dll from another
+    # MinGW on PATH, binds the executable to it, and then reports a missing
+    # _ZSt... symbol in the executable rather than in the library that is wrong.
+    # Shipping them means the binary finds its own runtime first, whichever MinGW
+    # installations the machine happens to have.
+    get_filename_component(SPECTRA_TOOLCHAIN_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    if(EXISTS "${SPECTRA_TOOLCHAIN_BIN}")
+        foreach(runtime_lib libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
+            if(EXISTS "${SPECTRA_TOOLCHAIN_BIN}/${runtime_lib}")
+                add_custom_command(TARGET spectra3d POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${SPECTRA_TOOLCHAIN_BIN}/${runtime_lib}"
+                            "$<TARGET_FILE_DIR:spectra3d>"
+                    COMMENT "Staging ${runtime_lib}")
+            endif()
+        endforeach()
+    endif()
 elseif(APPLE)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GLFW REQUIRED glfw3)
