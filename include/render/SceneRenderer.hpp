@@ -65,19 +65,33 @@ public:
     const Skybox& sky() const { return sky_; }
 
 private:
-    // The arena grid geometry is fixed: 201 candidate lines from -100..100 on
-    // both X and Z, with v == 0 skipped because the world axes are drawn as
-    // their own pair of coloured segments. Each surviving line contributes two
-    // segments (4 vertices), and the three world axes add 6 more vertices
+    // The arena grid geometry is fixed. It is drawn in two parts, because one
+    // part cannot be both fine and endless: the minor lines are one unit
+    // apart and are only worth drawing near the camera, and the major lines
+    // are ten units apart and carry the grid out to the horizon.
+    //
+    // Every line is cut into short segments, so that each segment can have its
+    // own transparency. A line drawn as one long segment can only be faded as
+    // a whole, and a line faded as a whole either ends at an edge or is too
+    // dark at its far end.
+    //
+    // The three world axes are drawn on top of the grid at the world origin
     // (X red, Y green, Z blue - the same colours the gizmo and the navigation
     // balls use, so the world axes and the handles agree).
     struct ArenaGrid {
-        static constexpr int kSteps = 201;         // -100, -99, ... 100
-        static constexpr int kLines = kSteps - 1;  // v == 0 is skipped
-        static constexpr int kGridVertices = kLines * 4;
+        // Minor lines: one unit apart, a patch of 60 units around the camera,
+        // cut into segments of 6 units.
+        static constexpr int kMinorSteps = 121;
+        static constexpr int kMinorSegments = 20;
+        static constexpr int kMinorVertices = kMinorSteps * 2 * kMinorSegments * 2;
+        // Major lines: ten units apart, a patch of 400 units around the
+        // camera, cut into segments of 40 units.
+        static constexpr int kMajorSteps = 81;
+        static constexpr int kMajorSegments = 20;
+        static constexpr int kMajorVertices = kMajorSteps * 2 * kMajorSegments * 2;
         static constexpr int kAxisVertices = 6;
+        static constexpr int kGridVertices = kMinorVertices + kMajorVertices;
         static constexpr int kVertexCount = kGridVertices + kAxisVertices;
-        static constexpr int kLineStride = 5;      // v, r, g, b, major
     };
 
     void setProjection(const Camera& camera, const Viewport& viewport);
@@ -103,9 +117,18 @@ private:
     // Static grid positions plus the per-frame colour stream. Built once, then
     // drawn with a single glDrawArrays instead of ~1000 immediate-mode calls.
     bool arenaGridReady_ = false;
+    // 3 floats per vertex: x, y, z, in the patch's own frame.
     std::vector<float> arenaPositions_;
+    // 4 floats per vertex: the colour, with the alpha slot filled in each
+    // frame.
     std::vector<float> arenaColors_;
-    std::vector<float> arenaLines_;
+    // 3 floats per vertex: the colour the vertex has when it is at full
+    // transparency. Baked once, because it is the same for every frame.
+    std::vector<float> arenaVertexColors_;
+    // 1 float per vertex: how transparent the vertex is before the distance
+    // fade is applied. The minor lines, the major lines and the axes each have
+    // their own.
+    std::vector<float> arenaVertexAlpha_;
 };
 
 } // namespace s3d

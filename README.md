@@ -42,10 +42,12 @@ include/             every engine header, same layer split + json/
 third_party/         glfw, freetype, angelscript, miniaudio,
                     models_lib/ (cgltf, rapidobj, miniply, ufbx),
                     stb/ (stb_image, stb_vorbis), json/
-assets/              lang/*.lang, image/{icons,textures}/*, models/*.{glb,obj,ply,fbx}
-tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp - standalone
-                     utilities for reading assets and checking the scripting
-                     layer (46 checks); ui_language_test.ps1 drives the real
+assets/              lang/*.lang, image/{icons,textures}/*, models/*.{glb,obj,ply,fbx},
+                     sky.jpg
+tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp, skygen.cpp -
+                     standalone utilities for reading assets, checking the
+                     scripting layer (46 checks) and making the sky;
+                     ui_language_test.ps1 drives the real
                      window to check that a dropdown does not act on its own
                      opening click
 build/               all output: spectra3d.exe, glfw3.dll, engine.log,
@@ -103,7 +105,7 @@ CMake options:
 | Option | Default | Effect |
 |---|---|---|
 | `SPECTRA_SCRIPTING` | `ON` | builds `third_party/angelscript` and defines `SPECTRA_SCRIPTING=1`; `OFF` removes the scripting layer (the log then says `built without scripting`) |
-| `SPECTRA_BUILD_TOOLS` | `OFF` | builds `glbinfo` / `fbxtest` / `scripttest`; off by default so a normal build produces exactly one `.exe`. Turn on with `-DSPECTRA_BUILD_TOOLS=ON` |
+| `SPECTRA_BUILD_TOOLS` | `OFF` | builds `glbinfo` / `fbxtest` / `scripttest` / `skygen`; off by default so a normal build produces exactly one `.exe`. Turn on with `-DSPECTRA_BUILD_TOOLS=ON` |
 
 **The first build is slow**: `third_party/angelscript/source/*.cpp` compiles into a
 static library called `spectra_angelscript`. That is expected;
@@ -821,6 +823,14 @@ during that same tick.
 - **Viewport**: the view toolbar in the "Scene" strip (grid, vectors, snap, frame
   selection, reset camera, "Layers"), a vertical column of tools on the left,
   navigation axis balls on the right (click = align the camera), ray-pick.
+- **The grid has no edge**: it is a window on the world grid that follows the
+  camera - the patch is snapped to the major step and moved with the camera, so
+  every line lands back on the world position it was on before. The minor lines
+  are one unit apart and fade out near the camera, the major lines are ten units
+  apart and carry the grid to the horizon, where one unit is smaller than a
+  pixel and would only alias. Every line is cut into short segments so that
+  each of them can fade along its own length. The world axes stay at the origin
+  and fade with the distance to it.
 - **Rotation** by gizmo ring follows the **world** axes (`gizmo::axesFor` returns
   world axes for Rotate, not the body's) - so the ring does not turn with the body,
   and the angle is computed **on screen**, around the projection of the body's
@@ -866,6 +876,11 @@ during that same tick.
   without synchronous queries to the driver.
 - **Display lists** for static geometry: unit primitives, each wall's grid, arena
   edges - baked once.
+- **A sky and a ground without an edge**: the sky is a picture - `assets/sky.jpg`,
+  an equirectangular panorama made by `tools/skygen.cpp` - drawn as six faces on
+  a cube around the camera, and the grid is a window on the world grid that
+  follows the camera: fine lines near it, coarse ones far away, dissolving into
+  the horizon instead of stopping at a boundary.
 - **UI vertex batching**: every quad/circle/glyph of a frame is reduced to two
   buffers and drawn with two `glDrawArrays`.
 - **Text**: FreeType -> a texture atlas of ASCII + Cyrillic from the system TTF
@@ -950,29 +965,50 @@ project can keep its scene somewhere else.
 
 ## Skybox
 
-The sky the world is seen against is a cubemap: six faces, drawn on a cube
-around the camera.
+The sky the world is seen against is a cube: six faces, drawn on a cube around
+the camera. It comes from a file - the engine makes no sky of its own, and a
+scene with no skybox has no sky.
 
-A skybox is a **folder of six images**, named after the direction each one
-looks at - `px`, `nx`, `py`, `ny`, `pz`, `nz` - with `.png`, `.jpg` or `.bmp`.
+There are two ways to give it one:
+
+- **A picture.** `sky.jpg` (or `.png`, `.bmp`) - the sky in one piece, twice as
+  wide as it is tall. It is turned into the six faces when it is loaded. This is
+  what `assets/sky.jpg` is, and it is the sky a scene gets.
+- **A folder of six faces**, named after the direction each one looks at -
+  `px`, `nx`, `py`, `ny`, `pz`, `nz` - with `.png`, `.jpg` or `.bmp`.
+
 Two places are looked at:
 
-- `<project>/sky/` - the project's own sky, which wins.
-- `assets/sky/` - the sky the engine ships.
+- `<project>/` - the project's own sky, which wins.
+- `assets/` - the sky the engine ships.
 
-A folder that is not there, or that does not hold six images, is not a skybox:
-the engine keeps the sky it has and says so in the log.
+The six faces are six ordinary textures and not one cube map, and the cube is
+drawn with the texture coordinates written out by hand. A cube map is looked up
+through the fixed function texture coordinate generation, and not every driver
+still has that: where it is missing, the sky comes out as a sphere map - the
+picture wrapped around the camera - and it turns with the player when the
+camera turns. The quads look the same everywhere.
 
-With no sky anywhere the engine makes one - a deep blue above a white horizon
-over a dark ground, which is what a scene gets when there is nothing else to
-show.
+### The sky the engine ships
 
-`assets/skies/` holds ready-made skyboxes. They are not loaded by default: copy
-the folder you want into a project's `sky/` folder to use it.
+`assets/sky.jpg` is a 4096x2048 picture made by `tools/skygen.cpp`: a
+generator that draws a day - a sun, a layer of clouds, a horizon and a dark
+ground - and writes it out. It is a tool rather than part of the engine because
+the picture is made once; the file it writes is the asset, and the engine loads
+it like any other texture.
 
-To make a skybox of your own, drop six images named after the direction each
-one looks at - `px`, `nx`, `py`, `ny`, `pz`, `nz` - into a folder and point a
-project's `sky/` at it.
+```
+cmake -S . -B build -DSPECTRA_BUILD_TOOLS=ON
+cmake --build build
+build\skygen.exe assets\sky.jpg
+```
+
+Nothing has to be changed to have a sky: `assets/sky.jpg` is the sky a scene
+gets. Copy it into a project as `sky.jpg` to give that project a sky of its
+own, and replace it with a picture of your own to change it.
+
+To make a skybox of your own from six images, drop them into a folder named
+after the direction each one looks at and point a project's `sky/` at it.
 
 ## Third-party licenses
 
@@ -1004,26 +1040,6 @@ Every stb library is released under the identical public-domain **or** MIT-0 ter
 so `third_party/stb/LICENSE` is the single text covering `stb/` as a whole - it is
 not a copy that could drift from the individual libraries, and no `stb_image.h` or
 `stb_vorbis.c` carries a second copy of it.
-
-### The sky in `assets/skies/`
-
-`assets/skies/kloofendal_43d_clear/` is a ready-made skybox: six 2048x2048 faces
-of *Kloofendal 43d Clear (Pure Sky)*, converted from the equirectangular original
-to the cube map the engine draws.
-
-The original is from [Poly Haven](https://polyhaven.com/a/kloofendal_43d_clear_puresky),
-which is **CC0** - public domain, no attribution required, though a credit is
-always welcome. The faces are a derivative of a CC0 work and carry the same
-terms.
-
-It is not loaded by default: copy the folder into a project's `sky/` folder (or
-into `assets/sky/`) to use it. The engine's own sky - a deep blue over a white
-horizon over a dark ground - is what a scene gets when there is no skybox to
-load.
-
-To make a skybox of your own, drop six images named after the direction each
-one looks at - `px`, `nx`, `py`, `ny`, `pz`, `nz` - into a folder and point a
-project's `sky/` at it.
 
 miniaudio embeds dr_wav, dr_flac and dr_mp3 itself but **not** stb_vorbis: its
 Vorbis backend is behind `STB_VORBIS_INCLUDE_STB_VORBIS_H` in the header, so `.ogg`

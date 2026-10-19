@@ -10,16 +10,40 @@ namespace {
 constexpr double kNearPlane = 0.1;
 constexpr double kFarPlane = 900.0;
 
-constexpr float kGridExtent = 100.0f;
-constexpr float kMajorStep = 10.0f;
+// The two halves of the grid. The minor lines are one unit apart and are the
+// ones the eye reads as a floor; the major lines are ten units apart and they
+// are what carries the grid out to the horizon, where one unit is smaller
+// than a pixel and would only alias.
 constexpr float kMinorStep = 1.0f;
+constexpr float kMinorExtent = 60.0f;
+constexpr float kMinorSegment = 6.0f;
+constexpr float kMajorStep = 10.0f;
+constexpr float kMajorExtent = 400.0f;
+constexpr float kMajorSegment = 40.0f;
+constexpr float kAxisExtent = 100.0f;
+
+// Where the grid fades out. The minor lines are gone before the major ones
+// take over, so the two hands over at the same distance and there is no ring
+// where the fine grid stops and the coarse one has not started.
+//
+// The far end of the major fade is where the grid meets the horizon: from a
+// camera six units up, 360 units of ground is one degree below the eye line,
+// which is a line the eye cannot pick out of the sky's own horizon.
+constexpr float kMinorFadeStart = 28.0f;
+constexpr float kMinorFadeEnd = 60.0f;
+constexpr float kMajorFadeStart = 55.0f;
+constexpr float kMajorFadeEnd = 360.0f;
+
+// The grid against the sky. The sky's ground is a light grey, so the lines are
+// dark and they are drawn with enough transparency to read as lines and not as
+// a wash over the ground.
+constexpr float kMinorAlpha = 0.38f;
+constexpr float kMajorAlpha = 0.62f;
+constexpr float kAxisAlpha = 0.85f;
 
 // Viewport background. Anything the grid and the bodies do not cover ends up in
 // this colour.
 constexpr float kSkyRed = 0.18f, kSkyGreen = 0.22f, kSkyBlue = 0.28f;
-
-// x, y, z, r, g, b, a per grid vertex in the colour stream.
-constexpr int kFloatsPerVertex = 4;
 
 // Fallback colors for bodies without an explicit material color.
 const Color kBodyPalette[8] = {{0.86f, 0.36f, 0.33f}, {0.36f, 0.62f, 0.90f},
@@ -62,6 +86,14 @@ void cameraFrustum(const RigidBody& body, float length, Vec3 out[4]) {
 // How far the frustum reaches, and how far in front of the body the lens sits.
 constexpr float kCameraFrustumLength = 1.2f;
 constexpr float kCameraLensOffset = 0.12f;
+
+// 1 at the near end of the range, 0 at the far end, smooth in between.
+float fadeOut(float distance, float start, float end) {
+    if (distance <= start) return 1.0f;
+    if (distance >= end) return 0.0f;
+    const float t = (distance - start) / (end - start);
+    return 1.0f - t * t * (3.0f - 2.0f * t);
+}
 
 } // namespace
 
@@ -200,47 +232,73 @@ bool SceneRenderer::sphereVisible(const Vec3& center, float radius) const {
 
 void SceneRenderer::buildArenaGrid() {
     arenaGridReady_ = true;
-    arenaLines_.clear();
     arenaPositions_.clear();
+    arenaColors_.clear();
+    arenaVertexColors_.clear();
+    arenaVertexAlpha_.clear();
     arenaPositions_.reserve((size_t)ArenaGrid::kVertexCount * 3);
+    arenaColors_.reserve((size_t)ArenaGrid::kVertexCount * 4);
+    arenaVertexColors_.reserve((size_t)ArenaGrid::kVertexCount * 4);
+    arenaVertexAlpha_.reserve((size_t)ArenaGrid::kVertexCount);
 
-    auto emit = [&](float x, float y, float z) {
+    // One vertex: the position in the patch's own frame, the colour, and how
+    // transparent the vertex is before the distance fade is applied.
+    auto emit = [&](float x, float z, float r, float g, float b, float alpha) {
         arenaPositions_.push_back(x);
-        arenaPositions_.push_back(y);
+        arenaPositions_.push_back(0.0f);
         arenaPositions_.push_back(z);
+        arenaVertexColors_.push_back(r);
+        arenaVertexColors_.push_back(g);
+        arenaVertexColors_.push_back(b);
+        arenaVertexColors_.push_back(0.0f);
+        arenaVertexAlpha_.push_back(alpha);
     };
 
-    // Both line directions and the per-line RGB are constant for the lifetime
-    // of the scene, so they are baked once here. Only alpha depends on the
-    // camera and is refreshed each frame.
-    for (int i = 0; i < ArenaGrid::kSteps; ++i) {
-        const float v = -kGridExtent + (float)i * kMinorStep;
-        if (std::fabs(v) < 0.01f) continue; // the world axes are drawn separately
-        const bool major = std::fmod(std::fabs(v), kMajorStep) < 0.01f;
+    // Dark: the grid is drawn over the sky's own ground, which is a light
+    // grey, and a line that is only a shade darker than the ground is a line
+    // nobody can see.
+    constexpr float kMinorR = 0.09f, kMinorG = 0.12f, kMinorB = 0.11f;
+    constexpr float kMajorR = 0.16f, kMajorG = 0.20f, kMajorB = 0.18f;
 
-        const float base = major ? 0.38f : 0.28f;
-        arenaLines_.push_back(v);
-        arenaLines_.push_back(base);
-        arenaLines_.push_back(base + 0.04f);
-        arenaLines_.push_back(base + 0.02f);
-        arenaLines_.push_back(major ? 1.0f : 0.0f);
+    // A patch of lines around the origin, each cut into short segments. The
+    // segments are what let a line fade along its length: a line drawn as one
+    // long segment has two far ends, and a line whose two ends are both
+    // transparent is a line nobody can see.
+    auto patch = [&](int steps, float step, float extent, float segment, int segments,
+                     float r, float g, float b, float alpha) {
+        for (int i = 0; i < steps; ++i) {
+            const float v = -extent + (float)i * step;
+            for (int direction = 0; direction < 2; ++direction) {
+                for (int s = 0; s < segments; ++s) {
+                    const float from = -extent + (float)s * segment;
+                    const float to = from + segment;
+                    if (direction == 0) {
+                        emit(v, from, r, g, b, alpha);
+                        emit(v, to, r, g, b, alpha);
+                    } else {
+                        emit(from, v, r, g, b, alpha);
+                        emit(to, v, r, g, b, alpha);
+                    }
+                }
+            }
+        }
+    };
 
-        emit(v, 0.0f, -kGridExtent);
-        emit(v, 0.0f, kGridExtent);
-        emit(-kGridExtent, 0.0f, v);
-        emit(kGridExtent, 0.0f, v);
-    }
+    patch(ArenaGrid::kMinorSteps, kMinorStep, kMinorExtent, kMinorSegment,
+          ArenaGrid::kMinorSegments, kMinorR, kMinorG, kMinorB, kMinorAlpha);
+    patch(ArenaGrid::kMajorSteps, kMajorStep, kMajorExtent, kMajorSegment,
+          ArenaGrid::kMajorSegments, kMajorR, kMajorG, kMajorB, kMajorAlpha);
 
-    // World axes: X red, Y green, Z blue. Same vertex order as before, with the
-    // Y axis appended so the blend order of X and Z is untouched.
-    emit(-kGridExtent, 0.0f, 0.0f);
-    emit(kGridExtent, 0.0f, 0.0f);
-    emit(0.0f, 0.0f, -kGridExtent);
-    emit(0.0f, 0.0f, kGridExtent);
-    emit(0.0f, -kGridExtent, 0.0f);
-    emit(0.0f, kGridExtent, 0.0f);
+    // World axes: X red, Y green, Z blue. They are at the world origin and they
+    // stay there - the grid follows the camera, the axes do not.
+    emit(-kAxisExtent, 0.0f, 0.75f, 0.25f, 0.20f, kAxisAlpha);
+    emit(kAxisExtent, 0.0f, 0.75f, 0.25f, 0.20f, kAxisAlpha);
+    emit(0.0f, -kAxisExtent, 0.20f, 0.45f, 0.75f, kAxisAlpha);
+    emit(0.0f, kAxisExtent, 0.20f, 0.45f, 0.75f, kAxisAlpha);
+    emit(0.0f, 0.0f, 0.35f, 0.85f, 0.40f, kAxisAlpha);
+    emit(0.0f, 0.0f, 0.35f, 0.85f, 0.40f, kAxisAlpha);
 
-    arenaColors_.assign(arenaPositions_.size() / 3 * 4, 0.0f);
+    arenaColors_.assign(arenaVertexColors_.size(), 0.0f);
 }
 
 void SceneRenderer::drawArena(const Camera& camera) {
@@ -251,74 +309,55 @@ void SceneRenderer::drawArena(const Camera& camera) {
     glDisable(GL_DEPTH_TEST);
     glLineWidth(1.0f);
 
-    // Fade the whole grid out when the camera flies far above it, then fade
-    // individual lines near the camera edge of that range.
-    const float cameraDistXZ = std::sqrt(camera.position.x * camera.position.x +
-                                         camera.position.z * camera.position.z);
-    const float fadeDistance = kGridExtent * 0.9f;
-    const float globalAlpha =
-        cameraDistXZ < fadeDistance
-            ? 1.0f
-            : std::fmax(0.0f, 1.0f - (cameraDistXZ - fadeDistance) / (kGridExtent - fadeDistance));
+    // The grid is a window on the world grid that follows the camera: the
+    // patch is snapped to the major step and moved with the camera, so every
+    // line lands back on the world position it was on before and there is no
+    // edge of the grid to walk to.
+    const float offsetX = std::floor(camera.position.x / kMajorStep) * kMajorStep;
+    const float offsetZ = std::floor(camera.position.z / kMajorStep) * kMajorStep;
 
-    const float minorAlpha = 0.15f * globalAlpha;
-    const float majorAlpha = 0.35f * globalAlpha;
-    const float axisAlpha = 0.6f * globalAlpha;
+    // The transparency of every vertex, from its distance to the camera. A
+    // line that fades along its length is what makes the grid look endless:
+    // the far half of every line dissolves into the horizon.
+    const size_t vertexCount = arenaVertexAlpha_.size();
+    const size_t minorEnd = (size_t)ArenaGrid::kMinorVertices;
+    const size_t majorEnd = (size_t)ArenaGrid::kGridVertices;
 
-    // camera.position.z squared is loop invariant: it was recomputed 200 times
-    // per frame inside the old per-line loop.
-    const float cameraZ = camera.position.z;
-    const float cameraZSq = cameraZ * cameraZ;
-    const float cameraX = camera.position.x;
-
-    // Bounds come from the built arrays, not from the constants, so the fill and
-    // the draw can never disagree.
-    const int lineCount = (int)(arenaLines_.size() / ArenaGrid::kLineStride);
-    const int gridVertices = lineCount * 4;
-
-    const float* lines = arenaLines_.data();
+    const float* positions = arenaPositions_.data();
+    const float* vertexColors = arenaVertexColors_.data();
+    const float* vertexAlpha = arenaVertexAlpha_.data();
     float* colors = arenaColors_.data();
-    for (int i = 0; i < lineCount; ++i, lines += ArenaGrid::kLineStride) {
-        const float dx = cameraX - lines[0];
-        const float distFromCamera = std::sqrt(dx * dx + cameraZSq);
-        float lineAlpha = distFromCamera < fadeDistance
-                              ? 1.0f
-                              : std::fmax(0.0f, 1.0f - (distFromCamera - fadeDistance) / 20.0f);
-        lineAlpha *= globalAlpha;
+    for (size_t i = 0; i < vertexCount; ++i, positions += 3, vertexColors += 4,
+                      vertexAlpha += 1) {
+        // The grid is in the patch's frame and is moved with the camera; the
+        // axes are already in the world and stay where they are.
+        const bool axis = i >= majorEnd;
+        const float wx = axis ? positions[0] : positions[0] + offsetX;
+        const float wz = axis ? positions[2] : positions[2] + offsetZ;
+        const float dx = wx - camera.position.x;
+        const float dz = wz - camera.position.z;
+        const float distance = std::sqrt(dx * dx + dz * dz);
 
-        const float r = lines[1], g = lines[2], b = lines[3];
-        const float alpha = (lines[4] != 0.0f ? majorAlpha : minorAlpha) * lineAlpha;
-        float* c = colors + (size_t)i * 4 * kFloatsPerVertex;
-        for (int q = 0; q < 4; ++q) {
-            c[0] = r; c[1] = g; c[2] = b; c[3] = alpha;
-            c += kFloatsPerVertex;
+        float fade;
+        if (i < minorEnd) {
+            fade = fadeOut(distance, kMinorFadeStart, kMinorFadeEnd);
+        } else if (i < majorEnd) {
+            fade = fadeOut(distance, kMajorFadeStart, kMajorFadeEnd);
+        } else {
+            // The axes stand at the world origin, so it is the origin's
+            // distance that counts for them - and the Y axis is vertical, so
+            // it is the origin itself.
+            const float adx = (i < majorEnd + 2) ? dx : (0.0f - camera.position.x);
+            const float adz = (i < majorEnd + 4) ? dz : (0.0f - camera.position.z);
+            fade = fadeOut(std::sqrt(adx * adx + adz * adz), kMajorFadeStart, kMajorFadeEnd);
         }
+
+        colors[0] = vertexColors[0];
+        colors[1] = vertexColors[1];
+        colors[2] = vertexColors[2];
+        colors[3] = vertexAlpha[0] * fade;
+        colors += 4;
     }
-
-    const float distX = std::fabs(cameraX);
-    const float alphaX = distX < fadeDistance
-                             ? axisAlpha
-                             : axisAlpha * std::fmax(0.0f, 1.0f - (distX - fadeDistance) / 20.0f);
-    const float distZ = std::fabs(cameraZ);
-    const float alphaZ = distZ < fadeDistance
-                             ? axisAlpha
-                             : axisAlpha * std::fmax(0.0f, 1.0f - (distZ - fadeDistance) / 20.0f);
-
-    float* axes = colors + (size_t)gridVertices * kFloatsPerVertex;
-    axes[0] = axes[4] = 0.75f;
-    axes[1] = axes[5] = 0.25f;
-    axes[2] = axes[6] = 0.20f;
-    axes[3] = axes[7] = alphaX;
-    axes[8] = axes[12] = 0.20f;
-    axes[9] = axes[13] = 0.45f;
-    axes[10] = axes[14] = 0.75f;
-    axes[11] = axes[15] = alphaZ;
-    // Y axis (green). It is vertical, so there is no distance to fade by - it
-    // gets the same alpha as the other axes.
-    axes[16] = axes[20] = 0.35f;
-    axes[17] = axes[21] = 0.85f;
-    axes[18] = axes[22] = 0.40f;
-    axes[19] = axes[23] = axisAlpha;
 
     // One draw call for the whole grid. Lighting is disabled here, so the
     // per-vertex colour array is used directly, exactly as glColor4f +
@@ -328,7 +367,16 @@ void SceneRenderer::drawArena(const Camera& camera) {
     glEnableClientState(GL_COLOR_ARRAY);
     glVertexPointer(3, GL_FLOAT, 12, arenaPositions_.data());
     glColorPointer(4, GL_FLOAT, 16, arenaColors_.data());
-    glDrawArrays(GL_LINES, 0, (GLsizei)(arenaPositions_.size() / 3));
+
+    // The grid, moved with the camera.
+    glPushMatrix();
+    glTranslatef(offsetX, 0.0f, offsetZ);
+    glDrawArrays(GL_LINES, 0, (GLsizei)ArenaGrid::kGridVertices);
+    glPopMatrix();
+
+    // The axes stay at the world origin.
+    glDrawArrays(GL_LINES, (GLsizei)ArenaGrid::kGridVertices, (GLsizei)ArenaGrid::kAxisVertices);
+
     glDisableClientState(GL_COLOR_ARRAY);
     glDisableClientState(GL_VERTEX_ARRAY);
 

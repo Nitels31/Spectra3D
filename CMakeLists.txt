@@ -409,8 +409,11 @@ if(WIN32)
     target_include_directories(spectra_runtime SYSTEM PUBLIC third_party/glfw/include)
     message(STATUS "GLFW: ${SPECTRA_GLFW_LIB}")
     # The DLL travels with the binary. A build that is copied to another machine
-    # and cannot start is worse than no build.
-    add_custom_command(TARGET spectra3d POST_BUILD
+    # and cannot start is worse than no build. Staged on every build, for the
+    # same reason the assets are: a POST_BUILD step only runs when the
+    # executable is relinked, and a runtime that has been replaced has to be
+    # replaced next to it.
+    add_custom_target(spectra_runtime_dlls ALL
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${SPECTRA_GLFW_DLL}" "$<TARGET_FILE_DIR:spectra3d>"
         COMMENT "Staging glfw3.dll")
@@ -426,7 +429,7 @@ if(WIN32)
     if(EXISTS "${SPECTRA_TOOLCHAIN_BIN}")
         foreach(runtime_lib libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
             if(EXISTS "${SPECTRA_TOOLCHAIN_BIN}/${runtime_lib}")
-                add_custom_command(TARGET spectra3d POST_BUILD
+                add_custom_command(TARGET spectra_runtime_dlls PRE_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                             "${SPECTRA_TOOLCHAIN_BIN}/${runtime_lib}"
                             "$<TARGET_FILE_DIR:spectra3d>"
@@ -450,7 +453,13 @@ endif()
 # Assets are copied next to the binary so a fresh checkout runs without extra
 # setup: languages, models and the images the icon picker lists all live there,
 # and the engine also accepts the source tree via SPECTRA_ASSET_DIR.
-add_custom_command(TARGET spectra3d POST_BUILD
+#
+# A target of its own, not a POST_BUILD step on the executable: a POST_BUILD
+# command runs when the executable is relinked, and nothing here relinks when
+# only an asset changes. The result was a build tree whose assets were a
+# version behind the tree they came from - and a sky that had been changed was
+# simply not there.
+add_custom_target(spectra_assets ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${SPECTRA_ASSETS}" "$<TARGET_FILE_DIR:spectra3d>/assets"
     COMMENT "Staging assets")
@@ -467,6 +476,14 @@ if(SPECTRA_BUILD_TOOLS)
     add_executable(fbxtest tools/fbxtest.cpp)
     target_link_libraries(fbxtest PRIVATE spectra_ufbx)
     spectra_warnings(fbxtest)
+
+    # The generator for the sky the engine ships: assets/sky.jpg is a picture
+    # this makes, and the engine loads it like any other texture. It is a tool
+    # rather than part of the engine because the picture is made once - the
+    # file it writes is the asset, not the tool.
+    add_executable(skygen tools/skygen.cpp)
+    target_link_libraries(skygen PRIVATE spectra_stb)
+    spectra_warnings(skygen)
 
     if(SPECTRA_SCRIPTING)
         # Headless check of the script host: the entry-point rule, the hooks and
@@ -491,7 +508,7 @@ endif()
 
 install(TARGETS spectra3d RUNTIME DESTINATION bin)
 if(SPECTRA_BUILD_TOOLS)
-    install(TARGETS glbinfo fbxtest RUNTIME DESTINATION bin)
+    install(TARGETS glbinfo fbxtest skygen RUNTIME DESTINATION bin)
     if(SPECTRA_SCRIPTING)
         install(TARGETS scripttest RUNTIME DESTINATION bin)
     endif()

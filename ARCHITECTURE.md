@@ -183,6 +183,41 @@ format in `loaders/`.
 editor never draws through `SceneRenderer` and the scene never draws through
 `UiRenderer`.
 
+`Skybox` is the sky the world is seen against: six faces drawn on a cube around
+the camera. **The six faces are six ordinary textures, not one cube map**, and
+that is not a style choice. A cube map is looked up through the fixed function
+texture coordinate generation, and that is not a thing every driver still has:
+on a machine without it, `glTexGen*` answers `GL_INVALID_ENUM` for every
+target and every parameter, the cube map falls back to the mode it was born
+with - the sphere map - and the sky comes out as a picture wrapped around the
+camera. It is drawn correctly and it looks fine, and it turns with the player
+when the camera turns, which is the one thing a sky must not do. Six quads with
+the texture coordinates written out by hand are the same picture on every
+driver, and the coordinates are the cube map rules spelled out, so a face looks
+the same whether it came from a file or from a panorama.
+
+The sky is drawn first, with the depth test off and the depth write off, so it
+is behind everything and hides nothing. The cube is put where the camera is and
+scaled up, and it is **not turned**: the model matrix is a translation and a
+scale and nothing else, so the cube's own frame is the world's frame, and the
+direction a texel is looked up in is a world direction.
+
+**The grid follows the camera.** The arena grid is a *window on the world
+grid*: the patch is snapped to the major step and moved with the camera, so
+every line lands back on the world position it was on before and there is no
+edge of the grid to walk to. It is drawn in two parts, because one part cannot
+be both fine and endless - the minor lines are one unit apart and are only
+worth drawing near the camera, and the major lines are ten units apart and
+carry the grid out to the horizon, where one unit is smaller than a pixel and
+would only alias.
+
+**Every line is cut into short segments**, so that each segment can have its
+own transparency. A line drawn as one long segment can only be faded as a
+whole, and both of its ends are far away - so a line faded as a whole is
+either transparent everywhere or opaque to the end of the patch. The
+transparency of a vertex is its distance to the camera, so a line dissolves
+along its length and the grid ends at the horizon rather than at a boundary.
+
 `TextAtlas` is a fixed table of 240 glyphs: ASCII, Cyrillic `U+0410..U+044F`, eight
 extra Cyrillic letters, and **Latin-1** (`U+00C0..U+00FF` plus `« » œ Œ ¡ ¿`).
 Latin-1 arrived with German, French, Italian and Spanish: without it `ä ö ü ß`,

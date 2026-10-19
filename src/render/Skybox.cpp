@@ -1,9 +1,9 @@
 #include "render/Skybox.hpp"
 
 #include "core/Log.hpp"
+#include "core/Math.hpp"
 #include "core/Str.hpp"
 #include "platform/Filesystem.hpp"
-#include "render/Color.hpp"
 
 #include <GL/gl.h>
 
@@ -13,34 +13,14 @@
 // the implementation in the same library.
 #include <stb_image.h>
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
-// The cube map and the edge clamp are not in the 1.1 header Windows ships; they
-// are in the extension-era one. The engine runs a 3.3 compatibility context,
-// where both exist, so they are named here rather than pulling in a header the
-// rest of the renderer does not use.
-#ifndef GL_TEXTURE_CUBE_MAP
-#define GL_TEXTURE_CUBE_MAP 0x8513
-#endif
-#ifndef GL_TEXTURE_CUBE_MAP_POSITIVE_X
-#define GL_TEXTURE_CUBE_MAP_POSITIVE_X 0x8515
-#endif
-#ifndef GL_TEXTURE_CUBE_MAP_NEGATIVE_X
-#define GL_TEXTURE_CUBE_MAP_NEGATIVE_X 0x8516
-#endif
-#ifndef GL_TEXTURE_CUBE_MAP_POSITIVE_Y
-#define GL_TEXTURE_CUBE_MAP_POSITIVE_Y 0x8517
-#endif
-#ifndef GL_TEXTURE_CUBE_MAP_NEGATIVE_Y
-#define GL_TEXTURE_CUBE_MAP_NEGATIVE_Y 0x8518
-#endif
-#ifndef GL_TEXTURE_CUBE_MAP_POSITIVE_Z
-#define GL_TEXTURE_CUBE_MAP_POSITIVE_Z 0x8519
-#endif
-#ifndef GL_TEXTURE_CUBE_MAP_NEGATIVE_Z
-#define GL_TEXTURE_CUBE_MAP_NEGATIVE_Z 0x851A
-#endif
+// GL_CLAMP_TO_EDGE is not in the 1.1 header Windows ships; it is in the
+// extension-era one. The engine runs a 3.3 compatibility context, where it
+// exists, so it is named here rather than pulling in a header the rest of the
+// renderer does not use.
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
 #endif
@@ -48,27 +28,34 @@
 namespace s3d {
 namespace {
 
-// The six faces of a cube, in the order OpenGL wants them, with the name each
-// one is looked for under. The names are the direction the face looks at, which
-// is the only naming a person can get right without a diagram.
+// The six faces of a cube, with the name each one is looked for under. The
+// names are the direction the face looks at, which is the only naming a
+// person can get right without a diagram.
+//
+// `forward` is where the face looks, `right` the way u grows across the face
+// and `down` the way v grows down it. The texel at (u, v) of a face looks
+// along
+//
+//     forward + right * (2u - 1) + down * (2v - 1)
+//
+// which is the cube map selection rule of the OpenGL specification, written
+// out per face instead of left to the driver. The same rule is what the six
+// quads of the cube are given as texture coordinates, so a face looks the
+// same whether it came from a file or from a panorama.
 struct Face {
     const char* name;
-    int glFace;
-    // The direction of the face's centre, and the two axes its texels run
-    // along. A texel at (s, t), both in -1..1, looks along
-    // forward + right * s + up * t.
     Vec3 forward;
     Vec3 right;
-    Vec3 up;
+    Vec3 down;
 };
 
 const Face kFaces[6] = {
-    {"px", GL_TEXTURE_CUBE_MAP_POSITIVE_X, {1, 0, 0}, {0, 0, -1}, {0, 1, 0}},
-    {"nx", GL_TEXTURE_CUBE_MAP_NEGATIVE_X, {-1, 0, 0}, {0, 0, 1}, {0, 1, 0}},
-    {"py", GL_TEXTURE_CUBE_MAP_POSITIVE_Y, {0, 1, 0}, {1, 0, 0}, {0, 0, 1}},
-    {"ny", GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, {0, -1, 0}, {1, 0, 0}, {0, 0, -1}},
-    {"pz", GL_TEXTURE_CUBE_MAP_POSITIVE_Z, {0, 0, 1}, {1, 0, 0}, {0, 1, 0}},
-    {"nz", GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, {0, 0, -1}, {-1, 0, 0}, {0, 1, 0}},
+    {"px", {1, 0, 0}, {0, 0, -1}, {0, -1, 0}},
+    {"nx", {-1, 0, 0}, {0, 0, 1}, {0, -1, 0}},
+    {"py", {0, 1, 0}, {1, 0, 0}, {0, 0, 1}},
+    {"ny", {0, -1, 0}, {1, 0, 0}, {0, 0, -1}},
+    {"pz", {0, 0, 1}, {1, 0, 0}, {0, -1, 0}},
+    {"nz", {0, 0, -1}, {-1, 0, 0}, {0, -1, 0}},
 };
 
 // The image extensions a face may have. A folder of six PNGs and a folder of
@@ -76,35 +63,83 @@ const Face kFaces[6] = {
 // care which.
 const char* const kFaceExtensions[] = {".png", ".jpg", ".jpeg", ".bmp"};
 
-// The colour the sky is made of when there are no images: a deep blue above,
-// a white band at the horizon, and a dark ground below it.
+// Where a direction sits in an equirectangular picture: u across (0..1, the
+// longitude) and v down (0..1, the top row is the zenith).
 //
-// The white band is what makes a sky look like a sky rather than a wash of
-// blue, and the dark ground is what keeps the world's own colours - the grid,
-// the bodies - from being read against a bright background. A pale sky swallows
-// everything in front of it, and at night it is a lamp in the face.
-constexpr Color kZenith{0.16f, 0.27f, 0.55f};
-constexpr Color kHorizon{1.00f, 1.00f, 1.00f};
-constexpr Color kGround{0.19f, 0.19f, 0.23f};
+// The longitude is atan2(z, x), so the picture starts at -X and runs through
+// -Z, +X and +Z before it comes back around. The generator that makes such a
+// picture (tools/skygen.cpp) uses the same two formulas, and the two have to
+// agree to the letter: when they do not, the sun ends up in the wrong quarter
+// of the sky and nobody can say why.
+void equirectUv(const Vec3& direction, float& u, float& v) {
+    u = std::atan2(direction.z, direction.x) * 0.5f * (1.0f / kPi) + 0.5f;
+    v = 0.5f - std::asin(clampf(direction.y, -1.0f, 1.0f)) * (1.0f / kPi);
+}
 
-// The colour of the sky in one direction.
-Color skyColour(const Vec3& direction) {
-    const float y = direction.y;
-    if (y >= 0.0f) {
-        // Above the horizon: the horizon colour up to the zenith colour. The
-        // exponent is what puts the blue where a person looks rather than
-        // right at the edge of it: the blue starts a few degrees above the
-        // horizon, and the white is the last thin band before it.
-        const float t = std::pow(y, 0.5f);
-        return Color{kHorizon.r + (kZenith.r - kHorizon.r) * t,
-                     kHorizon.g + (kZenith.g - kHorizon.g) * t,
-                     kHorizon.b + (kZenith.b - kHorizon.b) * t};
+// One texel of an equirectangular picture, in RGBA.
+//
+// The longitude wraps - the picture's left edge and its right edge are the same
+// direction - and the latitude does not: above the zenith and below the nadir
+// there is nothing to sample, and the last row is held.
+void sampleEquirect(const unsigned char* pixels, int width, int height, const Vec3& direction,
+                    unsigned char* out) {
+    float u = 0.0f, v = 0.0f;
+    equirectUv(direction.normalized(), u, v);
+
+    // The texel centres sit at (x + 0.5) / width, so the coordinate of a texel
+    // is a quarter of a texel off its centre and the two are put back together.
+    const float fx = u * (float)width - 0.5f;
+    const float fy = v * (float)height - 0.5f;
+    const int x0 = (int)std::floor(fx);
+    const int y0 = (int)std::floor(fy);
+    const float tx = fx - (float)x0;
+    const float ty = fy - (float)y0;
+
+    // Longitude wraps, latitude clamps.
+    auto wrapX = [&](int x) {
+        x %= width;
+        return x < 0 ? x + width : x;
+    };
+    auto clampY = [&](int y) { return y < 0 ? 0 : (y > height - 1 ? height - 1 : y); };
+
+    const int xs[2] = {wrapX(x0), wrapX(x0 + 1)};
+    const int ys[2] = {clampY(y0), clampY(y0 + 1)};
+
+    for (int channel = 0; channel < 4; ++channel) {
+        const float top = (float)pixels[((size_t)ys[0] * (size_t)width + (size_t)xs[0]) * 4 + channel] *
+                               (1.0f - tx) +
+                           (float)pixels[((size_t)ys[0] * (size_t)width + (size_t)xs[1]) * 4 + channel] * tx;
+        const float bottom = (float)pixels[((size_t)ys[1] * (size_t)width + (size_t)xs[0]) * 4 + channel] *
+                                 (1.0f - tx) +
+                             (float)pixels[((size_t)ys[1] * (size_t)width + (size_t)xs[1]) * 4 + channel] * tx;
+        const float value = top * (1.0f - ty) + bottom * ty;
+        out[channel] = (unsigned char)clampf(value + 0.5f, 0.0f, 255.0f);
     }
-    // Below: the ground, darkening away from the horizon.
-    const float t = std::pow(-y, 0.3f);
-    return Color{kHorizon.r + (kGround.r - kHorizon.r) * t,
-                 kHorizon.g + (kGround.g - kHorizon.g) * t,
-                 kHorizon.b + (kGround.b - kHorizon.b) * t};
+}
+
+// Uploads one face as an ordinary two dimensional texture.
+//
+// The faces are six textures and not one cube map, and the reason is in
+// Skybox::draw: a cube map is looked up through the fixed function texture
+// coordinate generation, and that is not something every driver still has.
+// Six textures with the texture coordinates written out by hand work
+// everywhere, and they look exactly the same.
+unsigned uploadFace(const unsigned char* pixels, int width, int height) {
+    unsigned texture = 0;
+    glGenTextures(1, &texture);
+    if (!texture) return 0;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 pixels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    // Clamped, not repeated: the edge of a face is the edge of the picture, and
+    // a face that wrapped into its neighbour would show a stripe of sky along
+    // the seam.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return texture;
 }
 
 // The first face file in `directory` with the given name, or an empty string.
@@ -121,38 +156,10 @@ std::string findFace(const std::string& directory, const char* name) {
 Skybox::~Skybox() { release(); }
 
 void Skybox::release() {
-    if (cube_) glDeleteTextures(1, &cube_);
-    cube_ = 0;
-}
-
-bool Skybox::uploadFace(int glFace, const std::string& path) {
-    std::string bytes;
-    if (!fs::readFile(path, bytes)) {
-        Log::warn("Sky: cannot read '%s'", path.c_str());
-        return false;
-    }
-
-    int width = 0, height = 0, channels = 0;
-    unsigned char* pixels =
-        stbi_load_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(),
-                              &width, &height, &channels, 4);
-    if (!pixels) {
-        Log::warn("Sky: cannot decode '%s': %s", path.c_str(), stbi_failure_reason());
-        return false;
-    }
-
-    // The cube's faces are square, and a face that is not square is a picture
-    // that is not a face.
-    if (width != height) {
-        Log::warn("Sky: '%s' is %dx%d, a face has to be square", path.c_str(), width,
-                  height);
-        stbi_image_free(pixels);
-        return false;
-    }
-
-    glTexImage2D(glFace, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-    stbi_image_free(pixels);
-    return true;
+    for (unsigned& texture : faces_)
+        if (texture) glDeleteTextures(1, &texture);
+    for (unsigned& texture : faces_) texture = 0;
+    source_.clear();
 }
 
 bool Skybox::load(const std::string& directory) {
@@ -170,85 +177,150 @@ bool Skybox::load(const std::string& directory) {
         }
     }
 
-    unsigned cube = 0;
-    glGenTextures(1, &cube);
-    if (!cube) return false;
-    glBindTexture(GL_TEXTURE_CUBE_MAP, cube);
+    // The faces are decoded first and uploaded afterwards: a picture that is
+    // not a picture has to be found out before half a sky is on the screen.
+    unsigned textures[6] = {0, 0, 0, 0, 0, 0};
+    // Whatever was uploaded before a face turned out to be unusable is thrown
+    // away: a half sky is not a sky, and the textures belong to the GL context.
+    auto discard = [&]() {
+        for (int f = 0; f < 6; ++f) {
+            if (!textures[f]) continue;
+            glDeleteTextures(1, &textures[f]);
+            textures[f] = 0;
+        }
+    };
 
-    for (int i = 0; i < 6; ++i)
-        if (!uploadFace(kFaces[i].glFace, paths[i])) {
-            glDeleteTextures(1, &cube);
+    for (int i = 0; i < 6; ++i) {
+        std::string bytes;
+        if (!fs::readFile(paths[i], bytes)) {
+            Log::warn("Sky: cannot read '%s'", paths[i].c_str());
+            discard();
             return false;
         }
 
-    // A cube map is sampled with the coordinates of the fragment, so the edges
-    // have to be clamped or the seam between two faces shows.
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+        int width = 0, height = 0, channels = 0;
+        unsigned char* pixels =
+            stbi_load_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(),
+                                  &width, &height, &channels, 4);
+        if (!pixels) {
+            Log::warn("Sky: cannot decode '%s': %s", paths[i].c_str(), stbi_failure_reason());
+            discard();
+            return false;
+        }
+
+        // The cube's faces are square, and a face that is not square is a
+        // picture that is not a face.
+        if (width != height) {
+            Log::warn("Sky: '%s' is %dx%d, a face has to be square", paths[i].c_str(), width,
+                      height);
+            stbi_image_free(pixels);
+            discard();
+            return false;
+        }
+
+        textures[i] = uploadFace(pixels, width, height);
+        stbi_image_free(pixels);
+        if (!textures[i]) {
+            Log::warn("Sky: GL refused '%s'", paths[i].c_str());
+            discard();
+            return false;
+        }
+    }
 
     // Only when every face is there is the new sky better than the old one.
-    if (cube_) glDeleteTextures(1, &cube_);
-    cube_ = cube;
+    for (int i = 0; i < 6; ++i) {
+        if (faces_[i]) glDeleteTextures(1, &faces_[i]);
+        faces_[i] = textures[i];
+    }
     source_ = directory;
     Log::info("Sky: loaded from '%s'", directory.c_str());
     return true;
 }
 
-void Skybox::buildDefault() {
-    // Small on purpose: a gradient does not need more, and a sky that is
-    // generated does not need to be big.
-    constexpr int kSize = 64;
-
-    unsigned cube = 0;
-    glGenTextures(1, &cube);
-    if (!cube) return;
-    glBindTexture(GL_TEXTURE_CUBE_MAP, cube);
-
-    for (int f = 0; f < 6; ++f) {
-        const Face& face = kFaces[f];
-        std::vector<unsigned char> pixels((size_t)kSize * kSize * 4);
-        for (int y = 0; y < kSize; ++y) {
-            // The texel row is t, from the top of the face down.
-            const float t = 1.0f - 2.0f * ((float)y + 0.5f) / (float)kSize;
-            for (int x = 0; x < kSize; ++x) {
-                const float s = 2.0f * ((float)x + 0.5f) / (float)kSize - 1.0f;
-                const Vec3 direction = (face.forward + face.right * s + face.up * t).normalized();
-                const Color colour = skyColour(direction);
-                const size_t at = ((size_t)y * (size_t)kSize + (size_t)x) * 4;
-                pixels[at + 0] = (unsigned char)(clampf(colour.r, 0.0f, 1.0f) * 255.0f);
-                pixels[at + 1] = (unsigned char)(clampf(colour.g, 0.0f, 1.0f) * 255.0f);
-                pixels[at + 2] = (unsigned char)(clampf(colour.b, 0.0f, 1.0f) * 255.0f);
-                pixels[at + 3] = 255;
-            }
-        }
-        glTexImage2D(face.glFace, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                     pixels.data());
+bool Skybox::loadImage(const std::string& path) {
+    std::string bytes;
+    if (!fs::readFile(path, bytes)) {
+        Log::warn("Sky: cannot read '%s'", path.c_str());
+        return false;
     }
 
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+    int width = 0, height = 0, channels = 0;
+    unsigned char* pixels =
+        stbi_load_from_memory((const unsigned char*)bytes.data(), (int)bytes.size(),
+                              &width, &height, &channels, 4);
+    if (!pixels) {
+        Log::warn("Sky: cannot decode '%s': %s", path.c_str(), stbi_failure_reason());
+        return false;
+    }
 
-    if (cube_) glDeleteTextures(1, &cube_);
-    cube_ = cube;
-    source_ = "built-in";
+    // An equirectangular picture is twice as wide as it is tall. One that is
+    // not is still drawn - stretched, not refused - but it is worth a line in
+    // the log, because a picture that is not 2:1 is nearly always a mistake.
+    if (width != height * 2)
+        Log::warn("Sky: '%s' is %dx%d, an equirectangular sky is twice as wide as it is "
+                  "tall",
+                  path.c_str(), width, height);
+
+    const bool built = buildFromEquirect(pixels, width, height);
+    stbi_image_free(pixels);
+    if (!built) return false;
+
+    source_ = path;
+    Log::info("Sky: loaded from '%s' (%dx%d)", path.c_str(), width, height);
+    return true;
+}
+
+bool Skybox::buildFromEquirect(const unsigned char* pixels, int width, int height) {
+    if (!pixels || width < 8 || height < 4) return false;
+
+    // A face of the cube covers 90 degrees, which is a quarter of the picture's
+    // width: a 4096x2048 picture gives 1024x1024 faces. The face is smaller
+    // than the screen it is drawn on, so it is magnified - with GL_LINEAR that
+    // is a soft sky rather than a blocky one.
+    const int size = std::max(16, width / 4);
+
+    unsigned textures[6] = {0, 0, 0, 0, 0, 0};
+    std::vector<unsigned char> face((size_t)size * (size_t)size * 4);
+    for (int f = 0; f < 6; ++f) {
+        const Face& spec = kFaces[f];
+        for (int y = 0; y < size; ++y) {
+            // The first row of a face is the face's v = 0 edge, which is the
+            // same edge the texture coordinates of the quad below start at.
+            const float v = ((float)y + 0.5f) / (float)size;
+            for (int x = 0; x < size; ++x) {
+                const float u = ((float)x + 0.5f) / (float)size;
+                const Vec3 direction =
+                    (spec.forward + spec.right * (2.0f * u - 1.0f) +
+                     spec.down * (2.0f * v - 1.0f))
+                        .normalized();
+                const size_t at = ((size_t)y * (size_t)size + (size_t)x) * 4;
+                sampleEquirect(pixels, width, height, direction, &face[at]);
+            }
+        }
+        textures[f] = uploadFace(face.data(), size, size);
+        if (!textures[f]) {
+            for (int i = 0; i < 6; ++i)
+                if (textures[i]) glDeleteTextures(1, &textures[i]);
+            return false;
+        }
+    }
+
+    for (int i = 0; i < 6; ++i) {
+        if (faces_[i]) glDeleteTextures(1, &faces_[i]);
+        faces_[i] = textures[i];
+    }
+    return true;
 }
 
 void Skybox::draw(const Camera& camera) const {
-    if (!cube_) return;
+    if (!valid()) return;
 
-    // The cube is drawn around the camera with the depth test off: the sky is
-    // behind everything, and there is nothing in the world to be behind.
-    //
     // The state the sky touches is put back the way it was found, because the
     // renderer draws the world straight after and the world is not a sky.
     const bool culling = glIsEnabled(GL_CULL_FACE) != 0;
     const bool lighting = glIsEnabled(GL_LIGHTING) != 0;
+    const bool texture2d = glIsEnabled(GL_TEXTURE_2D) != 0;
+
     // The sky writes no depth. A depth of its own would put a wall in front of
     // everything that is further away than the cube, and the cube is far.
     glDepthMask(GL_FALSE);
@@ -259,55 +331,52 @@ void Skybox::draw(const Camera& camera) const {
     // whatever the last thing in the frame left behind - which is usually a
     // label's colour. The sky is the picture, not a tint of it.
     glColor3f(1.0f, 1.0f, 1.0f);
-    glEnable(GL_TEXTURE_CUBE_MAP);
-    // The texture coordinate is generated from the cube's own vertices, which is
-    // what puts the right part of the sky on the right part of the cube.
-    //
-    // The three generators have to be enabled as well: setting the mode is
-    // only saying what the coordinate would be, and without them there is no
-    // coordinate at all - the whole cube samples one texel and the sky is a
-    // flat colour.
-    glTexGenf(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR);
-    glEnable(GL_TEXTURE_GEN_S);
-    glEnable(GL_TEXTURE_GEN_T);
-    glEnable(GL_TEXTURE_GEN_R);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, cube_);
+    glEnable(GL_TEXTURE_2D);
 
     glPushMatrix();
+    // The cube is put where the camera is and scaled up, and it is not turned:
+    // the model matrix is a translation and a scale and nothing else, so the
+    // cube's own frame is the world's frame. That is what makes the sky stand
+    // still while the camera turns - the direction a texel is looked up in is a
+    // world direction, not a direction relative to the camera.
     glTranslatef(camera.position.x, camera.position.y, camera.position.z);
     // Big enough to be past everything in the arena, small enough to stay
-    // inside the far plane.
+    // inside the far plane: the far plane is at 900 and the corner of the cube
+    // is at 400 * sqrt(3).
     const float size = 400.0f;
     glScalef(size, size, size);
 
-    // The cube primitive is a unit cube, so this is a cube of the size above.
-    // Immediate mode rather than a display list: the texture coordinate
-    // generation has to be in effect when it is drawn, and the primitive's
-    // display list is shared with the bodies.
-    glBegin(GL_QUADS);
-    const float h = 1.0f;
-    // Six faces, wound so that they are seen from the inside.
-    const float v[6][4][3] = {
-        {{-h, -h, h}, {h, -h, h}, {h, h, h}, {-h, h, h}},       // +Z
-        {{h, -h, -h}, {-h, -h, -h}, {-h, h, -h}, {h, h, -h}},   // -Z
-        {{-h, h, h}, {h, h, h}, {h, h, -h}, {-h, h, -h}},       // +Y
-        {{-h, -h, -h}, {h, -h, -h}, {h, -h, h}, {-h, -h, h}},   // -Y
-        {{h, -h, h}, {h, -h, -h}, {h, h, -h}, {h, h, h}},       // +X
-        {{-h, -h, -h}, {-h, -h, h}, {-h, h, h}, {-h, h, -h}},   // -X
-    };
-    for (int f = 0; f < 6; ++f)
+    for (int f = 0; f < 6; ++f) {
+        if (!faces_[f]) continue;
+        const Face& spec = kFaces[f];
+
+        // The four corners of the face, with the texture coordinates the cube
+        // map rules would have produced for them: (0,0) at -right -down, then
+        // right, then down. The hardware interpolates them across the quad
+        // with the perspective, which is exactly the mapping a cube map lookup
+        // does - only that one does not need the texture coordinate generation
+        // to be there.
+        const Vec3 corners[4] = {
+            spec.forward - spec.right - spec.down,
+            spec.forward + spec.right - spec.down,
+            spec.forward + spec.right + spec.down,
+            spec.forward - spec.right + spec.down,
+        };
+        const float us[4] = {0.0f, 1.0f, 1.0f, 0.0f};
+        const float vs[4] = {0.0f, 0.0f, 1.0f, 1.0f};
+
+        glBindTexture(GL_TEXTURE_2D, faces_[f]);
+        glBegin(GL_QUADS);
         for (int c = 0; c < 4; ++c) {
-            glVertex3f(v[f][c][0], v[f][c][1], v[f][c][2]);
+            glTexCoord2f(us[c], vs[c]);
+            glVertex3f(corners[c].x, corners[c].y, corners[c].z);
         }
-    glEnd();
+        glEnd();
+    }
     glPopMatrix();
 
-    glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
-    glDisable(GL_TEXTURE_GEN_S);
-    glDisable(GL_TEXTURE_GEN_T);
-    glDisable(GL_TEXTURE_GEN_R);
-    glTexGenf(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR);
-    glDisable(GL_TEXTURE_CUBE_MAP);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    if (!texture2d) glDisable(GL_TEXTURE_2D);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
     if (lighting) glEnable(GL_LIGHTING);
