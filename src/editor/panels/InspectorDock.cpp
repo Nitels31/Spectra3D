@@ -138,6 +138,7 @@ void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
         drawMaterialSection(ui, body, innerDock, y2);
     }
     drawFlagsSection(ui, body, innerDock, y2);
+    drawSoundSection(ui, body, innerDock, y2);
     drawAnchorSection(ui, body, innerDock, y2);
     drawStateSection(ui, world, body, innerDock, y2);
     drawNodeSection(ui, innerDock, y2);
@@ -392,6 +393,39 @@ void Editor::drawFlagsSection(UiRenderer& ui, RigidBody& body, const Rect& dock,
     ui_.checkbox(ui, kInspectorProperty + 2, dock.x, y, dock.width, text("flag.locked"),
                  body.locked);
     y += 24.0f;
+}
+
+void Editor::drawSoundSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y) {
+    ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.sound"));
+    y += 26.0f;
+
+    if (body.sound.empty()) {
+        // No sound: the row says so and the button that would play one is
+        // absent rather than dead.
+        ui.textFit(dock.x + 8.0f, y + 2.0f, dock.width - 16.0f, text("sound.none"),
+                   theme::textDim);
+        y += kRowStep;
+        return;
+    }
+
+    // The name of the sound, a button that plays it, and a button that takes
+    // it away. The sound is chosen in the Sounds panel; this is where you
+    // hear what you chose and where you undo it.
+    ui.textFit(dock.x + 8.0f, y + 2.0f, dock.width - 70.0f, body.sound.c_str(),
+               theme::text);
+    if (ui_.button(ui, kInspectorProperty + 7, dock.x + dock.width - 56.0f, y, 22.0f, 22.0f, ">"))
+        sound_.play(body.sound);
+    if (ui_.button(ui, kInspectorProperty + 8, dock.x + dock.width - 30.0f, y, 22.0f, 22.0f, "x")) {
+        body.sound.clear();
+        markSceneDirty();
+    }
+    y += kRowStep;
+
+    // How loud the body makes it.
+    if (ui_.propertyFloat(ui, kInspectorProperty + 9, dock.x, y, dock.width, text("sound.volume"),
+                          body.soundVolume, 0.01f, 0.0f, 1.0f))
+        markSceneDirty();
+    y += kRowStep;
 }
 
 void Editor::drawAnchorSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y) {

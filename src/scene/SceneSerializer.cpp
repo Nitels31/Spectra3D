@@ -377,6 +377,16 @@ bool saveJson(const PhysicsWorld& world, const MeshRegistry& meshes, const std::
             node["camera"] = camera;
         }
 
+        // The sound the body makes when it hits something. Only written when
+        // there is one: a body without a sound is the common case and an empty
+        // object for every body in the scene is noise in the file.
+        if (!body.sound.empty()) {
+            ordered_json sound;
+            sound["name"] = body.sound;
+            sound["volume"] = body.soundVolume;
+            node["sound"] = sound;
+        }
+
         if (body.anchorPosition || body.anchorRotation) {
             ordered_json anchor;
             anchor["position"] = body.anchorPosition;
@@ -520,6 +530,14 @@ bool loadJson(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path
                             .normalized();
                 }
                 if (anchor.contains("spring")) body.anchorSpring = anchor["spring"].get<float>();
+            }
+
+            if (node.contains("sound") && node["sound"].is_object()) {
+                const json& sound = node["sound"];
+                if (sound.contains("name") && sound["name"].is_string())
+                    body.sound = sound["name"].get<std::string>();
+                if (sound.contains("volume"))
+                    body.soundVolume = clampf(sound["volume"].get<float>(), 0.0f, 1.0f);
             }
 
             if (node.contains("mesh") && node["mesh"].is_object() && node["mesh"].is_object()) {

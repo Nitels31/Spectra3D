@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "assets/MeshRegistry.hpp"
+#include "audio/SoundDevice.hpp"
 #include "i18n/Localizer.hpp"
 #include "physics/PhysicsWorld.hpp"
 #include "render/Camera.hpp"
@@ -43,7 +44,14 @@ struct EditorLayout {
 //
 // `Float` is last on purpose: several tables are sized `(int)PanelZone::Float` and
 // index them by zone.
-enum class PanelId { Hierarchy = 0, Inspector = 1, Console = 2, Favorites, PanelCount };
+enum class PanelId {
+    Hierarchy = 0,
+    Inspector = 1,
+    Console = 2,
+    Favorites,
+    Sounds,
+    PanelCount
+};
 enum class PanelZone { Left, Right, Bottom, BottomLeft, BottomRight, Float };
 
 // Which side of the window a zone sits on. The grip, the resize and the layout file
@@ -77,6 +85,7 @@ public:
         kHierarchyFavOnly = 421,
         kHierarchySearch = 440,
         kFavoriteRow = 460,
+        kSoundRow = 480,
         kInspectorDock = 500,
         kInspectorProperty = 600,
         kFilterField = 700,
@@ -99,7 +108,7 @@ kHelpClose = 1400,
         kPopupCapture = 1600,
     };
 
-    Editor(MeshRegistry& meshes, i18n::Localizer& localizer);
+    Editor(MeshRegistry& meshes, i18n::Localizer& localizer, SoundDevice& sound);
 
     // --- per frame ----------------------------------------------------------
     void handleInput(PhysicsWorld& world, Camera& camera, Window& window, int fbWidth,
@@ -454,6 +463,9 @@ private:
     void drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& window, const Rect& dock);
     void drawConsolePanel(UiRenderer& ui, const Rect& panel);
     void drawFavoritesDock(UiRenderer& ui, PhysicsWorld& world, const Rect& dock);
+    // The sounds the engine has loaded, and the buttons that play them and
+    // give them to the body that is selected.
+    void drawSoundsDock(UiRenderer& ui, PhysicsWorld& world, const Rect& dock);
     // One panel, wherever it currently is: its own rectangle decides the rest.
     void drawPanelById(UiRenderer& ui, PhysicsWorld& world, Window& window, PanelId id);
     void drawDockedPanels(UiRenderer& ui, PhysicsWorld& world, Window& window);
@@ -495,6 +507,9 @@ private:
                             const Rect& dock, float& y);
     void drawMaterialSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
     void drawFlagsSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
+    // The sound the body makes when it hits something: its name, a button that
+    // plays it and a button that takes it away.
+    void drawSoundSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
     void drawAnchorSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
     void drawStateSection(UiRenderer& ui, PhysicsWorld& world, RigidBody& body,
                           const Rect& dock, float& y);
@@ -502,6 +517,10 @@ private:
 
     MeshRegistry& meshes_;
     i18n::Localizer& loc_;
+    // The sound device, for the Sounds panel and for the inspector's sound
+    // field. A reference and not a copy: the device is a thing with a thread
+    // behind it, and there is exactly one of it.
+    SoundDevice& sound_;
     UiContext ui_;
     AssetBrowser assets_;
 

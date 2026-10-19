@@ -1,4 +1,4 @@
-﻿# Spectra3D Hexadecimal UI strings
+# Spectra3D Hexadecimal UI strings
 # Every value is the hex encoding of the English string's UTF-8 bytes.
 # Mechanical, not translated - that is the joke. ASCII, so it renders fine.
 
@@ -240,3 +240,10 @@ shape.pyramid=707972
 shape.prism=707269
 settings.icon=4170706c69636174696f6e2069636f6e
 settings.iconNone=4e6f2069636f6e2066696c657320666f756e64
+tab.sounds=536f756e6473
+sec.sound=536f756e64
+sounds.noDevice=6e6f20646576696365
+sounds.empty=4e6f20736f756e6473206c6f61646564
+sounds.hint=5075742061202e7761762066696c6520696e746f206173736574732f736f756e64732f
+sound.none=4e6f6e65
+sound.volume=566f6c756d65

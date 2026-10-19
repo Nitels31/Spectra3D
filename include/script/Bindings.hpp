@@ -22,6 +22,7 @@ class MeshRegistry;
 struct Camera;
 struct RigidBody;
 class Window;
+class SoundDevice;
 
 namespace script {
 
@@ -36,6 +37,10 @@ struct ScriptState {
     // The window, for the input bindings. Same deal as the other three: a
     // pointer the host keeps fresh, never one a script ever sees.
     Window* window = nullptr;
+    // The sound device, for the sound bindings. Null when there is no device -
+    // a machine with no sound card - and every sound binding then answers
+    // "no" instead of touching a device that is not there.
+    SoundDevice* sound = nullptr;
 
     // Script-authored groups. Members are body indices; removeBody() keeps them
     // in step with the erase it performs on the world, and clearScene() drops
@@ -87,6 +92,7 @@ int registerEngineBindings(asIScriptEngine* engine);
 int registerSceneBindings(asIScriptEngine* engine);
 int registerCameraBindings(asIScriptEngine* engine);
 int registerInputBindings(asIScriptEngine* engine);
+int registerSoundBindings(asIScriptEngine* engine);
 #endif
 
 } // namespace script

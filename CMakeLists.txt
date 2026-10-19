@@ -177,6 +177,12 @@ target_include_directories(spectra_stb SYSTEM INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb/stb_image
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb/stb_image_write)
 
+# miniaudio, for the sound. One header with the implementation in it, so only
+# the one file that defines MA_IMPLEMENTATION ever sees it.
+add_library(spectra_miniaudio INTERFACE)
+target_include_directories(spectra_miniaudio SYSTEM INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniaudio)
+
 # ---------------------------------------------------------------------------
 # Scripting
 # ---------------------------------------------------------------------------
@@ -247,6 +253,7 @@ set(SPECTRA_SRC_EDITOR
     src/editor/panels/ScenePanel.cpp
     src/editor/panels/InspectorDock.cpp
     src/editor/panels/BottomBar.cpp
+    src/editor/panels/SoundsDock.cpp
 )
 set(SPECTRA_SRC_SCRIPT
     src/script/ScriptHost.cpp
@@ -254,6 +261,7 @@ set(SPECTRA_SRC_SCRIPT
     src/script/BindScene.cpp
     src/script/BindCamera.cpp
     src/script/BindInput.cpp
+    src/script/BindSound.cpp
     src/script/BindString.cpp
 )
 set(SPECTRA_SRC_SCENE
@@ -282,6 +290,9 @@ set(SPECTRA_SRC_ASSETS
     src/assets/loaders/ObjLoader.cpp
     src/assets/loaders/PlyLoader.cpp
     src/assets/loaders/FbxLoader.cpp
+)
+set(SPECTRA_SRC_AUDIO
+    src/audio/SoundDevice.cpp
 )
 set(SPECTRA_SRC_PHYSICS
     src/physics/RigidBody.cpp
@@ -317,6 +328,7 @@ add_library(spectra_runtime STATIC
     ${SPECTRA_SRC_UI}
     ${SPECTRA_SRC_RENDER}
     ${SPECTRA_SRC_ASSETS}
+    ${SPECTRA_SRC_AUDIO}
     ${SPECTRA_SRC_PHYSICS}
     ${SPECTRA_SRC_PLATFORM}
     ${SPECTRA_SRC_CORE}
@@ -342,6 +354,7 @@ target_link_libraries(spectra_runtime PUBLIC
     spectra_obj
     spectra_json
     spectra_stb
+    spectra_miniaudio
 )
 if(SPECTRA_SCRIPTING)
     target_compile_definitions(spectra_runtime PUBLIC SPECTRA_SCRIPTING=1)
@@ -446,8 +459,12 @@ else()
     find_package(OpenGL REQUIRED)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GLFW REQUIRED glfw3)
-    target_include_directories(spectra_runtime PUBLIC ${GLFW_INCLUDE_DIRS})
-    target_link_libraries(spectra_runtime PUBLIC ${GLFW_LIBRARIES} OpenGL::GL ${CMAKE_DL_LIBS})
+    # miniaudio talks to ALSA on Linux, and its ALSA backend includes
+    # <alsa/asoundlib.h> - so the sound is not optional on this platform
+    # without giving the engine a sound that cannot be played at all.
+    pkg_check_modules(ALSA REQUIRED alsa)
+    target_include_directories(spectra_runtime PUBLIC ${GLFW_INCLUDE_DIRS} ${ALSA_INCLUDE_DIRS})
+    target_link_libraries(spectra_runtime PUBLIC ${GLFW_LIBRARIES} ${ALSA_LIBRARIES} OpenGL::GL ${CMAKE_DL_LIBS})
 endif()
 
 # Assets are copied next to the binary so a fresh checkout runs without extra
@@ -485,6 +502,11 @@ if(SPECTRA_BUILD_TOOLS)
     target_link_libraries(skygen PRIVATE spectra_stb)
     spectra_warnings(skygen)
 
+    # The generator for the test sounds: three short WAV files, two seconds
+    # each, made to be told apart by ear.
+    add_executable(soundgen tools/soundgen.cpp)
+    spectra_warnings(soundgen)
+
     if(SPECTRA_SCRIPTING)
         # Headless check of the script host: the entry-point rule, the hooks and
         # their failure modes, with no window and no project.
@@ -508,7 +530,7 @@ endif()
 
 install(TARGETS spectra3d RUNTIME DESTINATION bin)
 if(SPECTRA_BUILD_TOOLS)
-    install(TARGETS glbinfo fbxtest skygen RUNTIME DESTINATION bin)
+    install(TARGETS glbinfo fbxtest skygen soundgen RUNTIME DESTINATION bin)
     if(SPECTRA_SCRIPTING)
         install(TARGETS scripttest RUNTIME DESTINATION bin)
     endif()

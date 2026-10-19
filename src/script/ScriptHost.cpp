@@ -197,8 +197,9 @@ RigidBody* resolveBody(const char* fn, int index) {
 
 // --- Host -------------------------------------------------------------------
 
-Host::Host(PhysicsWorld& world, MeshRegistry& meshes, Camera& camera, Window* window)
-    : world_(world), meshes_(meshes), camera_(camera), window_(window) {}
+Host::Host(PhysicsWorld& world, MeshRegistry& meshes, Camera& camera, Window* window,
+           SoundDevice* sound)
+    : world_(world), meshes_(meshes), camera_(camera), window_(window), sound_(sound) {}
 
 Host::~Host() { shutdown(); }
 
@@ -223,6 +224,7 @@ bool Host::initialize() {
     state.meshes = &meshes_;
     state.camera = &camera_;
     state.window = window_;
+    state.sound = sound_;
     sink.owner = this;
     sink.callback = sink_;
     sink.list = &diagnostics_;
@@ -259,7 +261,8 @@ bool Host::initialize() {
     }
 
     if (registerEngineBindings(engine) < 0 || registerSceneBindings(engine) < 0 ||
-        registerCameraBindings(engine) < 0 || registerInputBindings(engine) < 0) {
+        registerCameraBindings(engine) < 0 || registerInputBindings(engine) < 0 ||
+        registerSoundBindings(engine) < 0) {
         emit(this, MsgLevel::Error, "", 0, 0, "binding registration failed; engine disabled");
         shutdown();
         return false;

@@ -43,11 +43,12 @@ third_party/         glfw, freetype, angelscript, miniaudio,
                     models_lib/ (cgltf, rapidobj, miniply, ufbx),
                     stb/ (stb_image, stb_vorbis), json/
 assets/              lang/*.lang, image/{icons,textures}/*, models/*.{glb,obj,ply,fbx},
-                     sky.jpg
-tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp, skygen.cpp -
-                     standalone utilities for reading assets, checking the
-                     scripting layer (46 checks) and making the sky;
-                     ui_language_test.ps1 drives the real
+                     sky.jpg, sounds/*.wav
+tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp, skygen.cpp,
+                     soundgen.cpp - standalone
+                     utilities for reading assets, checking the scripting
+                     layer (46 checks), making the sky and making the test
+                     sounds; ui_language_test.ps1 drives the real
                      window to check that a dropdown does not act on its own
                      opening click
 build/               all output: spectra3d.exe, glfw3.dll, engine.log,
@@ -95,17 +96,21 @@ With the Visual Studio generator add `-G "Visual Studio 17 2022" -A x64`; then
 Linux:
 
 ```sh
-sudo apt install build-essential cmake libglfw3-dev libgl1-mesa-dev
+sudo apt install build-essential cmake libglfw3-dev libgl1-mesa-dev libasound2-dev
 ./build_linux.sh
 ./build/spectra3d
 ```
+
+`libasound2-dev` is ALSA, and miniaudio's ALSA backend includes
+`<alsa/asoundlib.h>`: the sound is not optional on this platform without giving
+the engine a sound that cannot be played at all.
 
 CMake options:
 
 | Option | Default | Effect |
 |---|---|---|
 | `SPECTRA_SCRIPTING` | `ON` | builds `third_party/angelscript` and defines `SPECTRA_SCRIPTING=1`; `OFF` removes the scripting layer (the log then says `built without scripting`) |
-| `SPECTRA_BUILD_TOOLS` | `OFF` | builds `glbinfo` / `fbxtest` / `scripttest` / `skygen`; off by default so a normal build produces exactly one `.exe`. Turn on with `-DSPECTRA_BUILD_TOOLS=ON` |
+| `SPECTRA_BUILD_TOOLS` | `OFF` | builds `glbinfo` / `fbxtest` / `scripttest` / `skygen` / `soundgen`; off by default so a normal build produces exactly one `.exe`. Turn on with `-DSPECTRA_BUILD_TOOLS=ON` |
 
 **The first build is slow**: `third_party/angelscript/source/*.cpp` compiles into a
 static library called `spectra_angelscript`. That is expected;
@@ -463,6 +468,21 @@ is a no-op). `removeBody` keeps groups consistent.
 (radians, pitch clamped to +-(pi/2 - 0.001)), `void setCameraFov(float deg)`
 (clamped to 10...170).
 
+**Sound** - the names of the sounds in `assets/sounds/` (the name of a sound is
+the name of its file without the extension). Every one of them answers `false`
+on a machine with no sound card, and nothing else changes:
+
+| Call | What it does |
+|---|---|
+| `bool playSound(const string &in name)` | plays it once |
+| `bool playSoundLoop(const string &in name)` | plays it until it is stopped |
+| `bool playSoundWith(const string &in name, float volume, float pitch)` | plays it once, louder or faster |
+| `void stopSound(const string &in name)`, `void stopAllSounds()` | silence |
+| `bool isSoundPlaying(const string &in name)`, `bool hasSound(const string &in name)` | what is sounding, what exists |
+| `void setMasterVolume(float volume)`, `float getMasterVolume()` | the loudness of everything, 0..1 |
+| `bool loadSound(const string &in name, const string &in path)` | loads a sound from a file, under a name |
+| `void setBodySound(int index, const string &in name)`, `bool bodyHasSound(int index)` | the sound a body makes when it hits something |
+
 **Types:** enum `Shape` - `ShapeBox`, `ShapeSphere`, `ShapeCylinder`,
 `ShapeCapsule`, `ShapeCone`, `ShapePyramid`, `ShapePrism`, `ShapeMesh`; the type
 `string` is registered in the global namespace (inside `engine::` it is also
@@ -719,7 +739,7 @@ Panels, top to bottom:
   the right: grid, vectors, **snap** (a magnet: dragging becomes a multiple of
   0.25), frame selection, reset camera, the "Layers" panel. Every button performs
   its command.
-* **Movable panels** - hierarchy, inspector, console and favorites sit in six
+* **Movable panels** - hierarchy, inspector, console, favorites and sounds sit in six
   places: the left column, the right column, the bottom strip, the two bottom
   corners, and free float. Each can be dragged by its title to another place
   (panels swap) or into the middle of the scene - then it becomes floating, with a
@@ -737,10 +757,14 @@ Panels, top to bottom:
   **View -> Favorites**): a list of stars, the same gesture in the same column;
   clicking a row selects the object, clicking the star removes it from favorites.
   Clicking the panel lets you drag it to an edge or into the scene.
+* **Sounds** - a separate panel (closed by default, opened from
+  **View -> Sounds**): the sounds the engine has loaded, the device they play
+  through, and two buttons per row - one plays the sound, the other gives it to
+  the object that is selected. See [Sound](#sound).
 * **Inspector** - a property filter and the sections Transform / Shape / Material /
-  Flags / Anchor / State / Node; the body never leaves the panel's bounds (scissor)
-  and scrolls with the mouse wheel; on the right, a scrollbar when there are more
-  sections than room. The wheel belongs to the panel under the cursor.
+  Flags / Sound / Anchor / State / Node; the body never leaves the panel's bounds
+  (scissor) and scrolls with the mouse wheel; on the right, a scrollbar when there
+  are more sections than room. The wheel belongs to the panel under the cursor.
 * **Console** - filters by level with live counters: `Warnings 1`, `Errors 0`,
   `Info 18`. An empty console is normal.
 * **Layers** - a panel under the button in the bar: every body in a list, with
@@ -750,8 +774,8 @@ Panels, top to bottom:
 
 Every zone of the screen is a separate file in `src/editor/panels/`: `TopBar.cpp`
 (the bar itself), `TopBarOverlay.cpp` (all the panels that drop from it),
-`LeftColumn.cpp`, `FavoritesDock.cpp`, `ScenePanel.cpp`, `InspectorDock.cpp`,
-`BottomBar.cpp`.
+`LeftColumn.cpp`, `FavoritesDock.cpp`, `SoundsDock.cpp`, `ScenePanel.cpp`,
+`InspectorDock.cpp`, `BottomBar.cpp`.
 
 The window title is the icon, `Spectra3D`, a dash and the project name: the icon
 comes from `assets/image/icons`, chosen in the launcher's settings and remembered in
@@ -845,6 +869,11 @@ during that same tick.
   Sphere - radius, Mesh - uniform SCALE). Handle picking uses screen distance.
 - **Bottom panel**: the Console with level filters and counters; drags to the
   bottom edge of the window. There is no status line.
+- **Sound**: the Sounds panel lists what the engine has loaded and plays it; the
+  `+` button gives a sound to the selected object, which then makes it when it
+  hits something - louder the harder the hit. A hit is an impulse, not a
+  contact: a body resting on the floor carries its own weight every step, and
+  three times that is where "it was hit" becomes "it is sitting there".
 - **Help** (`?` in the bar or the **Help** menu): keyboard and mouse in two
   columns and an About page (version, OpenGL, scene file, language).
 - **Logs**: levels INFO/WARN/ERROR, output to stderr, the file `build/engine.log`
@@ -947,7 +976,8 @@ scene is written in.
             "halfExtents": [0.5, 0.5, 0.5],
             "mass": 1,
             "material": { "friction": 0.5, "restitution": 0.3, "density": 1, "isStatic": false },
-            "flags": { "visible": true, "locked": false, "favorite": false }
+            "flags": { "visible": true, "locked": false, "favorite": false },
+            "sound": { "name": "thud", "volume": 0.5 }
         }
     ]
 }
@@ -958,7 +988,8 @@ A shape is one of `box`, `sphere`, `cylinder`, `capsule`, `cone`, `pyramid`,
 model's name and its scale; a `camera` carries a `camera` object with its field
 of view and whether it is the one the game looks through. Meshes are looked up
 by name in `assets/models`, then in the working directory, so a scene survives a
-restart.
+restart. A body that makes a sound carries a `sound` object with the name of
+the sound and how loud it is; a body without one has no `sound` object at all.
 
 The project manifest names the file its scene is in (`scene=scene.json`), so a
 project can keep its scene somewhere else.
@@ -1006,6 +1037,49 @@ build\skygen.exe assets\sky.jpg
 Nothing has to be changed to have a sky: `assets/sky.jpg` is the sky a scene
 gets. Copy it into a project as `sky.jpg` to give that project a sky of its
 own, and replace it with a picture of your own to change it.
+
+## Sound
+
+The engine has sound: a device, the sounds loaded into it, and the playing of
+them. It is the `audio` layer, and miniaudio is what talks to the sound card.
+
+**The sounds are files, and the name of a sound is the name of its file without
+the extension.** A `.wav` (or `.ogg`, `.mp3`, `.flac`) dropped into
+`assets/sounds/` is a sound the scripts can play and a body can carry, with
+nothing else to be written. The engine loads the whole folder at startup and
+says how many it found in the log.
+
+Three things can be done with a sound:
+
+- **Play it** - from a script, with `engine::playSound("hit")`, or from the
+  **Sounds** panel (View menu), which lists the loaded sounds and has a button
+  that plays each one.
+- **Give it to a body** - the `+` button in the Sounds panel gives the sound to
+  the body that is selected. The body then makes that sound when it hits
+  something, louder the harder it is hit. The inspector shows the sound a body
+  carries, with a button that plays it and one that takes it away.
+- **Put it in a script** - `engine::playSound`, `engine::playSoundLoop`,
+  `engine::stopSound`, `engine::setMasterVolume` and the rest.
+
+A machine with no sound card is a machine where everything else still has to
+work: the device fails to start, the log says so, and the game runs in silence.
+
+### The sounds the engine ships
+
+`assets/sounds/` holds three short pieces, two seconds each, made by
+`tools/soundgen.cpp` - a generator that writes 16 bit PCM WAV by hand. They are
+made to be told apart by ear: a steady note with a tremolo, a chirp from low to
+high, and a knock.
+
+```
+cmake -S . -B build -DSPECTRA_BUILD_TOOLS=ON
+cmake --build build
+build\soundgen.exe assets\sounds
+```
+
+The three files are test sounds, not music: they are there so that a machine
+with a sound card has something to make, and so that the engine's own sound can
+be checked by ear.
 
 To make a skybox of your own from six images, drop them into a folder named
 after the direction each one looks at and point a project's `sky/` at it.

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <string>
 
 #include "core/Math.hpp"
 #include "physics/Material.hpp"
@@ -100,6 +101,14 @@ bool asleep = false;
     // body carries it at a time - see PhysicsWorld::setActiveCamera, which is
     // the only thing that should ever set it.
     bool activeCamera = false;
+
+    // The sound this body makes when it hits something. A name, not a file:
+    // the physics layer carries the name and the shell that owns the device
+    // decides what it means, the same way `mesh` is an index and not a path.
+    std::string sound;
+    // How loud that sound is, 0..1. The shell scales it by the strength of the
+    // hit on top of this.
+    float soundVolume = 1.0f;
 
     // --- soft constraint ---------------------------------------------------
     bool anchorPosition = false;

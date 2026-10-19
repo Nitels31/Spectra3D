@@ -40,6 +40,8 @@ below it.
                 |          TextAtlas, PrimitiveCache, GlInfo
               assets      MeshAsset, MeshRegistry, MeshImport, MeshUtil, loaders/
                 |
+              audio       SoundDevice: the device, the sounds, the playing
+                |
               physics     RigidBody, Material, PhysicsWorld
                 |
              +------+------+
@@ -61,6 +63,9 @@ there, while `Theme.hpp` is only colours. `script` sits above `scene` —
 `Application` runs it alongside the `MeshRegistry` and the camera. `GlInfo.hpp`
 lives in `render` because it is about the context, and it reads `kGlVersionMajor`
 from `platform/Window.hpp`: a dependency upward, which is exactly where it belongs.
+`audio` sits between `assets` and `physics` because it is a service both the
+scene and the shell use and neither of them owns: a body carries the *name* of a
+sound and the device decides what that name means.
 
 ## Rules that hold the structure together
 
@@ -175,6 +180,34 @@ about models: a body stores a mesh *index*, which the renderer resolves.
 registry any more), `MeshUtil` (shared bounds/normals/size fitting) and one file per
 format in `loaders/`.
 
+### `audio`
+
+`SoundDevice`: the audio device, the sounds loaded into it, and the playing of
+them. It is an instance and not a global — the engine makes no sound until
+somebody starts it, and a machine with no sound card is a machine where
+everything else still has to work, so a failure to start is a line in the log and
+not a reason to stop.
+
+Three things about it are worth knowing before changing it:
+
+- **The sounds are named, not paths.** A script says
+  `engine::playSound("hit")` and the registry knows which file that is; the
+  same name is what a body carries in the scene, so a sound can be given to a
+  body by a script as well as by the inspector. The `physics` layer carries the
+  name and knows nothing about files — the same arrangement the mesh index has.
+- **Each sound has three voices.** Two bodies hitting the floor in the same
+  frame are two sounds, not one sound played twice, and a sound that is already
+  playing is played again from the beginning: the same sound twice is the same
+  sound twice, not a half of one and a half of another.
+- **The device is behind a pointer.** miniaudio's types are anonymous typedefs
+  and cannot be forward declared, and a header that included four megabytes of
+  miniaudio would be included by everything that so much as mentions a sound.
+  `SoundDevice.hpp` names an `Impl` and only `SoundDevice.cpp` ever sees what is
+  behind it.
+
+miniaudio is one header with the implementation in it, so exactly one
+translation unit defines `MA_IMPLEMENTATION` — the one that owns the device.
+
 ### `render`
 
 `Camera`, `Color`, `PrimitiveCache` (display lists), `TextAtlas` (FreeType),
@@ -261,10 +294,11 @@ nobody can file, and a visible `settings.icon` is one everybody can.
 
 `ScriptHost` is the AngelScript engine (`asCreateScriptEngine`), module compilation
 and execution, and diagnostics. `Bindings.hpp` describes `ScriptState` (a live
-`PhysicsWorld`/`MeshRegistry`/`Camera` plus the groups scripts create) and the
-registration tables; `BindEngine.cpp` is logging, spawning, gravity and body access;
-`BindScene.cpp` is the scene, model import and groups; `BindCamera.cpp` is the camera;
-`BindInput.cpp` is the keyboard and mouse, read from the live `Window`;
+`PhysicsWorld`/`MeshRegistry`/`Camera`/`SoundDevice` plus the groups scripts
+create) and the registration tables; `BindEngine.cpp` is logging, spawning,
+gravity and body access; `BindScene.cpp` is the scene, model import and groups;
+`BindCamera.cpp` is the camera; `BindInput.cpp` is the keyboard and mouse, read
+from the live `Window`; `BindSound.cpp` is the sound device;
 `BindString.cpp` is the engine's own `string` type, because AngelScript has no
 standard one. The `engine` namespace is created with
 `SetDefaultNamespace("engine")`, because 2.38 does not accept a `namespace` modifier
@@ -746,6 +780,7 @@ their own literals.
 | `<projectsRoot>/<Project>/editorlayout.txt` | the saved editor workspace (written by `EditorLayout.cpp`) |
 | `<projectsRoot>/<Project>/scripts/` | `*.as`, run when Play begins |
 | `<projectsRoot>/<Project>/models/` | the project's own model folder |
+| `<exeDir>/assets/sounds/*.wav` | the sounds the engine ships: the name of each is its file's stem, so a file dropped in the folder is a sound the scripts can play and a body can carry |
 | `<exeDir>/assets/image/icons/*.ico` | the application icons the settings screen offers |
 | `<exeDir>/settings.ini` | machine-level settings: `projectRoot`, `language`, `theme`, `frameRateCap`, `appIcon`, up to 8 `recent` |
 

@@ -41,6 +41,10 @@ constexpr float kCameraSpeed = 12.0f;
 constexpr float kCameraBoost = 30.0f;
 constexpr float kLookSensitivity = 0.0025f;
 
+// The impulse at which a hit is as loud as it gets. Past this the sound is as
+// loud as it is going to be: a body that falls from the sky should not deafen.
+constexpr float kImpactFullScale = 6.0f;
+
 const GravityAxis kGravityAxes[6] = {GravityAxis::NegY, GravityAxis::PosY, GravityAxis::NegX,
                                       GravityAxis::PosX, GravityAxis::NegZ, GravityAxis::PosZ};
 
@@ -111,7 +115,7 @@ bool waitForFrame(Window& window, double deadline, bool wakeOnActivity) {
 } // namespace
 
 Application::Application()
-    : launcher_(localizer_), scripts_(world_, meshes_, camera_, &window_) {}
+    : launcher_(localizer_), scripts_(world_, meshes_, camera_, &window_, &sound_) {}
 
 Application::~Application() = default;
 
@@ -137,6 +141,7 @@ bool Application::initialize() {
     uiRenderer_.buildFonts();
     sceneRenderer_.initialize(world_.arenaMin, world_.arenaMax);
     loadSky();
+    startAudio();
 
     // The banner shows the context the engine actually holds, not the version the
     // driver likes to advertise: a 3.3 compatibility context on an NVIDIA card
@@ -196,6 +201,59 @@ void Application::loadProjectSky(const std::string& projectDir) {
     // A project that has a sky of its own uses it; one that has not keeps
     // whatever the engine is using.
     loadSkyFrom(projectDir);
+}
+
+void Application::startAudio() {
+    // The device first: without one there is nothing to load the sounds into,
+    // and loading them anyway would fill the log with complaints about a
+    // machine that cannot make a sound in the first place.
+    if (!sound_.start()) return;
+
+    // The sounds the engine ships. The name of each is the name of its file
+    // without the extension, so a file dropped into assets/sounds/ is a sound
+    // the scripts can play and a body can carry.
+    const std::string assets = fs::assetRoot();
+    if (assets.empty()) return;
+    const int loaded = sound_.loadFolder(str::join(assets, "sounds"));
+    Log::info("Audio: %d sound(s) loaded", loaded);
+}
+
+void Application::playImpactSounds() {
+    if (!sound_.running()) return;
+
+    // The impulse each body took, summed over its contact points: a box on
+    // the floor has four of them and each carries a quarter of its weight.
+    // Summing first and playing once is the difference between one knock and
+    // four.
+    impactImpulses_.assign(world_.bodies.size(), 0.0f);
+    for (const PhysicsWorld::Contact& contact : world_.contacts()) {
+        const float impulse = contact.accumulatedNormal;
+        if (impulse <= 0.0f) continue;
+        if (contact.bodyA < impactImpulses_.size())
+            impactImpulses_[contact.bodyA] += impulse;
+        if (contact.bodyB != PhysicsWorld::Contact::kNoBody &&
+            contact.bodyB < impactImpulses_.size())
+            impactImpulses_[contact.bodyB] += impulse;
+    }
+
+    for (size_t i = 0; i < impactImpulses_.size(); ++i) {
+        const float impulse = impactImpulses_[i];
+        if (impulse <= 0.0f) continue;
+        const RigidBody& body = world_.bodies[i];
+        if (body.sound.empty()) continue;
+
+        // What counts as a hit: a body resting on the floor carries its own
+        // weight every step, and an impact carries its momentum. The line
+        // between them is three times the weight - below it the body is
+        // sitting there, above it something happened.
+        const float resting = body.mass * world_.gravityMagnitude * (1.0f / 60.0f);
+        if (impulse < resting * 3.0f) continue;
+
+        // The loudness of a hit is how much of it there was, up to a point:
+        // a body that falls from the sky should not deafen.
+        const float loudness = clampf(impulse / kImpactFullScale, 0.2f, 1.0f);
+        sound_.play(body.sound, body.soundVolume * loudness);
+    }
 }
 
 void Application::reportStartupInfo() {
@@ -342,7 +400,7 @@ void Application::openProject(const ProjectInfo& project) {
         scenes::load(world_, meshes_, scenePath);
     }
 
-    editor_ = std::make_unique<Editor>(meshes_, localizer_);
+    editor_ = std::make_unique<Editor>(meshes_, localizer_, sound_);
     editor_->setScenePath(scenePath);
     editor_->setProjectName(project_.name);
     // Captured after the manifest has been applied, so "reset camera" in the View
@@ -652,6 +710,10 @@ void Application::updateSimulation(float dt, bool stepping) {
         world_.step((float)clock_.step());
         simulationTime_ += clock_.step();
     }
+    // The sounds of the hits, after the last step: the contacts are that
+    // step's, and a sound that belongs to a step nobody can see any more is a
+    // sound in the wrong place.
+    playImpactSounds();
     // Read after the steps: this is how far the accumulator has spilled into the
     // next step, which is where the body visually is between the last two.
     clockAlpha_ = (float)clock_.alpha();

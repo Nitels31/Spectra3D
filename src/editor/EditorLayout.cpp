@@ -79,6 +79,7 @@ const char* panelKey(int index) {
     case (int)PanelId::Inspector: return "Inspector";
     case (int)PanelId::Console: return "Console";
     case (int)PanelId::Favorites: return "Favorites";
+    case (int)PanelId::Sounds: return "Sounds";
     default: return "";
     }
 }

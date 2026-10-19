@@ -49,10 +49,13 @@ public:
     // everything - which is how the viewport goes back to the free camera.
     void setActiveCamera(int index);
 
-private:
-    // One resolved contact for the current step. `bodyB` == kNoBody for arena
+    // One resolved contact for the last step. `bodyB` == kNoBody for arena
     // walls, in which case `wall`/`slot` address the warm-start cache.
-struct Contact {
+    //
+    // Public because the shell needs them: a body that hits something is a
+    // body that makes a sound, and the sound is played by whoever owns the
+    // device - the physics layer knows nothing about sound and must not.
+    struct Contact {
         static constexpr uint32_t kNoBody = UINT32_MAX;
         static constexpr int kNoWall = -1;
 
@@ -74,6 +77,11 @@ struct Contact {
         int pairIndex = -1;
     };
 
+    // The contacts of the last step. The list is rebuilt from scratch every
+    // step, so it says nothing about the step before this one.
+    const std::vector<Contact>& contacts() const { return contacts_; }
+
+private:
     void integrateForces(float dt);
     void generateContacts();
     void collectWallContacts();

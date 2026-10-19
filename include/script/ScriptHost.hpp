@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "assets/MeshRegistry.hpp"
+#include "audio/SoundDevice.hpp"
 #include "physics/PhysicsWorld.hpp"
 #include "render/Camera.hpp"
 #include "platform/Window.hpp"
@@ -83,7 +84,12 @@ public:
     // host with no window answers every input question with "no" and "zero",
     // which is what makes the headless scripttest possible without a display.
     // A script never sees the pointer, only asks it questions.
-    Host(PhysicsWorld& world, MeshRegistry& meshes, Camera& camera, Window* window);
+    //
+    // `sound` is null when there is no device - a machine with no sound card -
+    // and every sound binding then answers "no" instead of touching a device
+    // that is not there.
+    Host(PhysicsWorld& world, MeshRegistry& meshes, Camera& camera, Window* window,
+         SoundDevice* sound = nullptr);
     ~Host();
     Host(const Host&) = delete;
     Host& operator=(const Host&) = delete;
@@ -177,6 +183,7 @@ private:
     MeshRegistry& meshes_;
     Camera& camera_;
     Window* window_ = nullptr;
+    SoundDevice* sound_ = nullptr;
 
     // asIScriptEngine* and asIScriptContext*, hidden so this header never has to
     // include AngelScript.

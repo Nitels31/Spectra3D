@@ -1,9 +1,11 @@
 #pragma once
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "assets/MeshRegistry.hpp"
 #include "assets/TextureRegistry.hpp"
+#include "audio/SoundDevice.hpp"
 #include "core/Project.hpp"
 #include "editor/Editor.hpp"
 #include "i18n/Localizer.hpp"
@@ -60,6 +62,15 @@ private:
     void loadSkyFrom(const std::string& directory);
     void loadProjectSky(const std::string& projectDir);
 
+    // --- sound ---------------------------------------------------------------
+    // Starts the device and loads the sounds that ship with the engine. A
+    // machine with no sound card is a machine where everything else still has
+    // to work, so a failure here is a line in the log and not a stop.
+    void startAudio();
+    // The sounds the bodies make when they hit something, and the sounds the
+    // scene's own bodies carry.
+    void playImpactSounds();
+
     // Runs every .as file in the project's scripts folder. Called when play mode
     // starts so scripts see a live world.
     void runProjectScripts();
@@ -77,6 +88,9 @@ private:
     // and is shared by every body that uses the same image, so it belongs next to
     // the model registry and not inside the thing that draws.
     TextureRegistry textures_;
+    // The sound of the world. Owned here, like the textures: a sound outlives
+    // any one frame and is shared by every body that makes the same one.
+    SoundDevice sound_;
     i18n::Localizer localizer_;
     Camera camera_;
     // The body index of the camera the viewport is looking through, or -1 when
@@ -115,6 +129,10 @@ private:
     // The cap above, named because Application.cpp quotes it in a comment and a
     // hook budget is the thing that has to be reasoned about.
     static constexpr int kMaxStepsPerRenderedFrame = 2;
+    // The impulse each body took in the last step, one entry per body. Kept
+    // here so that a step does not allocate: the list is as long as the world
+    // and the world does not change size every frame.
+    std::vector<float> impactImpulses_;
     double simulationTime_ = 0.0;
     // Start of the current one-second window, on the window clock.
     double lastTickTime_ = 0.0;

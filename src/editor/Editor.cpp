@@ -51,8 +51,8 @@ const NavBall kNavBalls[6] = {
 
 } // namespace
 
-Editor::Editor(MeshRegistry& meshes, i18n::Localizer& localizer)
-    : meshes_(meshes), loc_(localizer) {
+Editor::Editor(MeshRegistry& meshes, i18n::Localizer& localizer, SoundDevice& sound)
+    : meshes_(meshes), loc_(localizer), sound_(sound) {
     filter_.id = kFilterField;
     toolbarSearch_.id = kToolbarSearch;
     // Seeded from the theme metrics; the edges are the only thing that changes
@@ -75,6 +75,12 @@ Editor::Editor(MeshRegistry& meshes, i18n::Localizer& localizer)
     favorites.zone = PanelZone::Float;
     favorites.open = false;
     favorites.floatRect = Rect{340.0f, 130.0f, 260.0f, 300.0f};
+    // The sounds panel starts closed as well, for the same reason: a panel that
+    // appears over the scene on the first launch is a panel nobody asked for.
+    Panel& sounds = panels_[(int)PanelId::Sounds];
+    sounds.zone = PanelZone::Float;
+    sounds.open = false;
+    sounds.floatRect = Rect{620.0f, 130.0f, 260.0f, 260.0f};
 }
 
 bool Editor::consumeSingleStep() {
@@ -165,6 +171,7 @@ const char* Editor::panelTitle(PanelId id) const {
     case PanelId::Inspector: return text("tab.inspector");
     case PanelId::Console: return text("tab.console");
     case PanelId::Favorites: return text("tab.favorites");
+    case PanelId::Sounds: return text("tab.sounds");
     case PanelId::PanelCount: break;
     }
     return "";
@@ -1208,6 +1215,7 @@ void Editor::drawPanelById(UiRenderer& ui, PhysicsWorld& world, Window& window, 
     case PanelId::Inspector: drawInspectorDock(ui, world, window, panel); break;
     case PanelId::Console: drawConsolePanel(ui, panel); break;
     case PanelId::Favorites: drawFavoritesDock(ui, world, panel); break;
+    case PanelId::Sounds: drawSoundsDock(ui, world, panel); break;
     case PanelId::PanelCount: break;
     }
     drawPanelChrome(ui, id);
