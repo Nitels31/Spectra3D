@@ -332,6 +332,12 @@ int PhysicsWorld::findActiveCamera() const {
     return -1;
 }
 
+int PhysicsWorld::findFirstCamera() const {
+    for (size_t i = 0; i < bodies.size(); ++i)
+        if (bodies[i].isCamera()) return (int)i;
+    return -1;
+}
+
 void PhysicsWorld::setActiveCamera(int index) {
     // Only one camera is ever the active one, so the flag is cleared everywhere
     // first and set on one body after. Clearing it on the way out is what makes

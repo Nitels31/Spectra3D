@@ -362,11 +362,17 @@ void Application::runEditorFrame(float dt) {
     // per-frame hook and the fixed-step loop below need the same answer.
     const bool stepping = editor_->simulating() || editor_->consumeSingleStep();
 
-    // The scene's active camera, if it has one, is what the viewport looks
-    // through. It is read into the free camera at the top of the frame and
-    // written back at the bottom, so the free camera stays the working copy:
-    // the editor's fly, pan and orbit controls all write into it, and the
-    // entity ends up holding wherever they left it.
+    // The camera the game looks through: the scene's active one, or - when no
+    // camera says it wants to be that - the first camera in the scene. A camera
+    // that was just made and never told to be active is still a camera, and a
+    // scene with a camera in it is a scene that means to be looked through.
+    //
+    // It is the camera of the GAME, not of the editor. The editor looks at the
+    // scene with its own free camera, the way an editor does: the camera in the
+    // scene is an object in the scene, and an object you cannot see and cannot
+    // drag is an object you cannot place. Pressing Play is what hands the view
+    // over to the camera - the same moment a game starts, the same moment a
+    // game view appears.
     //
     // The index is taken, not the body: a body can be deleted by a script
     // between here and the write back, and an index is re-checked every time
@@ -376,12 +382,14 @@ void Application::runEditorFrame(float dt) {
     // back only happens when the free camera has moved since then, so a script
     // that moves the camera body directly is not overwritten by the editor's
     // idea of where the camera is.
-    const int sceneCamera = world_.findActiveCamera();
-    sceneCamera_ = sceneCamera;
+    int gameCamera = world_.findActiveCamera();
+    if (gameCamera < 0) gameCamera = world_.findFirstCamera();
+    const bool playing = editor_->simulating();
+    sceneCamera_ = playing ? gameCamera : -1;
     Camera readCamera = camera_;
     bool readFromEntity = false;
-    if (sceneCamera >= 0) {
-        if (const RigidBody* body = world_.find(sceneCamera)) {
+    if (sceneCamera_ >= 0) {
+        if (const RigidBody* body = world_.find(sceneCamera_)) {
             camera_ = cameraFromEntity(*body);
             readCamera = camera_;
             readFromEntity = true;
@@ -464,7 +472,7 @@ if (editor_->consumeTimeReset()) simulationTime_ = 0.0;
     // the editor's idea of where the camera is, and a frame where nothing moved
     // does not mark the scene dirty.
     if (readFromEntity) {
-        if (RigidBody* body = world_.find(sceneCamera)) {
+        if (RigidBody* body = world_.find(sceneCamera_)) {
             if (body->isCamera() && cameraMoved(camera_, readCamera)) {
                 body->position = camera_.position;
                 body->orientation = orientationFromCamera(camera_);

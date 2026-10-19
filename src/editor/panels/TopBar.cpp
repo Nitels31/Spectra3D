@@ -477,6 +477,11 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         const int index = (int)world.bodies.size() - 1;
         activeBody_ = index;
         selectedBodies_.assign(1, index);
+        // The camera the game looks through. A camera that was just made is the
+        // one the person making it wants to look through - and a scene that has
+        // a camera in it but says none of them is the one is a scene that means
+        // to be looked through by the first of them.
+        world.setActiveCamera(index);
         markSceneDirty();
         Log::info("Created camera %d", index);
         break;

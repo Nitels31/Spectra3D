@@ -38,6 +38,12 @@ public:
     // when the scene has none and the editor's own free camera is in charge.
     int findActiveCamera() const;
 
+    // The first camera in the scene, or -1 when there is none. The fallback for
+    // a scene whose cameras never said which of them is the one: a camera that
+    // was made and never told to be active is still a camera, and a scene with
+    // a camera in it is a scene that means to be looked through.
+    int findFirstCamera() const;
+
     // Makes `index` the active camera and clears the flag on every other body.
     // A body that is not a camera is ignored, and -1 clears the flag on
     // everything - which is how the viewport goes back to the free camera.

@@ -523,8 +523,14 @@ void SceneRenderer::drawCameraEntity(const RigidBody& body, const Quat& orientat
     Vec3 corners[4];
     cameraFrustum(body, kCameraFrustumLength, corners);
 
+    // The camera the game looks through is drawn in a different colour. There
+    // is no other way to tell, in a scene with a few cameras in it, which one
+    // of them the game is going to use.
+    if (body.activeCamera)
+        glColor3f(1.0f, 0.82f, 0.30f);
+    else
+        glColor3f(0.45f, 0.85f, 1.0f);
     glLineWidth(1.5f);
-    glColor3f(0.45f, 0.85f, 1.0f);
     glBegin(GL_LINES);
     for (int i = 0; i < 4; ++i) {
         glVertex3f(0.0f, 0.0f, -kCameraLensOffset);
