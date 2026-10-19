@@ -41,6 +41,10 @@ struct MeshAsset {
     // must not happen inside a loader: the asset is built without a context and
     // can be serialized to disk, the texture index cannot.
     std::vector<std::string> texturePaths;
+    // The same images, index for index, for the ones the model file carried
+    // itself. A .glb keeps its textures in its own binary chunk, so there is a
+    // matching empty path and these bytes are the only handle there is.
+    std::vector<std::vector<unsigned char>> textureBytes;
 
     Vec3 boundsMin;
     Vec3 boundsMax;

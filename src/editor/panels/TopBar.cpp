@@ -446,14 +446,26 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         camera = homeCamera_;
         viewRay_.valid = false;
         break;
-    case Action::Shape:
-        BodyFactory::spawnInFrontOf(world, (Shape)param, camera, 1.0f);
+    case Action::Shape: {
+        const int index = BodyFactory::spawnInFrontOf(world, (Shape)param, camera, 1.0f);
+        // Selected on creation. Create and Import both put the new body where the
+        // eye already is, and an object you just made and cannot immediately get
+        // rid of is the worst kind: the Delete key has nothing selected to act on,
+        // so it reports no error and the thing you just made simply stays.
+        if (index >= 0) {
+            activeBody_ = index;
+            selectedBodies_.assign(1, index);
+        }
         break;
+    }
     case Action::Model: {
         const std::vector<std::string>& models = assets_.files();
         if (param < 0 || param >= (int)models.size()) break;
-        if (assets_.import(models[(size_t)param], world, camera, meshes_, activeBody_) < 0)
-            Log::error("Import failed: %s", models[(size_t)param].c_str());
+        if (assets_.import(models[(size_t)param], world, camera, meshes_, activeBody_) < 0) {
+            Log::error("Import failed: '%s'", models[(size_t)param].c_str());
+            break;
+        }
+        selectedBodies_.assign(1, activeBody_);
         break;
     }
     case Action::Controls:

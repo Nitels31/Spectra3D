@@ -33,6 +33,11 @@ struct RigidBody {
     // drawn at lerp(prevPosition, position, alpha) instead of position moves
     // smoothly between the fixed 60 Hz physics steps instead of jumping. Only
     // the visual read uses these; the simulation never does.
+    //
+    // They are seeded from the current transform rather than left at zero, because
+    // a zero here is not "at the origin": the renderer draws lerp(prev, curr, alpha),
+    // so a body that was placed but never integrated reads as sitting on the world
+    // origin instead of where it was put. See syncPrevTransform().
     Vec3 prevPosition;
     Quat prevOrientation;
 
@@ -98,6 +103,15 @@ bool asleep = false;
     // Recomputes mass properties from the current shape and dimensions and
     // clamps them into valid ranges. Called after every dimension edit.
     void configure(float newMass);
+
+    // Declares the current transform to be the state before the next step, so a
+    // body that has not been integrated yet draws where it actually is.
+    //
+    // PhysicsWorld::step does this for every body it integrates. Everything else
+    // that puts a body somewhere - the spawn helpers, the loaders, a gizmo drag -
+    // has to do it too, or the renderer interpolates from a transform that has
+    // nothing to do with the body and draws it at the world origin.
+    void syncPrevTransform();
 
     Mat3 invInertiaWorld() const;
     Vec3 pointVelocity(const Vec3& arm) const;

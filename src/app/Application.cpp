@@ -541,7 +541,12 @@ void Application::updateCameraInput(Window& window, float dt) {
 void Application::updateSimulation(float dt, bool stepping) {
     if (!stepping) {
         clock_.reset();
-        clockAlpha_ = 0.0f;
+        // 1, not 0. The renderer draws lerp(prevTransform, currentTransform, alpha),
+        // and alpha 0 would mean "draw the state before the last step" - which, in an
+        // editor that is not stepping, is a step that never happened. Every body
+        // would be drawn one step behind, and the hitbox and gizmo, which read
+        // `position` directly, would not be drawn there at all.
+        clockAlpha_ = 1.0f;
         return;
     }
 

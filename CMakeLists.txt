@@ -174,7 +174,8 @@ target_include_directories(spectra_json SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_
 # the family, matching how the libraries are laid out.
 add_library(spectra_stb INTERFACE)
 target_include_directories(spectra_stb SYSTEM INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb/stb_image)
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb/stb_image
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb/stb_image_write)
 
 # ---------------------------------------------------------------------------
 # Scripting
@@ -422,6 +423,35 @@ else()
     pkg_check_modules(GLFW REQUIRED glfw3)
     target_include_directories(spectra_runtime PUBLIC ${GLFW_INCLUDE_DIRS})
     target_link_libraries(spectra_runtime PUBLIC ${GLFW_LIBRARIES} OpenGL::GL ${CMAKE_DL_LIBS})
+endif()
+
+# ---------------------------------------------------------------------------
+# The MinGW runtime next to the binary
+# ---------------------------------------------------------------------------
+#
+# libstdc++, libgcc and libwinpthread are ordinary DLLs, and the binary needs the
+# copies of them that belong to the compiler that built it. A binary built by one
+# MinGW and started next to another's runtime fails at load time with "the
+# procedure entry point ... could not be located" - the two builds disagree about
+# which thread-local variables exist, and the newer symbol is simply not there.
+#
+# Copying them out of the compiler's own directory makes the two agree by
+# construction, so no build tree can end up with a binary and a runtime that came
+# from different toolchains. This is also the only reason the runtime has to be
+# staged at all: the compiler's bin directory is not on the PATH of whoever
+# double-clicks the exe.
+if(MINGW)
+    get_filename_component(SPECTRA_MINGW_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    message(STATUS "MinGW runtime: ${SPECTRA_MINGW_BIN}")
+    foreach(SPECTRA_RUNTIME_DLL libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
+        if(EXISTS "${SPECTRA_MINGW_BIN}/${SPECTRA_RUNTIME_DLL}")
+            add_custom_command(TARGET spectra3d POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${SPECTRA_MINGW_BIN}/${SPECTRA_RUNTIME_DLL}"
+                        "$<TARGET_FILE_DIR:spectra3d>"
+                COMMENT "Staging ${SPECTRA_RUNTIME_DLL}")
+        endif()
+    endforeach()
 endif()
 
 # Assets are copied next to the binary so a fresh checkout runs without extra

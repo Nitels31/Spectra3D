@@ -82,6 +82,10 @@ RigidBody BodyFactory::make(Shape shape, const Vec3& position, const Vec3& veloc
     }
 
     body.configure(massFor(shape, density, halfExtents));
+    // A body the world has never stepped has no "before" state, and the renderer
+    // draws lerp(prev, curr, alpha) - so without this the first thing drawn is the
+    // body sitting on the world origin.
+    body.syncPrevTransform();
     return body;
 }
 

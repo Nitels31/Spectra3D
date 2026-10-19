@@ -346,15 +346,23 @@ bool SceneRenderer::drawImportedMesh(const RigidBody& body, const MeshRegistry& 
                         part.vertices.data() + kMeshNormalOffset);
 
         // Texturing is per part, so a model with one mapped material and one flat
-        // one draws both in the same loop - the flat part just binds 0, which is
-        // what makes GL_MODULATE with an unbound texture reproduce the flat colour
-        // exactly as before.
+        // one draws both in the same loop. The flat part has texturing switched
+        // off rather than bound to nothing: a texture name that was never given
+        // an image is an incomplete texture, and an incomplete texture samples as
+        // black on some drivers and white on others. Off is the answer that is the
+        // same everywhere.
         const unsigned tex = textures.at(part.texture);
-        glBindTexture(GL_TEXTURE_2D, tex);
-        glEnable(GL_TEXTURE_2D);
-        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-        glTexCoordPointer(2, GL_FLOAT, (GLsizei)stride,
-                          part.vertices.data() + kMeshTexCoordOffset);
+        const bool hasTexture = tex != 0;
+        if (hasTexture) {
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glEnable(GL_TEXTURE_2D);
+            glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+            glTexCoordPointer(2, GL_FLOAT, (GLsizei)stride,
+                              part.vertices.data() + kMeshTexCoordOffset);
+        } else {
+            glDisable(GL_TEXTURE_2D);
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        }
 
         if (!part.indices.empty()) {
             glDrawElements(GL_TRIANGLES, (GLsizei)part.indices.size(), GL_UNSIGNED_INT,
@@ -364,9 +372,11 @@ bool SceneRenderer::drawImportedMesh(const RigidBody& body, const MeshRegistry& 
                          (GLsizei)(part.vertices.size() / kMeshVertexFloats));
         }
 
-        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-        glDisable(GL_TEXTURE_2D);
-        glBindTexture(GL_TEXTURE_2D, 0);
+        if (hasTexture) {
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+            glDisable(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
     }
     glDisableClientState(GL_VERTEX_ARRAY);
     glDisableClientState(GL_NORMAL_ARRAY);

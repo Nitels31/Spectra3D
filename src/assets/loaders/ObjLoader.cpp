@@ -100,7 +100,18 @@ bool loadObj(const std::string& path, MeshAsset& out) {
         }
         for (size_t slot = 0; slot < slots.size(); ++slot) {
             MeshPart& part = asset.parts[slots[slot].second];
-            part.vertices.resize(counts[slot] * kMeshVertexFloats);
+            // `counts[slot]` is a count of TRIANGLES, and this loader de-indexes:
+            // every triangle contributes its own three corners. So the vertex
+            // buffer needs three vertices per count, not one.
+            //
+            // Sizing it at counts[slot] gave the second pass a buffer a third of the
+            // size it was about to write, and the overflow landed on whatever the
+            // allocator had handed out next - not a wrong triangle, but a model that
+            // sits at the origin, vanishes as the camera nears it, and whose
+            // bounding box belongs to someone else's memory. The index buffer below
+            // is sized off the same count and was already right, which is why the
+            // two disagreed.
+            part.vertices.resize(counts[slot] * 3 * kMeshVertexFloats);
             part.indices.resize(counts[slot] * 3);
         }
 
@@ -149,7 +160,17 @@ bool loadObj(const std::string& path, MeshAsset& out) {
                 v += kMeshVertexFloats;
             }
 
-            unsigned* idx = part.indices.data() + (t / 3) * 3;
+            // `first` is this triangle's slot inside ITS OWN part, and it advances by three
+            // per triangle, so it is already the index-buffer offset for this part.
+            //
+            // Not the loop counter `t`: that counts triangles across the whole file,
+            // across every material and every shape, while part.indices only holds
+            // the triangles of one material. An OBJ with a second material writes
+            // its second part's indices past the end of that part's buffer and
+            // corrupts the heap next to it - which is not a wrong triangle, it is a
+            // model that renders at the origin, vanishes when the camera nears it,
+            // and whose bounding box belongs to whatever the allocator handed out.
+            unsigned* idx = part.indices.data() + first;
             idx[0] = (unsigned)first;
             idx[1] = (unsigned)first + 1;
             idx[2] = (unsigned)first + 2;

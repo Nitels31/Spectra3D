@@ -45,6 +45,7 @@ int AssetBrowser::import(const std::string& path, PhysicsWorld& world, Camera& c
     body.halfExtents = mesh->half;
     body.position = camera.position + camera.forward().normalized() * (mesh->radius + 3.0f);
     body.configure(massFromHull(mesh->half));
+    body.syncPrevTransform();
 
     world.bodies.push_back(body);
     const int index = (int)world.bodies.size() - 1;

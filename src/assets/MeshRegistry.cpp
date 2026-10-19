@@ -34,14 +34,33 @@ int MeshRegistry::importFile(const std::string& path, bool quiet) {
               (int)asset.parts.size(), (int)asset.triangleCount(),
               asset.scale != 1.0f ? " (auto-fitted)" : "");
 
-    // Now that a GL context exists, turn the paths the loader could only record
-    // into real indices. Quiet: a missing map leaves the part untextured and the
-    // model still draws, which the loader's own log has already explained.
-    if (textures_ && !asset.texturePaths.empty())
+    // Now that a GL context exists, turn what the loader could only record - a
+    // path, or the bytes of an image the model file carried itself - into real
+    // indices. Quiet: a missing map leaves the part untextured and the model still
+    // draws, which the loader's own log has already explained.
+    //
+    // One registry entry per image, not per part. The falcon's nineteen parts
+    // share two images between them, and a per-part loop uploaded the same
+    // megabyte of PNG seventeen times over. The asset's slot number is the image's
+    // identity, so the slot is resolved once and every part that points at it
+    // takes the answer.
+    if (textures_) {
+        std::vector<int> slots(asset.texturePaths.size(), -1);
+        for (size_t slot = 0; slot < asset.texturePaths.size(); ++slot) {
+            // A slot with no path is an image the model file carried itself. The
+            // bounds check on textureBytes is the loader's side of the contract:
+            // only the glTF loader writes embedded images, and the others never
+            // leave a path empty.
+            const bool embedded = asset.texturePaths[slot].empty() &&
+                                  slot < asset.textureBytes.size() &&
+                                  !asset.textureBytes[slot].empty();
+            slots[slot] = embedded ? textures_->loadMemory(asset.textureBytes[slot], true)
+                                   : textures_->loadFile(asset.texturePaths[slot], true);
+        }
         for (MeshPart& part : asset.parts)
-            if (part.texture >= 0 && part.texture < (int)asset.texturePaths.size())
-                part.texture = textures_->loadFile(asset.texturePaths[(size_t)part.texture],
-                                                   true);
+            if (part.texture >= 0 && part.texture < (int)slots.size())
+                part.texture = slots[(size_t)part.texture];
+    }
 
     return importMesh(std::move(asset));
 }

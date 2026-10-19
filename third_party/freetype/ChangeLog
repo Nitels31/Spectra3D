@@ -887,26 +887,26 @@
 
 2025-08-14  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[truetype] Small fix in the incremental interface (again).
-	
-	Fixes #1299, last [-Wdangling-pointer=] warning.
-	
-	* src/truetype/ttgload.c (load_truetype_glyph): Restore original stream
+	[truetype] Small fix in the incremental interface (again).
+	
+	Fixes #1299, last [-Wdangling-pointer=] warning.
+	
+	* src/truetype/ttgload.c (load_truetype_glyph): Restore original stream
 	on exit unconditionally.
 
 2025-08-14  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[truetype] Small fix in the incremental interface.
-	
-	Fixes #1299, last [-Wdangling-pointer=] warning.
-	
-	* src/truetype/ttgload.c (load_truetype_glyph): Restore original stream
+	[truetype] Small fix in the incremental interface.
+	
+	Fixes #1299, last [-Wdangling-pointer=] warning.
+	
+	* src/truetype/ttgload.c (load_truetype_glyph): Restore original stream
 	on exit.
 
 2025-08-14  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	* src/autofit/afgsub.c: Fix a warning.
-	
+	* src/autofit/afgsub.c: Fix a warning.
+	
 	Fixes [-Wunused-function] warning without HarfBuzz.
 
 2025-08-11  Alexei Podtelezhnikov  <apodtele@gmail.com>
@@ -1286,15 +1286,15 @@
 
 2025-06-23  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[truetype] Restore non-persistent CVT and storage.
-	
-	According to specifications, CVT and storage area may or may not be
-	persistent after modifications by a glyf program.  FreeType had always
-	reset them, which was broken by the last commit.
-	
-	* src/truetype/ttinterp.c (TT_Load_Context): Set CVT and storage here.
-	* src/truetype.ttobjs.c (tt_size_run_prep): Prioritize TT_Load_Context.
-	(tt_size_init_bytecode): Allocate but not set CVT and storage area.
+	[truetype] Restore non-persistent CVT and storage.
+	
+	According to specifications, CVT and storage area may or may not be
+	persistent after modifications by a glyf program.  FreeType had always
+	reset them, which was broken by the last commit.
+	
+	* src/truetype/ttinterp.c (TT_Load_Context): Set CVT and storage here.
+	* src/truetype.ttobjs.c (tt_size_run_prep): Prioritize TT_Load_Context.
+	(tt_size_init_bytecode): Allocate but not set CVT and storage area.
 
 2025-06-22  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
@@ -1399,9 +1399,9 @@
 
 2025-06-13  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	* src/base/ftrfork.c (FT_Raccess_Get_DataOffsets): Remove check.
-	
-	The highest (sign) attribute bit is reserved and should be zero.
+	* src/base/ftrfork.c (FT_Raccess_Get_DataOffsets): Remove check.
+	
+	The highest (sign) attribute bit is reserved and should be zero.
 	It is harmless to omit this check however. Fixes #1342.
 
 2025-06-12  Werner Lemberg  <wl@gnu.org>
@@ -1416,10 +1416,10 @@
 
 2025-06-11  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[truetype] Clean up TT_GlyphZone.
-	
-	* include/freetype/internal/tttypes.h (TT_GlyphZone): Delete fields.
-	* src/truetype/ttobjs.c (tt_glyphzone_new, tt_glyphzone_done,
+	[truetype] Clean up TT_GlyphZone.
+	
+	* include/freetype/internal/tttypes.h (TT_GlyphZone): Delete fields.
+	* src/truetype/ttobjs.c (tt_glyphzone_new, tt_glyphzone_done,
 	tt_size_init_bytecode): Updated.
 
 2025-06-11  Alexei Podtelezhnikov  <apodtele@gmail.com>
@@ -1526,8 +1526,8 @@
 
 2025-06-04  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	* src/type42/t42objs.c (T42_Size_Init): Fix uninitialized use.
-	
+	* src/type42/t42objs.c (T42_Size_Init): Fix uninitialized use.
+	
 	Found by Ozkan Sezer.
 
 2025-06-04  Ozkan Sezer  <sezeroz@gmail.com>
@@ -2157,11 +2157,11 @@
 
 2025-05-14  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[truetype] Tighten code overflow checks.
-	
-	Fixes #1336.
-	
-	* src/truetype/ttinterp.c (Ins_NPUSHB,NPUSHW,PUSHB, PUSHW):
+	[truetype] Tighten code overflow checks.
+	
+	Fixes #1336.
+	
+	* src/truetype/ttinterp.c (Ins_NPUSHB,NPUSHW,PUSHB, PUSHW):
 	Tighten conditions.
 
 2025-05-14  Chris Liddell  <chris.liddell@artifex.com>
@@ -2917,9 +2917,9 @@
 
 2025-04-15  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[base, truetype] Silence UBSAN (cont'd).
-	
-	* src/truetype/ttinterp.c (TT_MulFix14, TT_DotFix14): Use MUL_INT64.
+	[base, truetype] Silence UBSAN (cont'd).
+	
+	* src/truetype/ttinterp.c (TT_MulFix14, TT_DotFix14): Use MUL_INT64.
 	* include/freetype/internal/ftcalc.c (FT_MulFix): Ditto.
 
 2025-04-15  Werner Lemberg  <wl@gnu.org>
@@ -3174,15 +3174,15 @@
 
 2025-04-10  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[truetype] Modernize bytecode projections.
-	
-	With 64-bit platforms widely available, it is more efficient to use
-	64-bit variables readily. It results in noticeable 10% improvement
-	in glyph loading speed.
-	
-	* src/truetype/ttinterp.c (TT_MulFix14, TT_DotFix14) [FT_INT64]:
-	Prioritize available implementation with arguments adjusted based on
-	the use cases.
+	[truetype] Modernize bytecode projections.
+	
+	With 64-bit platforms widely available, it is more efficient to use
+	64-bit variables readily. It results in noticeable 10% improvement
+	in glyph loading speed.
+	
+	* src/truetype/ttinterp.c (TT_MulFix14, TT_DotFix14) [FT_INT64]:
+	Prioritize available implementation with arguments adjusted based on
+	the use cases.
 
 2025-04-09  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
@@ -3202,9 +3202,9 @@
 
 2025-04-09  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[base] Update FT_MulFix inlining.
-	                                                                                                                        Resolves inconsistencies in 64-bit multiplication discussed in !355.                                                    Importantly, FT_MulFix arguments and return value is FT_Long,                                                           whatever sizeof FT_Long is on 64-bit platforms: 8 bytes on Linux or                                                     4 bytes on Windows.                                                                                                                                                                                                                             * include/freetype/internal/ftcalc.h (FT_MulFix_x86_64): Removed.                                                       (FT_MulFix_64): Generalize and prioritize the inline implementation
-	for all 64-bit platforms ifdef FT_INT64.                                                                                * src/base/ftcalc.c (FT_MulFix)[FT_INT64]: Call 'FT_MulFix_64'.                                                         * src/base/ftbase.c: Include 'ftcalc.c' after the FT_MulFix callers                                                     to enable its inlining.
+	[base] Update FT_MulFix inlining.
+	                                                                                                                        Resolves inconsistencies in 64-bit multiplication discussed in !355.                                                    Importantly, FT_MulFix arguments and return value is FT_Long,                                                           whatever sizeof FT_Long is on 64-bit platforms: 8 bytes on Linux or                                                     4 bytes on Windows.                                                                                                                                                                                                                             * include/freetype/internal/ftcalc.h (FT_MulFix_x86_64): Removed.                                                       (FT_MulFix_64): Generalize and prioritize the inline implementation
+	for all 64-bit platforms ifdef FT_INT64.                                                                                * src/base/ftcalc.c (FT_MulFix)[FT_INT64]: Call 'FT_MulFix_64'.                                                         * src/base/ftbase.c: Include 'ftcalc.c' after the FT_MulFix callers                                                     to enable its inlining.
 
 2025-04-05  Graham Asher  <graham.asher@cartotype.com>
 
@@ -3508,14 +3508,14 @@
 
 2025-01-02  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	Remove superfluous outline zeroing.
-	
-	This is already done by `ft_glyphslot_clear`.
-	
-	* src/cff/cffgload.c (cff_slot_load): Do not zero outline fields.
-	* src/cid/cidgload.c (cid_slot_load_glyph: Ditto.
-	* src/pfr/pfrobjs.c (pfr_slot_load): Ditto.
-	* src/truetype/ttgload.c (load_sbit_image): Ditto.
+	Remove superfluous outline zeroing.
+	
+	This is already done by `ft_glyphslot_clear`.
+	
+	* src/cff/cffgload.c (cff_slot_load): Do not zero outline fields.
+	* src/cid/cidgload.c (cid_slot_load_glyph: Ditto.
+	* src/pfr/pfrobjs.c (pfr_slot_load): Ditto.
+	* src/truetype/ttgload.c (load_sbit_image): Ditto.
 	* src/type1/t1gload.c (T1_Load_Glyph): Ditto.
 
 2025-01-02  Alexei Podtelezhnikov  <apodtele@gmail.com>
@@ -3990,11 +3990,11 @@
 
 2024-06-18  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[base, autofit, psaux] Remove unnecessary casting.
-	
-	* src/autofit/afhints.c (af_glyph_hints_reload): Remove (short) casting.
-	* src/base/ftgloadr.c (FT_GlyphLoader_Add): Ditto.
-	* src/psaux/psobjs.c ({t1,cff,ps}_builder_{add,close}_contour): Ditto.
+	[base, autofit, psaux] Remove unnecessary casting.
+	
+	* src/autofit/afhints.c (af_glyph_hints_reload): Remove (short) casting.
+	* src/base/ftgloadr.c (FT_GlyphLoader_Add): Ditto.
+	* src/psaux/psobjs.c ({t1,cff,ps}_builder_{add,close}_contour): Ditto.
 
 2024-06-18  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
@@ -4060,11 +4060,11 @@
 
 2024-05-21  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[cff, truetype] Rearrange variation range checks.
-	
-	This should achieve quicker results for common cases.
-	
-	* src/cff/cffload.c (cff_blend_build_vector): Rearrange conditionals.
+	[cff, truetype] Rearrange variation range checks.
+	
+	This should achieve quicker results for common cases.
+	
+	* src/cff/cffload.c (cff_blend_build_vector): Rearrange conditionals.
 	* src/truetype/ttgxvar.c (tt_var_get_item_delta): Ditto.
 
 2024-05-21  Alexei Podtelezhnikov  <apodtele@gmail.com>
@@ -4182,12 +4182,12 @@
 
 2024-05-06  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[sdf, bsdf] Use shared FT_SqrtFixed.
-	
-	FT_SqrtFixed (95b0fe2a6dff) is faster and does not overflow.
-	
-	* src/sdf/ftsdfcommin.h (square_root): Replace with a macro.
-	* src/sdf/ftsdfcommin.c (square_root): Remove function.
+	[sdf, bsdf] Use shared FT_SqrtFixed.
+	
+	FT_SqrtFixed (95b0fe2a6dff) is faster and does not overflow.
+	
+	* src/sdf/ftsdfcommin.h (square_root): Replace with a macro.
+	* src/sdf/ftsdfcommin.c (square_root): Remove function.
 
 2024-05-04  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
@@ -4202,13 +4202,13 @@
 
 2024-05-03  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[woff,woff2] Limit the number of tables and use FT_MSB.
-	
-	The upper limit of 4095 is implied by the SFNT header format
-	where the multiplication by 16 would overflow without it.
-	
-	* src/sfnt/sfwoff.c (woff_open_font): Updated.
-	* src/sfnt/sfwoff2.c (woff2_open_font): Ditto.
+	[woff,woff2] Limit the number of tables and use FT_MSB.
+	
+	The upper limit of 4095 is implied by the SFNT header format
+	where the multiplication by 16 would overflow without it.
+	
+	* src/sfnt/sfwoff.c (woff_open_font): Updated.
+	* src/sfnt/sfwoff2.c (woff2_open_font): Ditto.
 
 2024-05-02  Ben Wanger  <bungeman@gmail.com>
 
@@ -4316,11 +4316,11 @@
 
 2024-04-17  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[cache] Improve MRU list management.
-	
-	* src/cache/ftcmru.c (FTC_MruList_Remove): Cosmetic.
-	(FTC_MruList_New): Accept only valid changes.
-	* src/cache/ftcmanag.c (ftc_size_node_done):  Simplify.
+	[cache] Improve MRU list management.
+	
+	* src/cache/ftcmru.c (FTC_MruList_Remove): Cosmetic.
+	(FTC_MruList_New): Accept only valid changes.
+	* src/cache/ftcmanag.c (ftc_size_node_done):  Simplify.
 
 2024-04-17  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
@@ -4400,8 +4400,8 @@
 
 2024-03-06  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	* CMakeLists.txt: Bump required version to 3.5.
-	
+	* CMakeLists.txt: Bump required version to 3.5.
+	
 	Fixes #1267.
 
 2024-03-04  Jordan Williams  <jordan@jwillikers.com>
@@ -4533,8 +4533,8 @@
 
 2024-01-03  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	* .gitlab-ci.yml: Use detached CI pipelines.
-	
+	* .gitlab-ci.yml: Use detached CI pipelines.
+	
 	See issue freedesktop/freedesktop#540.
 
 2024-01-02  Werner Lemberg  <wl@gnu.org>
@@ -4698,15 +4698,15 @@
 
 2023-11-21  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	* src/raster/ftraster.c (Draw_Sweep): No-fault return.
+	* src/raster/ftraster.c (Draw_Sweep): No-fault return.
 	(Render_Single_Pass): Updated.
 
 2023-11-21  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[raster] Sweep polishing.
-	
-	* src/raster/ftraster.c (*_Sweep_Span): Polish.
-	(*_Sweep_Drop): Restore tracing, polish.
+	[raster] Sweep polishing.
+	
+	* src/raster/ftraster.c (*_Sweep_Span): Polish.
+	(*_Sweep_Drop): Restore tracing, polish.
 	(Draw_Sweep): Simplify the dropout processing loop.
 
 2023-11-21  Alexei Podtelezhnikov  <apodtele@gmail.com>
@@ -4746,7 +4746,7 @@
 
 2023-11-15  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	* src/raster/ftraster.c (End_Profile): Reduce branching.
+	* src/raster/ftraster.c (End_Profile): Reduce branching.
 	(InsNew): Tweak condition.
 
 2023-11-15  Alexei Podtelezhnikov  <apodtele@gmail.com>
@@ -4766,18 +4766,18 @@
 
 2023-11-14  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[raster] Stylistic changes.
-	
-	* src/raster/ftraster.c (Line_To): Code it similar to curves;
-	shortcut the flat lines here...
+	[raster] Stylistic changes.
+	
+	* src/raster/ftraster.c (Line_To): Code it similar to curves;
+	shortcut the flat lines here...
 	(Line_Up): ... instead of here.
 
 2023-11-14  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[raster] Revise overshoot setting.
-	
-	* src/raster/ftraster.c (New_Profile, End_Profile): Deal with overshoots
-	locally.
+	[raster] Revise overshoot setting.
+	
+	* src/raster/ftraster.c (New_Profile, End_Profile): Deal with overshoots
+	locally.
 	(Line_To, Conic_To, Cubic_To): Update callers.
 
 2023-11-14  Alexei Podtelezhnikov  <apodtele@gmail.com>
@@ -4899,8 +4899,8 @@
 
 2023-10-31  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[raster] Simplify dropout detection.
-	
+	[raster] Simplify dropout detection.
+	
 	* src/raster/ftrater.c (Draw_Sweep): Use a single dropout condition.
 
 2023-10-31  Alexei Podtelezhnikov  <apodtele@gmail.com>
@@ -4995,10 +4995,10 @@
 
 2023-10-13  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[raster] Improve profile accounting.
-	
-	* src/raster/ftraster.c (End_Profile): Do not initiate next profile.
-	(New_Profile): Fully initiate new profile.
+	[raster] Improve profile accounting.
+	
+	* src/raster/ftraster.c (End_Profile): Do not initiate next profile.
+	(New_Profile): Fully initiate new profile.
 	(Convert_Glyph): Clean up variables, initialize `fProfile` here.
 
 2023-10-13  Alexei Podtelezhnikov  <apodtele@gmail.com>
@@ -5109,8 +5109,8 @@
 
 2023-09-11  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	src/psaux/psintrp.c (cf2_escSQRT): Improve initial guess.
-	
+	src/psaux/psintrp.c (cf2_escSQRT): Improve initial guess.
+	
 	The worst number of iterations decreased from 11 to 5.
 
 2023-09-11  Alexei Podtelezhnikov  <apodtele@gmail.com>
@@ -5215,8 +5215,8 @@
 
 2023-08-29  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	* src/sfnt/ttpost.c (load_format_20): Permit long names.
-	
+	* src/sfnt/ttpost.c (load_format_20): Permit long names.
+	
 	Fixes #1254.
 
 2023-08-27  Werner Lemberg  <wl@gnu.org>
@@ -7274,11 +7274,11 @@
 
 2022-12-20  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[psaux] Delay the upem validity assertion.
-	
-	Fixes #1194.
-	
-	* src/psaux/psft.c (cf2_getUnitsPerEm): Remove the upem assert.
+	[psaux] Delay the upem validity assertion.
+	
+	Fixes #1194.
+	
+	* src/psaux/psft.c (cf2_getUnitsPerEm): Remove the upem assert.
 	(cf2_checkTransform): Assert the upem validity after checking the scale.
 
 2022-12-14  David Vanderson  <david.vanderson@gmail.com>
@@ -7655,10 +7655,10 @@
 
 2022-10-03  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	* src/cache/ftccmap.c (FTC_CMapCache_Lookup): Avoid `FT_Set_Charmap`.
-	
-	Set charmap aggressively without all validations of `FT_Set_Charmap`
-	because we take it from the available array and only temporarily.
+	* src/cache/ftccmap.c (FTC_CMapCache_Lookup): Avoid `FT_Set_Charmap`.
+	
+	Set charmap aggressively without all validations of `FT_Set_Charmap`
+	because we take it from the available array and only temporarily.
 	Even CMap Format 14 will gracefully return 0.
 
 2022-10-03  Alexei Podtelezhnikov  <apodtele@gmail.com>
@@ -7742,13 +7742,13 @@
 
 2022-09-22  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[base] Discard and recreate bitmaps for copying and converting.
-	
-	Reusing target bitmaps for copying and converting is permitted.  It is,
-	however, pointless to preserve their content before overwriting.  Free-
-	malloc might be faster than realloc.
-	
-	* src/base/ftbitmap.c (FT_Bitmap_Copy, FT_Bitmap_Convert): Free
+	[base] Discard and recreate bitmaps for copying and converting.
+	
+	Reusing target bitmaps for copying and converting is permitted.  It is,
+	however, pointless to preserve their content before overwriting.  Free-
+	malloc might be faster than realloc.
+	
+	* src/base/ftbitmap.c (FT_Bitmap_Copy, FT_Bitmap_Convert): Free
 	an old buffer and create a new one.
 
 2022-09-16  Dominik Röttsches  <drott@chromium.org>
@@ -8345,8 +8345,8 @@
 
 2022-06-16  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[truetype/GX] Clean up advance adjustment (Brrr).
-	
+	[truetype/GX] Clean up advance adjustment (Brrr).
+	
 	* src/truetype/ttgload.c (load_truetype_glyph): Remove remaining code.
 
 2022-06-16  Ben Wagner  <bungeman@chromium.org>
@@ -9079,22 +9079,22 @@
 
 2022-02-09  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[pshinter] Clear reused mask.
-	
-	In PS hinter, memory allocations persist until the module is done.
-	Therefore, we have to clear reused masks.
-	
+	[pshinter] Clear reused mask.
+	
+	In PS hinter, memory allocations persist until the module is done.
+	Therefore, we have to clear reused masks.
+	
 	* src/pshinter/pshrec.c (ps_mask_table_alloc): Clear reused mask.
 
 2022-02-09  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[pshinter] Use unsigned indices.
-	
-	This reduces casting and eliminates some checks.
-	
-	* src/pshinter/pshrec.c (ps_mask_test_bit, ps_mask_table_merge,
-	ps_dimension_add_t1stem, ps_hints_t1stem3): Updated.
-	(ps_dimension_add_counter): Updated, unnecessary checks removed.
+	[pshinter] Use unsigned indices.
+	
+	This reduces casting and eliminates some checks.
+	
+	* src/pshinter/pshrec.c (ps_mask_test_bit, ps_mask_table_merge,
+	ps_dimension_add_t1stem, ps_hints_t1stem3): Updated.
+	(ps_dimension_add_counter): Updated, unnecessary checks removed.
 
 2022-02-08  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
@@ -9111,12 +9111,12 @@
 
 2022-02-08  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[pshinter] Revise the hint table handling.
-	
-	* src/pshinter/pshrec.c (ps_hint_table_ensure): Remove redundant size
-	check; avoid array zeroing because it is fully initialized when used.
-	(ps_hint_table_alloc): Fix off-by-one comparison and remove another
-	zeroing of the array elements.
+	[pshinter] Revise the hint table handling.
+	
+	* src/pshinter/pshrec.c (ps_hint_table_ensure): Remove redundant size
+	check; avoid array zeroing because it is fully initialized when used.
+	(ps_hint_table_alloc): Fix off-by-one comparison and remove another
+	zeroing of the array elements.
 
 2022-02-06  Werner Lemberg  <wl@gnu.org>
 
@@ -9166,10 +9166,10 @@
 
 2022-01-31  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[cache] Partially revert 9870b6c07e2c.
-	
-	Fix crashes reported by Werner.
-	
+	[cache] Partially revert 9870b6c07e2c.
+	
+	Fix crashes reported by Werner.
+	
 	* src/cache/ftcmru.c (FTC_MruList_New): Use `FT_ALLOC` again.
 
 2022-01-31  Werner Lemberg  <wl@gnu.org>
@@ -9484,9 +9484,9 @@
 
 2022-01-20  Alexei Podtelezhnikov  <apodtele@gmail.com>
 
-	[pshinter] Avoid unnecessary zeroing.
-	
-	* src/pshinter/pshalgo.c (psh_hint_table_init,psh_glyph_init,
+	[pshinter] Avoid unnecessary zeroing.
+	
+	* src/pshinter/pshalgo.c (psh_hint_table_init,psh_glyph_init,
 	psh_glyph_interpolate_normal_points): Use FT_QNEW_ARRAY.
 
 2022-01-20  Alexei Podtelezhnikov  <apodtele@gmail.com>

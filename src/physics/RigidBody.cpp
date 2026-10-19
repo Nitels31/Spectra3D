@@ -117,6 +117,11 @@ void RigidBody::wake() {
     sleepTime = 0.0f;
 }
 
+void RigidBody::syncPrevTransform() {
+    prevPosition = position;
+    prevOrientation = orientation;
+}
+
 const char* shapeName(Shape s) {
     switch (s) {
         case Shape::Box: return "Box";

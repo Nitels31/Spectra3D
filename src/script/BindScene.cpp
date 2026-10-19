@@ -55,6 +55,7 @@ int importModel(const ScriptString& path, float x, float y, float z) {
     body.halfExtents = mesh->half;
     body.position = Vec3{x, y, z};
     body.configure(massFromHull(mesh->half));
+    body.syncPrevTransform();
 
     state->world->bodies.push_back(body);
     return (int)state->world->bodies.size() - 1;

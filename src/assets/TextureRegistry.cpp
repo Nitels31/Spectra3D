@@ -9,15 +9,13 @@
 #include <windows.h>
 #endif
 
-// No image decoder yet. The file under third_party/stb/stb_image/ is
-// stb_image_resize2 - it scales pixels that are already in memory and cannot read
-// a PNG or JPEG - so there is nothing here that can turn a path into texels.
-// Deliberately a stub rather than a silent wrong answer: loadFile reports once and
-// returns an untextured index, and the model draws in its flat colour as before.
-//
-// Everything else is in place - UVs come in through the loaders and the renderer
-// binds a texture per part - so adding the real stb_image.h here is the only
-// step left, and it is one file plus the STB_IMAGE_IMPLEMENTATION define below.
+// stb_image is a single-header library: exactly one translation unit defines the
+// implementation, and it has to be this one. Without a decoder every textured
+// model drew in its flat material colour, and a glTF material with no
+// baseColorFactor has a flat colour of white - so the model came out entirely
+// white, which is exactly what a missing texture looks like.
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
 
 // GL 1.1 headers stop at CLAMP; the extension-era enums and glGenerateMipmap
 // arrive with glext.h. They are constants and one function pointer here, and
@@ -57,13 +55,9 @@ namespace s3d {
 namespace {
 
 // Uploads `width` x `height` RGBA8 pixels. One internal format for everything:
-// mipmaps, sRGB and anisotropic filtering are the only quality knobs, and letting
-// the driver pick the internal format per image is how two textures that look the
-// same in an art tool end up different on screen.
-// Unused until a decoder exists to feed it. Kept compiled rather than deleted so
-// adding stb_image.h is a one-file change, and marked maybe_unused because
-// -Werror turns an unreferenced helper into a build failure.
-[[maybe_unused]] unsigned upload(const unsigned char* pixels, int width, int height) {
+// letting the driver pick the internal format per image is how two textures that
+// look the same in an art tool end up different on screen.
+unsigned upload(const unsigned char* pixels, int width, int height) {
     unsigned tex = 0;
     glGenTextures(1, &tex);
     if (!tex) return 0;
@@ -73,18 +67,52 @@ namespace {
 
     // Mipmaps: a minified texture with none aliases into shimmer, which is the
     // single most obvious "this render is cheap" tell. Generated on the CPU side
-    // by the driver, and skipped when the image is not power-of-two, where the
-    // fixed-function pipeline would reject it anyway.
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    // by the driver.
+    //
+    // Only for a power-of-two image, where the mip chain is complete. A texture
+    // that asks for mipmaps it cannot have is an incomplete texture in GL, and an
+    // incomplete texture samples as solid black - a worse outcome than the shimmer
+    // the mipmaps were there to remove. The engine runs a 3.3 compatibility
+    // context, where a non-power-of-two texture is legal on its own and simply
+    // does without a chain.
+    const bool powerOfTwo = width > 0 && height > 0 && (width & (width - 1)) == 0 &&
+                            (height & (height - 1)) == 0;
+    if (powerOfTwo) {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        generateMipmap();
+    } else {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     // CLAMP rather than REPEAT: a default texture is clamped on every edge, and a
     // model whose UVs leave 0..1 then shows the border texel instead of a seam of
     // wrapped image. Repeat is opt-in per texture later, not the global default.
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    generateMipmap();
 
     glBindTexture(GL_TEXTURE_2D, 0);
+    return tex;
+}
+
+// Decodes image bytes to an RGBA8 texture. Returns 0 when the bytes are not an
+// image this build can read, which the caller records as an untextured entry
+// rather than an error: the model still draws, in its flat material colour.
+//
+// Always four channels, so upload() has one layout to deal with and a greyscale
+// PNG does not arrive as three bytes per texel that GL would read as RGBA.
+unsigned decodeToTexture(const unsigned char* bytes, size_t size, const char* label,
+                          bool quiet) {
+    int width = 0, height = 0, channels = 0;
+    unsigned char* pixels =
+        stbi_load_from_memory(bytes, (int)size, &width, &height, &channels, 4);
+    if (!pixels) {
+        if (!quiet)
+            Log::error("Texture: cannot decode '%s': %s", label, stbi_failure_reason());
+        return 0;
+    }
+    const unsigned tex = upload(pixels, width, height);
+    stbi_image_free(pixels);
+    if (!tex && !quiet) Log::error("Texture: GL refused '%s'", label);
     return tex;
 }
 
@@ -120,16 +148,36 @@ int TextureRegistry::loadFile(const std::string& path, bool quiet) {
     const int existing = find(path);
     if (existing >= 0) return existing;
 
-    // Recorded as a failed entry rather than left out: a model that asks for this
-    // texture again gets the same answer without the file being looked at twice.
-    textures_.push_back(0);
+    unsigned tex = 0;
+    int width = 0, height = 0, channels = 0;
+    unsigned char* pixels = stbi_load(path.c_str(), &width, &height, &channels, 4);
+    if (pixels) {
+        tex = upload(pixels, width, height);
+        stbi_image_free(pixels);
+        if (!tex && !quiet) Log::error("Texture: GL refused '%s'", path.c_str());
+    } else if (!quiet) {
+        Log::error("Texture: cannot decode '%s': %s", path.c_str(), stbi_failure_reason());
+    }
+
+    // Recorded even when the load failed, rather than left out: a model that asks
+    // for this texture again gets the same answer without the file being looked at
+    // twice, and 0 is GL's "no texture", so the part draws in its flat colour
+    // instead of disappearing.
+    textures_.push_back(tex);
     names_.push_back(path);
     const int index = (int)textures_.size() - 1;
     byPath_.emplace(path, index);
-    if (!quiet)
-        Log::warn("Texture: no image decoder in this build, '%s' is untextured",
-                  path.c_str());
     return index;
+}
+
+int TextureRegistry::loadMemory(const std::vector<unsigned char>& bytes, bool quiet) {
+    // No path to key on, so no cache to consult: the loader resolves one glTF
+    // image to one call, so two calls mean two different images.
+    const unsigned tex = decodeToTexture(bytes.data(), bytes.size(), "embedded image", quiet);
+
+    textures_.push_back(tex);
+    names_.push_back("<embedded>");
+    return (int)textures_.size() - 1;
 }
 
 } // namespace s3d

@@ -855,6 +855,7 @@ void Editor::applyGizmoDrag(PhysicsWorld& world, Camera& camera) {
         body->orientation =
             (Quat::axisAngle(rotateAxis_, rotateAccumulated_) * dragStartOrientation_)
                 .normalized();
+        body->syncPrevTransform();
         body->wake();
         return;
     }
@@ -874,6 +875,9 @@ if (mode == gizmo::Mode::Move) {
             moved.z = std::round(moved.z / kSnap) * kSnap;
         }
         body->position = moved;
+        // The hand moved the body, not the simulation, so the render interpolation
+        // has to be told or the model is drawn from wherever it was before the drag.
+        body->syncPrevTransform();
     } else {
         float factor =
             std::fabs(dragStartAxisT_) < 1e-3f ? 1.0f : axisT / dragStartAxisT_;

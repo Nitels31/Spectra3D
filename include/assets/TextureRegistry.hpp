@@ -27,6 +27,12 @@ public:
     // whole model disappear.
     int loadFile(const std::string& path, bool quiet = false);
 
+    // The same, for an image that was embedded in a model file instead of sitting
+    // beside it. A .glb keeps its textures in its own binary chunk, so there is no
+    // path to open and nothing to name - the bytes are the only handle there is.
+    // Returns the texture index, or -1 if the bytes are not an image.
+    int loadMemory(const std::vector<unsigned char>& bytes, bool quiet = false);
+
     // GL texture name for an index, or 0 when there is none. 0 is GL's own "no
     // texture" value, so a caller can bind it unconditionally.
     unsigned at(int index) const;

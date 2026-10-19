@@ -99,7 +99,9 @@ private:
     FixedClock clock_{60.0, 2};
     // How far the physics accumulator is into its next step, read by renderScene
     // so bodies are drawn interpolated between fixed steps rather than at them.
-    float clockAlpha_ = 0.0f;
+    // 1 until the first step says otherwise, because 1 is "draw the transform the
+    // world actually has" and that is the right answer whenever nothing has moved.
+    float clockAlpha_ = 1.0f;
     // The cap above, named because Application.cpp quotes it in a comment and a
     // hook budget is the thing that has to be reasoned about.
     static constexpr int kMaxStepsPerRenderedFrame = 2;

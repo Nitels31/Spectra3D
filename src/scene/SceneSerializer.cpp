@@ -376,6 +376,7 @@ bool load(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path) {
             Quat{(float)aqw, (float)aqx, (float)aqy, (float)aqz}.normalized();
         body.anchorSpring = (float)anchorSpring;
         body.favorite = favorite != 0;
+        body.syncPrevTransform();
 
         if (name != kNoMesh) {
             meshName.assign(name.data(), name.size());
