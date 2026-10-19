@@ -90,6 +90,10 @@ void UiContext::beginInput(Window& window) {
     // and a leftover box would silently make half the window unclickable.
     clipDepth_ = 0;
     clipOverflow_ = 0;
+    // Overlays too: they are declared per frame, by whatever is on screen this
+    // frame. Leaving yesterday's rectangles would make a closed dropdown keep
+    // swallowing clicks, and the panel behind it would look dead.
+    overlays_.clear();
     // captureId_ is deliberately left alone: it describes an open popup, which lives
     // across the frame, and whoever opened it sets it before the first widget runs.
 }
@@ -99,9 +103,12 @@ bool UiContext::button(UiRenderer& ui, int id, float x, float y, float w, float 
     const Rect rect{x, y, w, h};
     const bool isHovered = hovered(rect);
     if (isHovered) markHovered(id);
-    // Under a popup a button still looks like a button - a disabled one would
-    // flicker on and off as the list opens - it just does not answer.
-    if (captured()) activeId_ = 0;
+    // Under an overlay a button still looks like a button - a disabled one would
+    // flicker on and off as the list opens - it just does not answer. pointerPressed()
+    // already folds the guard in, so asking it here too would be the same question
+    // twice; what is left here is the active-button bookkeeping, which has to be
+    // reset or the button would stay lit while the overlay is up.
+    if (captured() || pressOnOverlay()) activeId_ = 0;
     else if (pointerPressed_ && isHovered) activeId_ = id;
 
     bool clicked = false;

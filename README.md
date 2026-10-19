@@ -941,8 +941,8 @@ header-only JSON parser.
 | AngelScript | 2.38.0 | zlib | inside `third_party/angelscript/SDK-2.38.0.zip` |
 | nlohmann/json | 3.12.0 | MIT | `third_party/json/json.hpp` |
 | miniaudio | 0.11.25 | public domain **or** MIT-0 | `third_party/miniaudio/miniaudio.h` |
-| stb_image | - | public domain **or** MIT-0 | `third_party/stb/LICENSE` (one file for the whole family) |
-| stb_vorbis | 1.22 | public domain **or** MIT-0 | `third_party/stb/LICENSE` (same) |
+| stb_image | - | public domain **or** MIT | `third_party/stb/LICENSE` (one file for the whole family) |
+| stb_vorbis | 1.22 | public domain **or** MIT | `third_party/stb/LICENSE` (same) |
 
 Every stb library is released under the identical public-domain **or** MIT-0 terms,
 so `third_party/stb/LICENSE` is the single text covering `stb/` as a whole - it is

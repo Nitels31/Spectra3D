@@ -1104,12 +1104,13 @@ void Editor::renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Windo
     // the top bar while a "Save As?" is on screen is two answers to one click. The
     // bar's own overlays are the opposite case: they hang off the bar, so the bar
     // has to stay live to switch one for another.
-    ui_.setPointerCapture(modal_ != Modal::None ? kPopupCapture : 0);
+    ui_.setPointerCapture(0);
     drawTopBar(ui, world, camera, window, fbWidth);
-    // From here down, anything that was already open owns the pointer. The panels
-    // have not been drawn yet, so this is the last moment at which they can be told
-    // that the click belongs to the dropdown hanging over them.
-    ui_.claimPointer(popupOpen() ? kPopupCapture : 0);
+    // Overlays are registered here, before the panels draw, because the hit test
+    // runs in the middle of the frame and what is on top has to be known by then.
+    // The guard answers it for every widget below; nothing claims the pointer by
+    // hand, which is what used to break whenever a new overlay forgot to.
+    declareTopBarOverlays(ui, fbWidth, fbHeight, (int)world.bodies.size());
 
     drawSceneHeader(ui, world, camera, window);
     drawViewportTools(ui, camera);
@@ -1123,8 +1124,10 @@ void Editor::renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Windo
     // Same reason, same place: the dropdowns hang over the panels AND over any
     // floating window under them.
     ui.flush();
-    // The popups themselves are what the pointer was aimed at, so they get it back.
-    ui_.setPointerCapture(0);
+    // The overlay pass declares its rectangles into the guard, and every widget
+    // below asks the guard whether the pointer is over one - so a click on a
+    // dropdown row never reaches the button underneath it, without any pass
+    // having to claim the pointer by hand.
     drawTopBarOverlay(ui, world, camera, window, fbWidth, fbHeight);
     // A dialog is modal over everything, including the dropdowns: without the flush
     // its dim and its background would be drawn under the labels of the menu behind

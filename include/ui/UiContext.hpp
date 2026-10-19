@@ -1,9 +1,11 @@
 #pragma once
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include "platform/Window.hpp"
 #include "render/UiRenderer.hpp"
+#include "ui/OverlayGuard.hpp"
 
 namespace s3d {
 
@@ -45,8 +47,19 @@ public:
     bool pointerDown() const { return pointerDown_; }
     // The two edges below are what a widget reacts to, and they are false while a
     // popup owns the pointer - see setPointerCapture().
-    bool pointerPressed() const { return pointerPressed_ && captureId_ == 0; }
-    bool pointerReleased() const { return pointerReleased_ && captureId_ == 0; }
+    //
+    // They are ALSO false when the pointer is over a blocking overlay. That is the
+    // whole point of the guard: the topmost surface under the pointer takes the
+    // click, and everything drawn below it goes inert without being asked. A
+    // non-blocking overlay (a suggestion list) does not suppress - a click that
+    // misses it belongs to the surface underneath.
+    bool pointerPressed() const {
+        return pointerPressed_ && captureId_ == 0 && !overlays_.pressTaken(pointerX_, pointerY_);
+    }
+    bool pointerReleased() const {
+        return pointerReleased_ && captureId_ == 0 &&
+               !overlays_.pressTaken(pointerX_, pointerY_);
+    }
     // The same edges with the capture ignored. Only the popup that asked for the
     // capture reads these; every other reader wants the guarded version.
     bool rawPointerPressed() const { return pointerPressed_; }
@@ -72,6 +85,15 @@ public:
     // Claim without clearing: zero means "I have nothing to say", which is how a
     // pass that draws its own overlays first and re-arms afterwards stays in charge.
     void claimPointer(int id) { if (id != 0) captureId_ = id; }
+
+    // The rule for "which surface owns this click", in one place. See
+    // OverlayGuard.hpp for why it is not done by hand at each call site.
+    OverlayGuard& overlays() { return overlays_; }
+    const OverlayGuard& overlays() const { return overlays_; }
+    // True when the press belongs to a surface drawn above the widgets, so a
+    // button under an open dropdown stays inert.
+    bool pressOnOverlay() const { return overlays_.pressTaken(pointerX_, pointerY_); }
+    bool hoverOnOverlay() const { return overlays_.overAny(pointerX_, pointerY_); }
 
     // --- scrolling clips ----------------------------------------------------
     // A mirror of UiRenderer::pushClip / popClip, for the hit test rather than the
@@ -167,6 +189,9 @@ private:
     // depth this class never took - same trap as UiRenderer, which is why the two
     // are fixed together.
     int clipOverflow_ = 0;
+    // Which surface owns the pointer this frame. Kept here rather than in the
+    // editor because the question belongs to the hit test, which is this class.
+    OverlayGuard overlays_;
     float dragStartX_ = 0.0f;
     float dragStartValue_ = 0.0f;
 
