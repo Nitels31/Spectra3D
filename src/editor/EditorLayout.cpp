@@ -129,7 +129,8 @@ std::vector<std::string> splitCommas(const std::string& value) {
 
 } // namespace
 
-// The saved workspace lives in the project it describes, next to scene.txt: two
+    // The saved workspace lives in the project it describes, next to the scene: two
+
 // projects are two workspaces, and moving the folder moves the layout with it.
 // The editor can also run with no project at all, and then it falls back to the
 // directory of the binary - the same place settings.ini goes.

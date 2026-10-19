@@ -5,6 +5,8 @@
 #include "core/Str.hpp"
 #include "platform/Filesystem.hpp"
 
+#include <json/json.hpp>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -45,105 +47,9 @@ void syncShapeDimensions(RigidBody& body) {
     }
 }
 
-// --- writing ----------------------------------------------------------------
-
-// snprintf is used rather than a hand-rolled dtoa so the digits are exactly what
-// `std::ostream << float` produced with its default precision of 6. Formatting
-// into a scratch buffer and appending avoids ~6000 num_put locale round trips
-// per 200 bodies; the plain integer formatter avoids the other 1200.
-void appendFloat(std::string& out, float value) {
-    char buffer[32];
-    const int written = std::snprintf(buffer, sizeof(buffer), "%g", (double)value);
-    if (written <= 0) return;
-    // %g at precision 6 never comes close to the buffer, but never trust that.
-    const size_t length = (size_t)written < sizeof(buffer) ? (size_t)written : sizeof(buffer) - 1;
-    out.append(buffer, length);
-}
-
-void appendInt(std::string& out, int value) {
-    char buffer[12];
-    char* const end = buffer + sizeof(buffer);
-    char* p = end;
-    unsigned rest = (unsigned)value;
-    do {
-        *--p = (char)('0' + rest % 10u);
-        rest /= 10u;
-    } while (rest);
-    if (value < 0) *--p = '-';
-    out.append(p, (size_t)(end - p));
-}
-
-// One body per line, space separated, terminated by '\n' - the layout the
-// reader below and any human reading the file expect.
-struct Row {
-    std::string& text;
-
-    // Every field but the first is preceded by a space, so a line never starts
-    // with a separator.
-    void leading(int v) { appendInt(text, v); }
-    void num(float v) {
-        text += ' ';
-        appendFloat(text, v);
-    }
-    void integer(int v) {
-        text += ' ';
-        appendInt(text, v);
-    }
-    void token(const char* s) {
-        text += ' ';
-        text += s;
-    }
-};
-
 // --- reading ----------------------------------------------------------------
 
-// The exact set of characters `operator>>` skips in the classic locale.
-inline bool isFieldSpace(char c) {
-    return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r';
-}
-
-inline const char* skipFieldSpace(const char* p, const char* end) {
-    while (p < end && isFieldSpace(*p)) ++p;
-    return p;
-}
-
-// Field parsers. `end` is the end of the current line, so a field can never run
-// past a newline - the same boundary the old per-line std::istringstream drew.
-// Each returns false without touching `out` when the field is missing or
-// malformed, which is what put the old stream into a failed state.
-inline bool nextLong(const char*& p, const char* end, long& out) {
-    p = skipFieldSpace(p, end);
-    if (p >= end) return false;
-    char* stop = nullptr;
-    const long value = std::strtol(p, &stop, 10);
-    if (stop == p) return false;
-    p = stop;
-    out = value;
-    return true;
-}
-
-inline bool nextDouble(const char*& p, const char* end, double& out) {
-    p = skipFieldSpace(p, end);
-    if (p >= end) return false;
-    char* stop = nullptr;
-    const double value = std::strtod(p, &stop);
-    if (stop == p) return false;
-    p = stop;
-    out = value;
-    return true;
-}
-
-inline bool nextToken(const char*& p, const char* end, std::string_view& out) {
-    p = skipFieldSpace(p, end);
-    if (p >= end) return false;
-    const char* begin = p;
-    while (p < end && !isFieldSpace(*p)) ++p;
-    out = std::string_view(begin, (size_t)(p - begin));
-    return true;
-}
-
-// Reads the whole file in one call. `text` ends up NUL terminated because
-// strtod/strtol need a terminator; `limit` is the last valid byte.
+// Reads the whole file in one call.
 bool readWholeFile(const std::string& path, std::string& text, size_t& size) {
     std::ifstream file(path, std::ios::binary);
     if (!file) return false;
@@ -184,78 +90,6 @@ void appendJoined(std::string& out, const std::string& dir, const std::string& n
 
 } // namespace
 
-bool save(const PhysicsWorld& world, const MeshRegistry& meshes, const std::string& path) {
-    // Text mode on purpose: it is what gives the file its CRLF endings on
-    // Windows, and the reader below treats '\r' as whitespace.
-    std::ofstream file(path);
-    if (!file) {
-        Log::error("Scene: cannot write %s", path.c_str());
-        return false;
-    }
-
-    // Format the whole scene into one buffer and hand it over in a single
-    // write. Same tokens, same field order, same separator as before.
-    std::string text;
-    text.reserve(world.bodies.size() * 320);
-
-    for (const RigidBody& body : world.bodies) {
-        // No copy: nameOf() already returns a reference.
-        const char* meshName = body.hasMesh() ? meshes.nameOf(body.mesh).c_str() : kNoMesh;
-
-        Row row{text};
-        row.leading((int)body.shape);
-        row.num(body.position.x);
-        row.num(body.position.y);
-        row.num(body.position.z);
-        row.num(body.velocity.x);
-        row.num(body.velocity.y);
-        row.num(body.velocity.z);
-        row.num(body.orientation.w);
-        row.num(body.orientation.x);
-        row.num(body.orientation.y);
-        row.num(body.orientation.z);
-        row.num(body.halfExtents.x);
-        row.num(body.halfExtents.y);
-        row.num(body.halfExtents.z);
-        row.num(body.mass);
-        row.num(body.material.friction);
-        row.num(body.material.restitution);
-        row.num(body.material.density);
-        row.num(body.angularVelocity.x);
-        row.num(body.angularVelocity.y);
-        row.num(body.angularVelocity.z);
-        row.num(body.meshScale);
-        row.token(meshName);
-        row.integer(body.material.isStatic ? 1 : 0);
-        row.integer(body.visible ? 1 : 0);
-        row.integer(body.locked ? 1 : 0);
-        row.integer(body.anchorPosition ? 1 : 0);
-        row.num(body.anchorPoint.x);
-        row.num(body.anchorPoint.y);
-        row.num(body.anchorPoint.z);
-        row.integer(body.anchorRotation ? 1 : 0);
-        row.num(body.anchorOrientation.w);
-        row.num(body.anchorOrientation.x);
-        row.num(body.anchorOrientation.y);
-        row.num(body.anchorOrientation.z);
-        row.num(body.anchorSpring);
-        // Trailing, and optional to the reader, so a scene written before
-        // favourites existed still loads - with every star empty, which is exactly
-        // what those scenes meant.
-        row.integer(body.favorite ? 1 : 0);
-        // The same trick for the camera: its field of view and whether it is
-        // the scene's active one. A scene written before cameras existed has
-        // neither, and reads back as the default lens and no active camera -
-        // which is what those scenes meant.
-        row.num(body.cameraFov);
-        row.integer(body.activeCamera ? 1 : 0);
-        text += '\n';
-    }
-
-    file.write(text.data(), (std::streamsize)text.size());
-    return (bool)file;
-}
-
 int resolveMesh(MeshRegistry& meshes, const std::string& name) {
     const int cached = meshes.find(name);
     if (cached >= 0) return cached;
@@ -291,7 +125,292 @@ int resolveMesh(MeshRegistry& meshes, const std::string& name) {
     return -1;
 }
 
-bool load(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path) {
+// --- JSON --------------------------------------------------------------------
+//
+// The same scene, said in a shape a person can read. Every field is named, the
+// shapes are named rather than numbered, and the numbers are in the places a
+// person expects them: a position is three numbers in an array, a quaternion
+// is four.
+//
+// The text format stays the default: it is smaller, it diffs cleanly, and it
+// needs no dependency to read. The JSON is for a scene that is meant to be
+// read, written by hand, or read by something that is not this engine.
+
+namespace {
+
+// A shape as the JSON names it. Lower case, because that is how a person would
+// write it, and because it is the shape of the identifier rather than of a
+// class.
+const char* jsonShapeName(Shape shape) {
+    switch (shape) {
+        case Shape::Box: return "box";
+        case Shape::Sphere: return "sphere";
+        case Shape::Cylinder: return "cylinder";
+        case Shape::Capsule: return "capsule";
+        case Shape::Cone: return "cone";
+        case Shape::Pyramid: return "pyramid";
+        case Shape::Prism: return "prism";
+        case Shape::Mesh: return "mesh";
+        case Shape::Camera: return "camera";
+    }
+    return "box";
+}
+
+// The other direction. A scene can name a shape this build does not have - a
+// file written by a newer engine, or a typo - and the body is skipped rather
+// than guessed at.
+bool jsonShapeFromName(const std::string& name, Shape& out) {
+    struct Entry {
+        const char* name;
+        Shape shape;
+    };
+    static const Entry kEntries[] = {
+        {"box", Shape::Box},         {"sphere", Shape::Sphere},
+        {"cylinder", Shape::Cylinder}, {"capsule", Shape::Capsule},
+        {"cone", Shape::Cone},       {"pyramid", Shape::Pyramid},
+        {"prism", Shape::Prism},     {"mesh", Shape::Mesh},
+        {"camera", Shape::Camera},
+    };
+    for (const Entry& entry : kEntries)
+        if (str::equalsIgnoreAscii(entry.name, name)) {
+            out = entry.shape;
+            return true;
+        }
+    return false;
+}
+
+// The gravity axis as the JSON names it.
+const char* jsonGravityName(GravityAxis axis) {
+    switch (axis) {
+        case GravityAxis::NegX: return "negX";
+        case GravityAxis::PosX: return "posX";
+        case GravityAxis::NegY: return "negY";
+        case GravityAxis::PosY: return "posY";
+        case GravityAxis::NegZ: return "negZ";
+        case GravityAxis::PosZ: return "posZ";
+    }
+    return "negY";
+}
+
+bool jsonGravityFromName(const std::string& name, GravityAxis& out) {
+    struct Entry {
+        const char* name;
+        GravityAxis axis;
+    };
+    static const Entry kEntries[] = {
+        {"negX", GravityAxis::NegX}, {"posX", GravityAxis::PosX},
+        {"negY", GravityAxis::NegY}, {"posY", GravityAxis::PosY},
+        {"negZ", GravityAxis::NegZ}, {"posZ", GravityAxis::PosZ},
+    };
+    for (const Entry& entry : kEntries)
+        if (str::equalsIgnoreAscii(entry.name, name)) {
+            out = entry.axis;
+            return true;
+        }
+    return false;
+}
+
+// Reads a three-number array into a vector. A missing or short array leaves the
+// vector alone: a scene that does not say where a body is has it at the
+// origin, which is the same answer a body that was never placed has.
+template <typename Json>
+void readVec3(const Json& node, Vec3& out) {
+    if (!node.is_array() || node.size() < 3) return;
+    out.x = node[0].template get<float>();
+    out.y = node[1].template get<float>();
+    out.z = node[2].template get<float>();
+}
+
+template <typename Json>
+void writeVec3(Json& node, const Vec3& v) {
+    node = Json::array({v.x, v.y, v.z});
+}
+
+// Writes a number the way the text format writes it: %g, six significant
+// digits.
+//
+// A float 0.3f is 0.30000001192092896 as a double, and the JSON library says
+// so - which is true and unreadable. The text format has always written 0.3,
+// and the two formats are supposed to say the same thing, so the same six
+// digits it is.
+void writeNumber(std::string& out, const nlohmann::json& node) {
+    if (!node.is_number_float()) {
+        out += node.dump();
+        return;
+    }
+    char buffer[32];
+    const int written = std::snprintf(buffer, sizeof(buffer), "%g", node.get<double>());
+    if (written > 0) out.append(buffer, (size_t)written < sizeof(buffer) ? (size_t)written
+                                                                       : sizeof(buffer) - 1);
+}
+
+// Writes a JSON tree in a shape a person can read: an object gets one field per
+// line, and an array of numbers stays on one line.
+//
+// The library's own dumper puts every element of an array on its own line, and
+// a scene is mostly three-number arrays - a position is one line, not four. The
+// tree is still the library's, so the quoting and the escaping of a string are
+// the library's too; only the layout is ours.
+void writeJson(std::string& out, const nlohmann::ordered_json& node, int depth) {
+    const std::string indent((size_t)depth * 4, ' ');
+    const std::string child((size_t)(depth + 1) * 4, ' ');
+
+    if (node.is_object()) {
+        if (node.empty()) {
+            out += "{}";
+            return;
+        }
+        out += "{\n";
+        bool first = true;
+        for (auto it = node.begin(); it != node.end(); ++it) {
+            if (!first) out += ",\n";
+            first = false;
+            out += child;
+            // The key goes through the library as well, so a key with a quote
+            // in it is escaped rather than breaking the file.
+            out += nlohmann::ordered_json(it.key()).dump();
+            out += ": ";
+            writeJson(out, it.value(), depth + 1);
+        }
+        out += "\n";
+        out += indent;
+        out += "}";
+        return;
+    }
+
+    if (node.is_array()) {
+        // An array of plain numbers stays on one line: that is what a position
+        // or a quaternion is.
+        bool numbers = true;
+        for (const auto& item : node)
+            if (!item.is_number()) {
+                numbers = false;
+                break;
+            }
+        if (numbers) {
+            out += "[";
+            for (size_t i = 0; i < node.size(); ++i) {
+                if (i) out += ", ";
+                writeNumber(out, node[i]);
+            }
+            out += "]";
+            return;
+        }
+        if (node.empty()) {
+            out += "[]";
+            return;
+        }
+        out += "[\n";
+        for (size_t i = 0; i < node.size(); ++i) {
+            if (i) out += ",\n";
+            out += child;
+            writeJson(out, node[i], depth + 1);
+        }
+        out += "\n";
+        out += indent;
+        out += "]";
+        return;
+    }
+
+    if (node.is_number()) {
+        writeNumber(out, node);
+        return;
+    }
+
+    out += node.dump();
+}
+
+} // namespace
+
+bool saveJson(const PhysicsWorld& world, const MeshRegistry& meshes, const std::string& path) {
+    // ordered_json keeps the fields in the order they were written, which is the
+    // order a person reads them in: what it is, where it is, what it is made
+    // of. The plain json sorts its keys alphabetically, and "angularVelocity"
+    // first is not a shape anyone imagines a scene in.
+    using nlohmann::ordered_json;
+
+    ordered_json root;
+    // A format marker and a version, so a file written by a newer engine is
+    // recognisable as such instead of being half-understood.
+    root["format"] = "spectra3d-scene";
+    root["version"] = 1;
+    root["gravity"] = jsonGravityName(world.gravityAxis);
+
+    ordered_json bodies = ordered_json::array();
+    for (const RigidBody& body : world.bodies) {
+        ordered_json node;
+        node["shape"] = jsonShapeName(body.shape);
+        writeVec3(node["position"], body.position);
+        writeVec3(node["velocity"], body.velocity);
+        writeVec3(node["angularVelocity"], body.angularVelocity);
+        // A quaternion is four numbers, w first - the order it is written in
+        // everywhere else in the engine.
+        node["orientation"] = ordered_json::array({body.orientation.w, body.orientation.x,
+                                                   body.orientation.y, body.orientation.z});
+        writeVec3(node["halfExtents"], body.halfExtents);
+        node["mass"] = body.mass;
+
+        ordered_json material;
+        material["friction"] = body.material.friction;
+        material["restitution"] = body.material.restitution;
+        material["density"] = body.material.density;
+        material["isStatic"] = body.material.isStatic;
+        node["material"] = material;
+
+        if (body.hasMesh()) {
+            ordered_json mesh;
+            mesh["name"] = meshes.nameOf(body.mesh);
+            mesh["scale"] = body.meshScale;
+            node["mesh"] = mesh;
+        }
+
+        ordered_json flags;
+        flags["visible"] = body.visible;
+        flags["locked"] = body.locked;
+        flags["favorite"] = body.favorite;
+        node["flags"] = flags;
+
+        if (body.isCamera()) {
+            ordered_json camera;
+            camera["fov"] = body.cameraFov;
+            camera["active"] = body.activeCamera;
+            node["camera"] = camera;
+        }
+
+        if (body.anchorPosition || body.anchorRotation) {
+            ordered_json anchor;
+            anchor["position"] = body.anchorPosition;
+            anchor["rotation"] = body.anchorRotation;
+            writeVec3(anchor["point"], body.anchorPoint);
+            anchor["orientation"] =
+                ordered_json::array({body.anchorOrientation.w, body.anchorOrientation.x,
+                                     body.anchorOrientation.y, body.anchorOrientation.z});
+            anchor["spring"] = body.anchorSpring;
+            node["anchor"] = anchor;
+        }
+
+        bodies.push_back(std::move(node));
+    }
+    root["bodies"] = std::move(bodies);
+
+    std::ofstream file(path);
+    if (!file) {
+        Log::error("Scene: cannot write %s", path.c_str());
+        return false;
+    }
+    // Laid out by hand rather than by the library's dumper, so a position is
+    // one line instead of four. A trailing newline so the file is a well-behaved
+    // text file.
+    std::string text;
+    writeJson(text, root, 0);
+    text += "\n";
+    file << text;
+    return (bool)file;
+}
+
+bool loadJson(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path) {
+    using nlohmann::json;
+
     std::string text;
     size_t size = 0;
     if (!readWholeFile(path, text, size)) {
@@ -299,134 +418,156 @@ bool load(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path) {
         return false;
     }
 
-    const char* const limit = text.data() + size;
-
-    std::vector<RigidBody> loaded;
-    loaded.reserve(std::count(text.data(), text.data() + size, '\n') + 1);
-    std::string meshName;
-
-    const char* p = text.data();
-    while (p < limit) {
-        // One line at a time: a field may not run past the newline, which is the
-        // boundary the previous getline + istringstream reader drew.
-        const char* lineStart = p;
-        const void* newline = std::memchr(p, '\n', (size_t)(limit - p));
-        const char* lineEnd = newline ? (const char*)newline : limit;
-        p = newline ? (const char*)newline + 1 : limit;
-
-        long shapeId = 0;
-        long isStatic = 0, visible = 1, locked = 0, anchorPos = 0, anchorRot = 0;
-        double px = 0, py = 0, pz = 0, vx = 0, vy = 0, vz = 0;
-        double qw = 1, qx = 0, qy = 0, qz = 0;
-        double hx = 0, hy = 0, hz = 0, mass = 1.0;
-        double friction = 0, restitution = 0, density = 1;
-        double wx = 0, wy = 0, wz = 0, meshScale = 1.0;
-        double ax = 0, ay = 0, az = 0, aqw = 1, aqx = 0, aqy = 0, aqz = 0, anchorSpring = 50.0;
-        std::string_view name;
-
-        const char* field = lineStart;
-        if (!(nextLong(field, lineEnd, shapeId) &&
-              nextDouble(field, lineEnd, px) && nextDouble(field, lineEnd, py) &&
-              nextDouble(field, lineEnd, pz) && nextDouble(field, lineEnd, vx) &&
-              nextDouble(field, lineEnd, vy) && nextDouble(field, lineEnd, vz) &&
-              nextDouble(field, lineEnd, qw) && nextDouble(field, lineEnd, qx) &&
-              nextDouble(field, lineEnd, qy) && nextDouble(field, lineEnd, qz) &&
-              nextDouble(field, lineEnd, hx) && nextDouble(field, lineEnd, hy) &&
-              nextDouble(field, lineEnd, hz) && nextDouble(field, lineEnd, mass) &&
-              nextDouble(field, lineEnd, friction) && nextDouble(field, lineEnd, restitution) &&
-              nextDouble(field, lineEnd, density) && nextDouble(field, lineEnd, wx) &&
-              nextDouble(field, lineEnd, wy) && nextDouble(field, lineEnd, wz) &&
-              nextDouble(field, lineEnd, meshScale) && nextToken(field, lineEnd, name)))
-            continue;
-
-        // The shape is a plain ordinal in the file, and a file can carry one this
-        // build does not know - a scene written by a newer engine, or a typo.
-        // Casting it blindly would produce a shape that is not in the enum at
-        // all, and every switch on it would fall through to its default: the
-        // body would load as a cube. Skipping the line is the honest answer.
-        if (shapeId < 0 || shapeId > (long)Shape::Camera) {
-            Log::warn("Scene: unknown shape %ld, skipping the body", shapeId);
-            continue;
-        }
-
-        // Everything past the mesh name is optional, so older files still load.
-        // && short-circuits, which leaves this field and every later one at its
-        // default - the same thing a stream that had already failed used to do.
-        (void)(nextLong(field, lineEnd, isStatic) && nextLong(field, lineEnd, visible) &&
-               nextLong(field, lineEnd, locked) && nextLong(field, lineEnd, anchorPos) &&
-               nextDouble(field, lineEnd, ax) && nextDouble(field, lineEnd, ay) &&
-               nextDouble(field, lineEnd, az) && nextLong(field, lineEnd, anchorRot) &&
-               nextDouble(field, lineEnd, aqw) && nextDouble(field, lineEnd, aqx) &&
-               nextDouble(field, lineEnd, aqy) && nextDouble(field, lineEnd, aqz) &&
-               nextDouble(field, lineEnd, anchorSpring));
-
-        // The favourite star, written last so it can be missing without costing
-        // the whole line: an old scene loads, with no stars.
-        long favorite = 0;
-        (void)nextLong(field, lineEnd, favorite);
-
-        // The camera's lens and whether it is the scene's active one. Both are
-        // written after the star and both are optional for the same reason: a
-        // scene that predates cameras has neither.
-        double cameraFov = 70.0;
-        (void)nextDouble(field, lineEnd, cameraFov);
-        long activeCamera = 0;
-        (void)nextLong(field, lineEnd, activeCamera);
-
-        // Filled in place instead of building a local and copying it in.
-        // emplace_back() value-initialises, which also gives force/torque a
-        // defined zero rather than the previous body's leftovers.
-        loaded.emplace_back();
-        RigidBody& body = loaded.back();
-        body.shape = (Shape)shapeId;
-        body.position = {(float)px, (float)py, (float)pz};
-        body.velocity = {(float)vx, (float)vy, (float)vz};
-        body.orientation = Quat{(float)qw, (float)qx, (float)qy, (float)qz}.normalized();
-        body.halfExtents = {(float)hx, (float)hy, (float)hz};
-        body.angularVelocity = {(float)wx, (float)wy, (float)wz};
-        body.material.friction = (float)friction;
-        body.material.restitution = (float)restitution;
-        body.material.density = (float)density;
-        syncShapeDimensions(body);
-        body.configure((float)mass);
-
-        body.material.isStatic = isStatic != 0;
-        body.visible = visible != 0;
-        body.locked = locked != 0;
-        body.anchorPosition = anchorPos != 0;
-        body.anchorPoint = {(float)ax, (float)ay, (float)az};
-        body.anchorRotation = anchorRot != 0;
-        body.anchorOrientation =
-            Quat{(float)aqw, (float)aqx, (float)aqy, (float)aqz}.normalized();
-        body.anchorSpring = (float)anchorSpring;
-        body.favorite = favorite != 0;
-        // A camera's lens, and whether it is the one the viewport looks
-        // through. The flag is only honoured on a camera - a body that is not
-        // one cannot be looked through, whatever the file says.
-        body.cameraFov = clampf((float)cameraFov, 10.0f, 170.0f);
-        body.activeCamera = activeCamera != 0 && body.isCamera();
-        body.syncPrevTransform();
-
-        if (name != kNoMesh) {
-            meshName.assign(name.data(), name.size());
-            const int meshIndex = resolveMesh(meshes, meshName);
-            if (meshIndex >= 0) {
-                body.mesh = meshIndex;
-                body.meshScale = (float)meshScale;
-            } else {
-                Log::warn("Scene: mesh '%s' not found, using primitive", meshName.c_str());
-            }
-        }
+    json root;
+    try {
+        root = json::parse(text);
+    } catch (const std::exception& e) {
+        Log::error("Scene: %s is not valid JSON: %s", path.c_str(), e.what());
+        return false;
     }
-
-    if (loaded.empty()) {
-        Log::warn("Scene: no valid bodies in %s", path.c_str());
+    if (!root.is_object()) {
+        Log::error("Scene: %s is not a scene", path.c_str());
         return false;
     }
 
+    // The gravity is optional: a scene that does not say which way is down
+    // keeps the world's. The text format leaves it to the project manifest,
+    // and a scene that carries it is carrying more than the other one.
+    if (root.contains("gravity") && root["gravity"].is_string()) {
+        GravityAxis axis = world.gravityAxis;
+        if (jsonGravityFromName(root["gravity"].get<std::string>(), axis))
+            world.setGravity(axis);
+        else
+            Log::warn("Scene: unknown gravity '%s'", root["gravity"].get<std::string>().c_str());
+    }
+
+    std::vector<RigidBody> loaded;
+    const bool hasBodies = root.contains("bodies") && root["bodies"].is_array();
+    if (hasBodies) loaded.reserve(root["bodies"].size());
+    else
+        Log::warn("Scene: %s has no bodies in it, loading it as an empty scene",
+                  path.c_str());
+
+    int skipped = 0;
+    if (hasBodies)
+        for (const json& node : root["bodies"]) {
+            if (!node.is_object()) {
+                ++skipped;
+                continue;
+            }
+
+            RigidBody body;
+            if (!node.contains("shape") || !node["shape"].is_string() ||
+                !jsonShapeFromName(node["shape"].get<std::string>(), body.shape)) {
+                ++skipped;
+                continue;
+            }
+
+            if (node.contains("position")) readVec3(node["position"], body.position);
+            if (node.contains("velocity")) readVec3(node["velocity"], body.velocity);
+            if (node.contains("angularVelocity")) readVec3(node["angularVelocity"], body.angularVelocity);
+            if (node.contains("halfExtents")) readVec3(node["halfExtents"], body.halfExtents);
+            if (node.contains("orientation") && node["orientation"].is_array() &&
+                node["orientation"].size() >= 4) {
+                body.orientation = Quat{node["orientation"][0].get<float>(),
+                                       node["orientation"][1].get<float>(),
+                                       node["orientation"][2].get<float>(),
+                                       node["orientation"][3].get<float>()}
+                                       .normalized();
+            }
+            if (node.contains("mass")) body.mass = node["mass"].get<float>();
+
+            if (node.contains("material") && node["material"].is_object()) {
+                const json& material = node["material"];
+                if (material.contains("friction"))
+                    body.material.friction = material["friction"].get<float>();
+                if (material.contains("restitution"))
+                    body.material.restitution = material["restitution"].get<float>();
+                if (material.contains("density")) body.material.density = material["density"].get<float>();
+                if (material.contains("isStatic"))
+                    body.material.isStatic = material["isStatic"].get<bool>();
+            }
+
+            if (node.contains("flags") && node["flags"].is_object()) {
+                const json& flags = node["flags"];
+                if (flags.contains("visible")) body.visible = flags["visible"].get<bool>();
+                if (flags.contains("locked")) body.locked = flags["locked"].get<bool>();
+                if (flags.contains("favorite")) body.favorite = flags["favorite"].get<bool>();
+            }
+
+            if (node.contains("camera") && node["camera"].is_object()) {
+                const json& camera = node["camera"];
+                if (camera.contains("fov"))
+                    body.cameraFov = clampf(camera["fov"].get<float>(), 10.0f, 170.0f);
+                // The active flag only means something on a camera, exactly as
+                // in the text format.
+                if (camera.contains("active") && body.isCamera())
+                    body.activeCamera = camera["active"].get<bool>();
+            }
+
+            if (node.contains("anchor") && node["anchor"].is_object()) {
+                const json& anchor = node["anchor"];
+                if (anchor.contains("position")) body.anchorPosition = anchor["position"].get<bool>();
+                if (anchor.contains("rotation")) body.anchorRotation = anchor["rotation"].get<bool>();
+                if (anchor.contains("point")) readVec3(anchor["point"], body.anchorPoint);
+                if (anchor.contains("orientation") && anchor["orientation"].is_array() &&
+                    anchor["orientation"].size() >= 4) {
+                    body.anchorOrientation =
+                        Quat{anchor["orientation"][0].get<float>(),
+                             anchor["orientation"][1].get<float>(),
+                             anchor["orientation"][2].get<float>(),
+                             anchor["orientation"][3].get<float>()}
+                            .normalized();
+                }
+                if (anchor.contains("spring")) body.anchorSpring = anchor["spring"].get<float>();
+            }
+
+            if (node.contains("mesh") && node["mesh"].is_object() && node["mesh"].is_object()) {
+                const json& mesh = node["mesh"];
+                if (mesh.contains("name") && mesh["name"].is_string()) {
+                    const std::string name = mesh["name"].get<std::string>();
+                    const int meshIndex = resolveMesh(meshes, name);
+                    if (meshIndex >= 0) {
+                        body.mesh = meshIndex;
+                        body.shape = Shape::Mesh;
+                        if (mesh.contains("scale")) body.meshScale = mesh["scale"].get<float>();
+                    } else {
+                        Log::warn("Scene: mesh '%s' not found, using primitive", name.c_str());
+                    }
+                }
+            }
+
+            syncShapeDimensions(body);
+            body.configure(body.mass);
+            body.syncPrevTransform();
+            loaded.push_back(std::move(body));
+        }
+
+    if (skipped > 0 && loaded.empty()) {
+        // Every body in the file was rejected. That is a file that could not be
+        // read, and saying so is the only useful thing to do with it.
+        Log::error("Scene: none of the %d body/bodies in %s could be read", skipped,
+                   path.c_str());
+        return false;
+    }
+    if (skipped > 0)
+        Log::warn("Scene: %d body/bodies in %s could not be read", skipped, path.c_str());
+
+    // A scene with no bodies in it is an empty scene, not a broken file. The
+    // first thing anybody does in an editor is have an empty scene, and a scene
+    // that says so and is then refused is the editor refusing to open.
     world.bodies = std::move(loaded);
     world.wakeAll();
     return true;
+}
+
+bool save(const PhysicsWorld& world, const MeshRegistry& meshes, const std::string& path) {
+    // One format, always JSON. The name of the file does not decide anything.
+    return saveJson(world, meshes, path);
+}
+
+bool load(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path) {
+    return loadJson(world, meshes, path);
 }
 
 } // namespace scenes

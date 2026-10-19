@@ -563,10 +563,6 @@ void Editor::drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int 
         height += hintHeight("modal.openSceneHint") + (float)listed * kModalRowHeight + 16.0f +
                   kModalField;
         break;
-    case Modal::SaveAs:
-        title = text("modal.saveAs");
-        height += hintHeight("modal.saveAsHint") + kModalField;
-        break;
     case Modal::BuildSettings:
         title = text("modal.buildSettings");
         height += hintHeight("modal.buildHint") + kModalField + hintHeight("modal.buildStages");
@@ -638,12 +634,6 @@ void Editor::drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int 
         primary = text("btn.open");
         break;
     }
-    case Modal::SaveAs:
-        y += drawWrapped(ui, panel.x + 14.0f, y, textWidth, text("modal.saveAsHint"),
-                         theme::textDim);
-        field(text("modal.file"));
-        primary = text("btn.save");
-        break;
     case Modal::BuildSettings:
         y += drawWrapped(ui, panel.x + 14.0f, y, textWidth, text("modal.buildHint"),
                          theme::textDim);
@@ -699,18 +689,6 @@ void Editor::drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int 
         loadScene(world);
         break;
     }
-    case Modal::SaveAs: {
-        std::string name = modalField_.text();
-        const size_t slash = name.find_last_of("/\\");
-        if (slash != std::string::npos) name = name.substr(slash + 1);
-        if (name.empty()) name = "scene.txt";
-        if (str::extensionView(name).empty()) name += ".txt";
-        // A name, not a path: "Save As" that could write outside the project is a
-        // way to lose a file, not a way to find one.
-        scenePath_ = str::join(projectDir(), name);
-        saveScene(world);
-        break;
-    }
     case Modal::BuildSettings:
         // Remembered, so the shell can stage the build wherever this dialog said.
         buildFolder_ = modalField_.text();
@@ -719,11 +697,13 @@ void Editor::drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int 
 case Modal::SaveFirst: {
         // Save and "Don't save" both mean "go ahead with what you asked"; they
         // differ only in whether the scene reaches the disk on the way out.
+        //
+        // Through saveScene(), not scenes::save() directly: that is where the
+        // scene file's name and the project that owns it are kept in step, and
+        // going around it here is how the scene ends up in a file the project
+        // does not know about.
         const bool wanted = !discard;
-        if (wanted && !scenes::save(world, meshes_, scenePath()))
-            Log::error("Cannot write '%s' - going ahead anyway", scenePath());
-        if (wanted)
-            sceneDirty_ = false;
+        if (wanted) saveScene(world);
 
         const Pending what = pendingAction_;
         modal_ = Modal::None;

@@ -1,6 +1,7 @@
 #include "editor/Editor.hpp"
 
 #include "core/Log.hpp"
+#include "core/Str.hpp"
 #include "scene/SceneSerializer.hpp"
 #include "ui/Theme.hpp"
 #include "editor/Picking.hpp"
@@ -31,7 +32,7 @@ constexpr float kDockGrip = 6.0f;
 constexpr float kFloatGrip = 5.0f;
 constexpr float kFloatCorner = 14.0f;
 // Fallback when no project is open: next to the binary.
-const char* const kDefaultSceneFile = "scene.txt";
+const char* const kDefaultSceneFile = "scene.json";
 
 // Navigation balls: camera orientation presets, offsets from the widget centre.
 struct NavBall {
@@ -1063,10 +1064,28 @@ void Editor::exitPlayMode(PhysicsWorld& world) {
 }
 
 void Editor::saveScene(const PhysicsWorld& world) {
-    if (scenes::save(world, meshes_, scenePath())) {
-        sceneDirty_ = false;
-        Log::info(text("log.saved"), (int)world.bodies.size());
+    // The scene is JSON, and the file it is in says so. A project that still has
+    // the old text file moves to the JSON one the first time it is saved: the
+    // text file is left where it is - the reader still understands it - and the
+    // project stops using it.
+    std::string target = scenePath_;
+    if (!str::equalsIgnoreAscii(str::extensionView(target), ".json")) {
+        std::string name = str::fileName(target);
+        const size_t dot = name.find_last_of('.');
+        if (dot != std::string::npos) name = name.substr(0, dot);
+        target = str::join(projectDir(), name + ".json");
     }
+
+    if (!scenes::save(world, meshes_, target)) return;
+    if (target != scenePath_) {
+        scenePath_ = target;
+        // The project has to say which file its scene is in, or the next time it
+        // is opened it goes back to the old one and the scene that was saved is
+        // gone.
+        shellRequest_ = ShellRequest::SaveProject;
+    }
+    sceneDirty_ = false;
+    Log::info(text("log.saved"), (int)world.bodies.size());
 }
 
 void Editor::loadScene(PhysicsWorld& world) {

@@ -408,6 +408,11 @@ void Application::runEditorFrame(float dt) {
         closeProject();
         break;
     case Editor::ShellRequest::SaveProject:
+        // The scene file the editor is using is part of the project. A project
+        // whose scene is a JSON file has to say so in the manifest, or the next
+        // time it is opened it goes back to the text file and the scene that
+        // was saved is gone.
+        project_.sceneFile = str::fileName(editor_->scenePath());
         if (!launcher_.projects().writeManifest(project_))
             Log::error("Project: cannot write the manifest");
         else

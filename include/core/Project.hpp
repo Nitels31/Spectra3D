@@ -13,11 +13,11 @@ inline constexpr const char* kEngineName = "Spectra3D";
 inline constexpr const char* kEngineVersion = "1.0.0";
 
 // On-disk names inside a project directory. Prefixed because the editor and the
-// script layer own their own `scene.txt` / `scripts` literals at namespace
+// script layer own their own `scene.json` / `scripts` literals at namespace
 // scope, and two internal-linkage constants of the same name in one translation
 // unit is a trap worth not walking into.
 inline constexpr const char* kProjectManifestFile = "project.spectra";
-inline constexpr const char* kProjectSceneFile = "scene.txt";
+inline constexpr const char* kProjectSceneFile = "scene.json";
 inline constexpr const char* kProjectScriptsDir = "scripts";
 inline constexpr const char* kProjectModelsDir = "models";
 // Where the editor keeps the workspace it was left in: dock sizes, which panels
@@ -111,6 +111,11 @@ struct ProjectInfo {
     // Starred in the launcher's Favorite tab. Lives in the manifest, so it
     // belongs to the project rather than to this machine's settings.ini.
     bool favorite = false;
+    // The scene file the project keeps its scene in, inside the project folder.
+    // Empty means the project does not say, which is every project made before
+    // the scene became JSON: those keep the text file they have until the first
+    // time they are saved.
+    std::string sceneFile;
     bool valid = false;
 };
 

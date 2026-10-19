@@ -121,7 +121,7 @@ kHelpClose = 1400,
     bool consumePlayStopped() { return std::exchange(playStopped_, false); }
 
     // Scene file this editor saves to and loads from. Empty falls back to
-    // "scene.txt" next to the binary, which is what happens when the editor runs
+    // "scene.json" next to the binary, which is what happens when the editor runs
     // without a project.
     void setScenePath(std::string path) { scenePath_ = std::move(path); }
     // Shown in the window title, the way the sketch has it: engine, dash, project.
@@ -132,7 +132,7 @@ kHelpClose = 1400,
     void setHomeCamera(const Camera& camera) { homeCamera_ = camera; }
 
     const char* scenePath() const {
-        return scenePath_.empty() ? "scene.txt" : scenePath_.c_str();
+        return scenePath_.empty() ? "scene.json" : scenePath_.c_str();
     }
 
     // Saved the scene since it was last loaded or written. New Scene, Open Scene
@@ -192,7 +192,7 @@ private:
     // --- the dialogs Unity's File menu hangs off ---------------------------
     // One modal at a time, drawn centred over the scene like the help pages. Each
     // is a real command with a real result, not a message box that only says "ok".
-    enum class Modal { None, NewScene, OpenScene, SaveAs, BuildSettings, SaveFirst };
+    enum class Modal { None, NewScene, OpenScene, BuildSettings, SaveFirst };
     Modal modal_ = Modal::None;
     // What a pending "save first?" is about to do once the answer is known.
     enum class Pending { NewScene, OpenScene, LeaveProject };

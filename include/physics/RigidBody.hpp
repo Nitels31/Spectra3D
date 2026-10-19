@@ -91,7 +91,7 @@ bool asleep = false;
     bool visible = true;
     bool locked = false;
     // Starred in the hierarchy. Purely an editor mark - the simulation never reads
-    // it - but it lives here and in scene.txt next to `visible` and `locked`
+    // it - but it lives here and in the scene file next to `visible` and `locked`
     // because those are editor marks too, and a star that forgets itself on reload
     // is not a star.
     bool favorite = false;
@@ -113,9 +113,12 @@ bool asleep = false;
     // Warm-start impulses per arena wall and per OBB corner. `warmStamp` marks
     // which entries were refreshed by the current step, so impulses left over
     // from an older contact cannot re-enter after a body leaves the surface.
-    float warmNormal[6][8] = {};
-    float warmTangent[6][8] = {};
-    uint16_t warmStamp[6][8] = {};
+    //
+    // One slot per wall, and the arena has five: the four sides and the
+    // ceiling. There is no floor - see the wall table in PhysicsWorld.cpp.
+    float warmNormal[5][8] = {};
+    float warmTangent[5][8] = {};
+    uint16_t warmStamp[5][8] = {};
 
     // Recomputes mass properties from the current shape and dimensions and
     // clamps them into valid ranges. Called after every dimension edit.

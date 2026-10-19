@@ -191,7 +191,12 @@ bool ProjectLibrary::isValidName(const std::string& name) {
 }
 
 std::string ProjectLibrary::scenePath(const ProjectInfo& p) {
-    return str::join(projectDirectoryOf(p), kProjectSceneFile);
+    const std::string dir = projectDirectoryOf(p);
+    // A project that says which file its scene is in, uses that file. One that
+    // says nothing is a project that has never been saved, and it gets the
+    // scene file the engine writes.
+    if (!p.sceneFile.empty()) return str::join(dir, p.sceneFile);
+    return str::join(dir, kProjectSceneFile);
 }
 
 std::string ProjectLibrary::scriptsPath(const ProjectInfo& p) {
@@ -349,6 +354,15 @@ bool ProjectLibrary::readManifest(const std::string& projectPath, ProjectInfo& o
             info.cameraFov = clampf(number, kFovMin, kFovMax);
         } else if (key == "favorite") {
             if (parseInt(value, integer)) info.favorite = integer != 0;
+        } else if (key == "scene") {
+            // The name of the scene file inside the project. A project that
+            // keeps its scene in JSON says so here, and a project that says
+            // nothing keeps the text format.
+            const std::string name = str::trim(value);
+            if (!name.empty() && name.find('/') == std::string::npos &&
+                name.find('\\') == std::string::npos && name != ".." &&
+                name.find("..") == std::string::npos)
+                info.sceneFile = name;
         }
         // Unknown keys are ignored: a newer build may add some.
     });
@@ -392,6 +406,10 @@ text += "cameraFov=" + formatFloat(info.cameraFov) + "\n";
     text += "favorite=";
     text += info.favorite ? "1" : "0";
     text += "\n";
+    // The scene file the project keeps its scene in. A name, not a path: the
+    // scene lives inside the project folder and nowhere else. The resolved name,
+    // so a project that has not migrated yet keeps saying what it is using.
+    text += "scene=" + str::fileName(scenePath(info)) + "\n";
 
     const std::string path = str::join(info.path, kProjectManifestFile);
     if (!fs::writeFile(path, text)) {

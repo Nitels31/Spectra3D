@@ -222,7 +222,7 @@ void Editor::drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
                      theme::textDim.scaled(0.7f));
         if (starHovered && ui_.pointerPressed()) {
             world.bodies[(size_t)index].favorite = !body.favorite;
-            // A star is scene data like any other: it is written to scene.txt, so
+            // A star is scene data like any other: it is written to the scene file, so
             // it has to make "unsaved changes" true or the "save first?" question
             // asks about a scene that is in fact already on disk.
             markSceneDirty();

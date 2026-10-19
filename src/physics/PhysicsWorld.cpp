@@ -7,8 +7,20 @@ namespace s3d {
 namespace {
 
 // Arena wall normals, indexed the same way as the warm-start cache slots.
-const Vec3 kWallNormals[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
-                              {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+//
+// FIVE walls and no floor.
+//
+// The floor was the one wall nobody could see. The grid is drawn at y = 0 and
+// the floor was at y = -9, so a body fell through the grid and stopped in
+// mid-air - a barrier that is invisible, which is the worst kind of barrier
+// there is, and the reason a game in this engine could never let anything
+// fall away. There is no floor now: what falls out of the world keeps
+// falling, and the engine has no invisible shelf to catch it on.
+const Vec3 kWallNormals[5] = {{1, 0, 0}, {-1, 0, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+
+// How many walls the arena has, which is also how many warm-start slots a body
+// has: one per wall, because a body's impulse against a wall is its own.
+constexpr int kWallCount = 5;
 
 // Broadphase cell size in metres.
 constexpr float kCellSize = 2.0f;
@@ -274,7 +286,7 @@ void PhysicsWorld::clear() {
 
 void PhysicsWorld::clearWarmStartCache() {
     for (RigidBody& b : bodies)
-        for (int wall = 0; wall < 6; ++wall)
+        for (int wall = 0; wall < kWallCount; ++wall)
             for (int slot = 0; slot < 8; ++slot) {
                 b.warmNormal[wall][slot] = 0.0f;
                 b.warmTangent[wall][slot] = 0.0f;
@@ -289,7 +301,7 @@ void PhysicsWorld::wakeAll() {
     clearPairWarm();
     for (RigidBody& b : bodies) {
         b.wake();
-        for (int w = 0; w < 6; ++w)
+        for (int w = 0; w < kWallCount; ++w)
             for (int k = 0; k < 8; ++k) {
                 b.warmNormal[w][k] = 0.0f;
                 b.warmTangent[w][k] = 0.0f;
@@ -458,8 +470,13 @@ void PhysicsWorld::generateContacts() {
 }
 
 void PhysicsWorld::collectWallContacts() {
-    float plane[6] = {arenaMin.x, -arenaMax.x, arenaMin.y,
-                      -arenaMax.y, arenaMin.z, -arenaMax.z};
+    // The plane of each wall, in the same order as the normals: the wall the
+    // normal points away from, so the gap below is a distance from the wall.
+    //
+    // The floor is not here. The walls are the four sides and the ceiling; a
+    // body that falls past the bottom of the arena falls out of the world.
+    const float plane[kWallCount] = {arenaMin.x, -arenaMax.x, -arenaMax.y, arenaMin.z,
+                                     -arenaMax.z};
 
     for (uint32_t bi = 0; bi < bodies.size(); ++bi) {
         RigidBody& b = bodies[bi];
@@ -469,9 +486,7 @@ void PhysicsWorld::collectWallContacts() {
 
         if (b.shape == Shape::Sphere) {
             const float r = b.halfExtents.x;
-            for (int w = 0; w < 6; ++w) {
-                // Every wall participates, including the one gravity points at:
-                // bodies must be able to rest on the arena floor.
+            for (int w = 0; w < kWallCount; ++w) {
                 const float gap = dot(kWallNormals[w], b.position) - plane[w] - r;
                 if (gap > kContactMargin) continue;
                 b.touching = true;
@@ -484,10 +499,13 @@ void PhysicsWorld::collectWallContacts() {
 
         // Oriented box: every corner within reach of a wall becomes a contact,
         // keyed by (wall, corner) so warm-start impulses survive the step.
-        const float cornerMin[6] = {b.aabbMin.x - kContactMargin, -b.aabbMax.x - kContactMargin,
-                                    b.aabbMin.y - kContactMargin, -b.aabbMax.y - kContactMargin,
-                                    b.aabbMin.z - kContactMargin, -b.aabbMax.z - kContactMargin};
-        for (int w = 0; w < 6; ++w) {
+        // The corners are in the same order as the walls.
+        const float cornerMin[kWallCount] = {b.aabbMin.x - kContactMargin,
+                                            -b.aabbMax.x - kContactMargin,
+                                            -b.aabbMax.y - kContactMargin,
+                                            b.aabbMin.z - kContactMargin,
+                                            -b.aabbMax.z - kContactMargin};
+        for (int w = 0; w < kWallCount; ++w) {
             if (cornerMin[w] >= plane[w]) continue;
             for (int k = 0; k < 8; ++k) {
                 const float gap = dot(kWallNormals[w], b.corners[k]) - plane[w];

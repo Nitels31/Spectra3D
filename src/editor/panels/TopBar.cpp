@@ -282,7 +282,7 @@ void Editor::frameSelection(PhysicsWorld& world, Camera& camera) {
 }
 
 std::string Editor::projectDir() const {
-    // The scene path is "<projectDir>/scene.txt", so the directory is known without
+    // The scene path is "<projectDir>/scene.json", so the directory is known without
     // asking the application for the project.
     const size_t slash = scenePath_.find_last_of("/\\");
     return slash == std::string::npos ? std::string(".") : scenePath_.substr(0, slash);
@@ -297,14 +297,12 @@ void Editor::openModal(Modal dialog) {
         modalField_.clear();
         break;
     case Modal::OpenScene:
-        // Every scene file in the project, so the dialog is a choice rather than a
-        // spelling test.
-        modalFiles_ = fs::listFilesByExtension(projectDir(), {".txt"});
-        modalField_.set("scene.txt");
+        // Every scene file in the project, so the dialog is a choice rather than
+        // a spelling test. A scene is a JSON file.
+        modalFiles_ = fs::listFilesByExtension(projectDir(), {".json"});
+        modalField_.set("scene.json");
         break;
-    case Modal::SaveAs:
-        modalField_.set("scene.txt");
-        break;
+
     case Modal::BuildSettings:
         modalField_.set(str::join(projectDir(), "build").c_str());
         break;
@@ -347,9 +345,22 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
     case Action::Save:
         saveScene(world);
         break;
-    case Action::SaveAs:
-        openModal(Modal::SaveAs);
+    case Action::SaveAs: {
+        // Where the scene is saved, not what it is called. The name is the
+        // project's business and does not change here - the folder is the answer,
+        // and the platform's own folder chooser is what asks the question.
+        std::string folder;
+        const fs::PickResult picked = fs::pickFolder(projectDir(), folder);
+        if (picked != fs::PickResult::Picked) break;
+        // The name is kept: the same file, somewhere else.
+        scenePath_ = str::join(folder, str::fileName(scenePath_));
+        saveScene(world);
+        // A scene that is still inside the project is the project's scene, and
+        // the project has to say so - or the next time it is opened it goes back
+        // to the file it had.
+        if (folder == projectDir()) shellRequest_ = ShellRequest::SaveProject;
         break;
+    }
     case Action::NewProject:
     case Action::OpenProject: {
         // Unsaved work first, then back to the launcher, which owns the project
