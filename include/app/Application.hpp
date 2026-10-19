@@ -50,7 +50,7 @@ private:
     void openProject(const ProjectInfo& project);
     void closeProject();
 
-    void updateCameraInput(Window& window, float dt);
+    void updateCameraInput(Window& window, float dt, bool allowMove = true);
     void updateSimulation(float dt, bool stepping);
     void renderScene();
     void reportStartupInfo();

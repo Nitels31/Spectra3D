@@ -44,15 +44,6 @@ constexpr float kLookSensitivity = 0.0025f;
 const GravityAxis kGravityAxes[6] = {GravityAxis::NegY, GravityAxis::PosY, GravityAxis::NegX,
                                       GravityAxis::PosX, GravityAxis::NegZ, GravityAxis::PosZ};
 
-// Whether the free camera has moved since it was last compared. Compared field
-// by field rather than with an operator, because Vec3 and Quat do not have one
-// and adding one for a single caller is more than the check is worth.
-bool cameraMoved(const Camera& a, const Camera& b) {
-    return a.position.x != b.position.x || a.position.y != b.position.y ||
-           a.position.z != b.position.z || a.yaw != b.yaw || a.pitch != b.pitch ||
-           a.fovDeg != b.fovDeg;
-}
-
 } // namespace
 
 
@@ -375,28 +366,23 @@ void Application::runEditorFrame(float dt) {
     // game view appears.
     //
     // The index is taken, not the body: a body can be deleted by a script
-    // between here and the write back, and an index is re-checked every time
+    // between here and the frame's end, and an index is re-checked every time
     // it is used.
-    //
-    // `readCamera` is what the entity said at the top of the frame. The write
-    // back only happens when the free camera has moved since then, so a script
-    // that moves the camera body directly is not overwritten by the editor's
-    // idea of where the camera is.
     int gameCamera = world_.findActiveCamera();
     if (gameCamera < 0) gameCamera = world_.findFirstCamera();
     const bool playing = editor_->simulating();
-    sceneCamera_ = playing ? gameCamera : -1;
-    Camera readCamera = camera_;
-    bool readFromEntity = false;
-    if (sceneCamera_ >= 0) {
-        if (const RigidBody* body = world_.find(sceneCamera_)) {
-            camera_ = cameraFromEntity(*body);
-            readCamera = camera_;
-            readFromEntity = true;
-        }
-    }
+    // While the game is running and a camera is in charge, the camera entity
+    // IS the view, and the free camera is pinned to it. The editor's fly
+    // controls do not get to move the game's camera out from under the game:
+    // what the game sees is where the entity is, whether a script moved it or
+    // an anchor pulled it along behind a body.
+    const bool gameCameraInCharge = playing && gameCamera >= 0;
+    sceneCamera_ = gameCameraInCharge ? gameCamera : -1;
 
-    updateCameraInput(window_, dt);
+    // The free camera only moves when it is the one being looked through. With
+    // a camera entity in charge the view belongs to the game, and the mouse and
+    // the movement keys are not the game's to answer to.
+    updateCameraInput(window_, dt, !gameCameraInCharge);
 
     // Gravity is part of what gets saved with the scene, so picking an axis is an
     // edit to the document, not a view setting.
@@ -463,24 +449,17 @@ if (editor_->consumeTimeReset()) simulationTime_ = 0.0;
 
     updateSimulation(dt, stepping);
 
-    // The camera goes back into the entity it came from, after the scripts have
-    // had their say: a script that moved the free camera has moved the camera
-    // entity too.
+    // The view is read out of the camera entity here, after the scripts and the
+    // physics have had their say - so a camera a script moved this frame, or one
+    // an anchor pulled along behind a body, is seen where it is now and not
+    // where it was a frame ago.
     //
-    // Only when the free camera has actually moved since it was read out of the
-    // entity. A script that moves the camera body directly is not overwritten by
-    // the editor's idea of where the camera is, and a frame where nothing moved
-    // does not mark the scene dirty.
-    if (readFromEntity) {
-        if (RigidBody* body = world_.find(sceneCamera_)) {
-            if (body->isCamera() && cameraMoved(camera_, readCamera)) {
-                body->position = camera_.position;
-                body->orientation = orientationFromCamera(camera_);
-                body->cameraFov = camera_.fovDeg;
-                body->syncPrevTransform();
-                editor_->markSceneDirty();
-            }
-        }
+    // The free camera is pinned to it: whatever the editor's own controls did
+    // to the free camera while the game was running, the game camera is where
+    // the entity is.
+    if (gameCameraInCharge) {
+        if (const RigidBody* body = world_.find(sceneCamera_))
+            camera_ = cameraFromEntity(*body);
     }
 
     renderScene();
@@ -577,8 +556,15 @@ bool Application::stageBuild(const std::string& target, bool alsoRun) {
 #endif
 }
 
-void Application::updateCameraInput(Window& window, float dt) {
+void Application::updateCameraInput(Window& window, float dt, bool allowMove) {
+    // The right button holds the mouse whether or not the camera is the one
+    // that moves. A press in the viewport is not a click on whatever happens to
+    // be under it, and that has to stay true while the game is running.
     window.setMouseCaptured(window.mouseDown(GLFW_MOUSE_BUTTON_RIGHT));
+
+    // With a camera entity in charge, the free camera is pinned to it and the
+    // mouse is not the game's to answer to.
+    if (!allowMove) return;
 
     if (window.mouseCaptured()) {
         double dx = 0.0, dy = 0.0;
