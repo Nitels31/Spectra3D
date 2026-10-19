@@ -326,6 +326,23 @@ void PhysicsWorld::remove(int index) {
     clearPairWarm();
 }
 
+int PhysicsWorld::findActiveCamera() const {
+    for (size_t i = 0; i < bodies.size(); ++i)
+        if (bodies[i].activeCamera && bodies[i].isCamera()) return (int)i;
+    return -1;
+}
+
+void PhysicsWorld::setActiveCamera(int index) {
+    // Only one camera is ever the active one, so the flag is cleared everywhere
+    // first and set on one body after. Clearing it on the way out is what makes
+    // the viewport go back to the free camera when the active camera is
+    // deleted: the body that carried the flag is gone, and nothing else has it.
+    for (RigidBody& b : bodies) b.activeCamera = false;
+    if (index < 0 || index >= (int)bodies.size()) return;
+    if (!bodies[(size_t)index].isCamera()) return;
+    bodies[(size_t)index].activeCamera = true;
+}
+
 void PhysicsWorld::refreshDerived(RigidBody& body) const {
     const Vec3& he = body.halfExtents;
     Vec3 mn{1e30f, 1e30f, 1e30f};
@@ -378,9 +395,16 @@ currentStepDt_ = dt;
         // otherwise keep the value it had when it last moved, which is how a
         // static body ends up drawn sliding back to wherever it used to be.
         b.syncPrevTransform();
-        if (b.asleep || b.material.isStatic) continue;
-        b.position += b.velocity * dt;
-        b.orientation = integrate(b.orientation, b.angularVelocity, dt);
+        // A camera is placed, not simulated: it does not fall, it does not
+        // drift and it does not spin. It is still anchored, though - a camera
+        // that follows a moving body is the whole point of having a camera in
+        // the scene.
+        if (b.asleep) continue;
+        if (!b.isCamera()) {
+            if (b.material.isStatic) continue;
+            b.position += b.velocity * dt;
+            b.orientation = integrate(b.orientation, b.angularVelocity, dt);
+        }
 
         if (b.anchorPosition) {
             const Vec3 delta = b.position - b.anchorPoint;
@@ -411,7 +435,8 @@ void PhysicsWorld::integrateForces(float dt) {
         refreshDerived(b);
         b.touching = false;
         if (b.asleep) continue;
-        if (!b.material.isStatic) {
+        // A camera is a scene object: it is never pushed around by the world.
+        if (!b.material.isStatic && !b.isCamera()) {
             b.force += gravity * b.mass;
             b.velocity += b.force * b.invMass * dt;
             b.angularVelocity += b.invInertiaCached * (b.torque * dt);
@@ -432,7 +457,9 @@ void PhysicsWorld::collectWallContacts() {
 
     for (uint32_t bi = 0; bi < bodies.size(); ++bi) {
         RigidBody& b = bodies[bi];
-        if (b.asleep || b.material.isStatic) continue;
+        // A camera never touches a wall: it is a thing that is looked at, not a
+        // thing that rests on the floor.
+        if (b.asleep || b.material.isStatic || b.isCamera()) continue;
 
         if (b.shape == Shape::Sphere) {
             const float r = b.halfExtents.x;
@@ -520,6 +547,11 @@ void PhysicsWorld::collectPairContacts() {
     int cell[6];
     for (uint32_t bi = 0; bi < bodies.size(); ++bi) {
         RigidBody& b = bodies[bi];
+        // A camera is not in the world at all: it is not inserted, so it can
+        // never be found as a collision partner. This is the one place that
+        // decides what collides with what, which is why it is here and not
+        // scattered through the contact code.
+        if (b.isCamera()) continue;
         // Static bodies are inserted too. They never drive a query (see the loop
         // below) but they must be findable as collision partners, or an immovable
         // body collides with nothing at all and everything slides straight through
@@ -927,7 +959,9 @@ void PhysicsWorld::updateSleep(float dt) {
     constexpr float kAngularThresholdSq = 0.0004f;
 
     for (RigidBody& b : bodies) {
-        if (b.asleep || b.material.isStatic) continue;
+        // A camera is never asleep - it is not simulated at all, so it has no
+        // quiet to measure.
+        if (b.asleep || b.material.isStatic || b.isCamera()) continue;
         const bool quiet = b.touching &&
                            b.velocity.lengthSq() < kLinearThresholdSq &&
                            b.angularVelocity.lengthSq() < kAngularThresholdSq;

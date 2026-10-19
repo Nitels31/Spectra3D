@@ -104,7 +104,7 @@ kHelpClose = 1400,
     // --- per frame ----------------------------------------------------------
     void handleInput(PhysicsWorld& world, Camera& camera, Window& window, int fbWidth,
                      int fbHeight);
-    void renderOverlay(SceneRenderer& scene, PhysicsWorld& world);
+    void renderOverlay(SceneRenderer& scene, PhysicsWorld& world, int hiddenBody = -1);
     void renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
                   int fbWidth, int fbHeight);
 
@@ -283,6 +283,10 @@ private:
     // a star in the atlas and no rotated rectangle in the batcher, so this is what
     // "favourite" looks like.
     static void drawStar(UiRenderer& ui, float cx, float cy, float radius, const Color& tint);
+    // The camera's row icon: a triangle pointing right, the way a camera is
+    // drawn everywhere else.
+    static void drawCameraIcon(UiRenderer& ui, float x, float y, float size,
+                                const Color& tint);
     // Body indexes that pass the current filter. A member so its capacity survives
     // between frames; the obvious alternative - walk the bodies again for every
     // visible row - is quadratic.
@@ -332,6 +336,10 @@ private:
         ResetCamera,
         Shape,
         Model,
+        // A camera in the scene, placed where the editor is looking. Not part of
+        // Action::Shape because the camera is not a collision shape: it has no
+        // volume and is never collided.
+        Camera,
         Controls,
         About,
         CloseOverlay,
@@ -483,6 +491,8 @@ private:
     void drawEmptyInspector(UiRenderer& ui, const Rect& dock, float y);
     void drawTransformSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
     void drawShapeSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
+    void drawCameraSection(UiRenderer& ui, PhysicsWorld& world, RigidBody& body,
+                            const Rect& dock, float& y);
     void drawMaterialSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
     void drawFlagsSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
     void drawAnchorSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);

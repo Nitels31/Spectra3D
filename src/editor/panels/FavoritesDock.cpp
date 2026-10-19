@@ -98,6 +98,8 @@ void Editor::drawFavoritesDock(UiRenderer& ui, PhysicsWorld& world, const Rect& 
         const Color tint = rowTint(index);
         if (body.shape == Shape::Sphere)
             ui.fillCircle(dock.x + 31.0f, y + 10.0f, 5.0f, tint);
+        else if (body.isCamera())
+            drawCameraIcon(ui, dock.x + 26.0f, y + 5.0f, 10.0f, tint);
         else
             ui.fillRect(dock.x + 26.0f, y + 5.0f, 10.0f, 10.0f, tint);
 

@@ -243,6 +243,12 @@ bool save(const PhysicsWorld& world, const MeshRegistry& meshes, const std::stri
         // favourites existed still loads - with every star empty, which is exactly
         // what those scenes meant.
         row.integer(body.favorite ? 1 : 0);
+        // The same trick for the camera: its field of view and whether it is
+        // the scene's active one. A scene written before cameras existed has
+        // neither, and reads back as the default lens and no active camera -
+        // which is what those scenes meant.
+        row.num(body.cameraFov);
+        row.integer(body.activeCamera ? 1 : 0);
         text += '\n';
     }
 
@@ -333,6 +339,16 @@ bool load(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path) {
               nextDouble(field, lineEnd, meshScale) && nextToken(field, lineEnd, name)))
             continue;
 
+        // The shape is a plain ordinal in the file, and a file can carry one this
+        // build does not know - a scene written by a newer engine, or a typo.
+        // Casting it blindly would produce a shape that is not in the enum at
+        // all, and every switch on it would fall through to its default: the
+        // body would load as a cube. Skipping the line is the honest answer.
+        if (shapeId < 0 || shapeId > (long)Shape::Camera) {
+            Log::warn("Scene: unknown shape %ld, skipping the body", shapeId);
+            continue;
+        }
+
         // Everything past the mesh name is optional, so older files still load.
         // && short-circuits, which leaves this field and every later one at its
         // default - the same thing a stream that had already failed used to do.
@@ -348,6 +364,14 @@ bool load(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path) {
         // the whole line: an old scene loads, with no stars.
         long favorite = 0;
         (void)nextLong(field, lineEnd, favorite);
+
+        // The camera's lens and whether it is the scene's active one. Both are
+        // written after the star and both are optional for the same reason: a
+        // scene that predates cameras has neither.
+        double cameraFov = 70.0;
+        (void)nextDouble(field, lineEnd, cameraFov);
+        long activeCamera = 0;
+        (void)nextLong(field, lineEnd, activeCamera);
 
         // Filled in place instead of building a local and copying it in.
         // emplace_back() value-initialises, which also gives force/torque a
@@ -376,6 +400,11 @@ bool load(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path) {
             Quat{(float)aqw, (float)aqx, (float)aqy, (float)aqz}.normalized();
         body.anchorSpring = (float)anchorSpring;
         body.favorite = favorite != 0;
+        // A camera's lens, and whether it is the one the viewport looks
+        // through. The flag is only honoured on a camera - a body that is not
+        // one cannot be looked through, whatever the file says.
+        body.cameraFov = clampf((float)cameraFov, 10.0f, 170.0f);
+        body.activeCamera = activeCamera != 0 && body.isCamera();
         body.syncPrevTransform();
 
         if (name != kNoMesh) {

@@ -4,6 +4,7 @@
 #include "core/Str.hpp"
 #include "platform/Filesystem.hpp"
 #include "render/GlInfo.hpp"
+#include "scene/CameraEntity.hpp"
 #include "scene/SceneSerializer.hpp"
 #include "ui/Theme.hpp"
 
@@ -41,9 +42,19 @@ constexpr float kCameraBoost = 30.0f;
 constexpr float kLookSensitivity = 0.0025f;
 
 const GravityAxis kGravityAxes[6] = {GravityAxis::NegY, GravityAxis::PosY, GravityAxis::NegX,
-                                     GravityAxis::PosX, GravityAxis::NegZ, GravityAxis::PosZ};
+                                      GravityAxis::PosX, GravityAxis::NegZ, GravityAxis::PosZ};
+
+// Whether the free camera has moved since it was last compared. Compared field
+// by field rather than with an operator, because Vec3 and Quat do not have one
+// and adding one for a single caller is more than the check is worth.
+bool cameraMoved(const Camera& a, const Camera& b) {
+    return a.position.x != b.position.x || a.position.y != b.position.y ||
+           a.position.z != b.position.z || a.yaw != b.yaw || a.pitch != b.pitch ||
+           a.fovDeg != b.fovDeg;
+}
 
 } // namespace
+
 
 namespace {
 
@@ -351,6 +362,32 @@ void Application::runEditorFrame(float dt) {
     // per-frame hook and the fixed-step loop below need the same answer.
     const bool stepping = editor_->simulating() || editor_->consumeSingleStep();
 
+    // The scene's active camera, if it has one, is what the viewport looks
+    // through. It is read into the free camera at the top of the frame and
+    // written back at the bottom, so the free camera stays the working copy:
+    // the editor's fly, pan and orbit controls all write into it, and the
+    // entity ends up holding wherever they left it.
+    //
+    // The index is taken, not the body: a body can be deleted by a script
+    // between here and the write back, and an index is re-checked every time
+    // it is used.
+    //
+    // `readCamera` is what the entity said at the top of the frame. The write
+    // back only happens when the free camera has moved since then, so a script
+    // that moves the camera body directly is not overwritten by the editor's
+    // idea of where the camera is.
+    const int sceneCamera = world_.findActiveCamera();
+    sceneCamera_ = sceneCamera;
+    Camera readCamera = camera_;
+    bool readFromEntity = false;
+    if (sceneCamera >= 0) {
+        if (const RigidBody* body = world_.find(sceneCamera)) {
+            camera_ = cameraFromEntity(*body);
+            readCamera = camera_;
+            readFromEntity = true;
+        }
+    }
+
     updateCameraInput(window_, dt);
 
     // Gravity is part of what gets saved with the scene, so picking an axis is an
@@ -363,6 +400,7 @@ void Application::runEditorFrame(float dt) {
 
     editor_->handleInput(world_, camera_, window_, window_.framebufferWidth(),
                          window_.framebufferHeight());
+
 
     // File > New Project / Open Project hand the window back to the launcher,
     // which is where a project list lives. Anything the editor cannot do by
@@ -416,6 +454,27 @@ if (editor_->consumeTimeReset()) simulationTime_ = 0.0;
     if (stepping) scripts_.callUpdate(dt);
 
     updateSimulation(dt, stepping);
+
+    // The camera goes back into the entity it came from, after the scripts have
+    // had their say: a script that moved the free camera has moved the camera
+    // entity too.
+    //
+    // Only when the free camera has actually moved since it was read out of the
+    // entity. A script that moves the camera body directly is not overwritten by
+    // the editor's idea of where the camera is, and a frame where nothing moved
+    // does not mark the scene dirty.
+    if (readFromEntity) {
+        if (RigidBody* body = world_.find(sceneCamera)) {
+            if (body->isCamera() && cameraMoved(camera_, readCamera)) {
+                body->position = camera_.position;
+                body->orientation = orientationFromCamera(camera_);
+                body->cameraFov = camera_.fovDeg;
+                body->syncPrevTransform();
+                editor_->markSceneDirty();
+            }
+        }
+    }
+
     renderScene();
 }
 
@@ -574,8 +633,9 @@ void Application::renderScene() {
 
     sceneRenderer_.beginFrame(window_.framebufferWidth(), window_.framebufferHeight());
     sceneRenderer_.renderWorld(world_, meshes_, textures_, camera_, glViewport,
-                               editor_->showGrid(), editor_->showVectors(), clockAlpha_);
-    editor_->renderOverlay(sceneRenderer_, world_);
+                               editor_->showGrid(), editor_->showVectors(), clockAlpha_,
+                               sceneCamera_);
+    editor_->renderOverlay(sceneRenderer_, world_, sceneCamera_);
     editor_->renderUi(uiRenderer_, world_, camera_, window_, window_.framebufferWidth(),
                       window_.framebufferHeight());
 }

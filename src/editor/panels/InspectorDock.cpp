@@ -2,6 +2,7 @@
 
 #include "core/Log.hpp"
 #include "core/Str.hpp"
+#include "scene/CameraEntity.hpp"
 #include "ui/Theme.hpp"
 
 #include <algorithm>
@@ -127,8 +128,15 @@ void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
     float y2 = bodyTop - inspectorScroll_;
     RigidBody& body = world.bodies[(size_t)activeBody_];
     drawTransformSection(ui, body, innerDock, y2);
-    drawShapeSection(ui, body, innerDock, y2);
-    drawMaterialSection(ui, body, innerDock, y2);
+    // A camera has no volume and no material, so it gets its own section
+    // instead of the shape and material ones - which would offer fields that
+    // mean nothing for it.
+    if (body.isCamera())
+        drawCameraSection(ui, world, body, innerDock, y2);
+    else {
+        drawShapeSection(ui, body, innerDock, y2);
+        drawMaterialSection(ui, body, innerDock, y2);
+    }
     drawFlagsSection(ui, body, innerDock, y2);
     drawAnchorSection(ui, body, innerDock, y2);
     drawStateSection(ui, world, body, innerDock, y2);
@@ -291,6 +299,58 @@ void Editor::drawShapeSection(UiRenderer& ui, RigidBody& body, const Rect& dock,
         if (changed) body.configure(body.mass);
         y += 2.0f;
     }
+}
+
+void Editor::drawCameraSection(UiRenderer& ui, PhysicsWorld& world, RigidBody& body,
+                                const Rect& dock, float& y) {
+    ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.camera"));
+    y += 26.0f;
+
+    if (labelMatches("FOV", filter_))
+        ui_.propertyFloat(ui, kInspectorProperty + 9, dock.x, y, dock.width, text("prop.fov"),
+                          body.cameraFov, 1.0f, 10.0f, 170.0f);
+    y += kRowStep;
+
+    // Yaw and pitch, because the camera is aimed with them and a body carries a
+    // quaternion - which no field can be typed into. This is also the only way
+    // to aim a camera that is the active one: the viewport is looking out of
+    // it, so its gizmo is inside the eye and is not drawn.
+    //
+    // In degrees, because the engine keeps them in radians and nobody types
+    // radians into a field.
+    if (labelMatches("YAW", filter_) || labelMatches("PITCH", filter_)) {
+        const Camera view = cameraFromEntity(body);
+        const float toDegrees = 180.0f / kPi;
+        float yawDeg = view.yaw * toDegrees;
+        float pitchDeg = view.pitch * toDegrees;
+        bool changed = false;
+        if (labelMatches("YAW", filter_))
+            changed |= ui_.propertyFloat(ui, kInspectorProperty + 11, dock.x, y, dock.width,
+                                         text("prop.yaw"), yawDeg, 1.0f, -360.0f, 360.0f);
+        y += kRowStep;
+        if (labelMatches("PITCH", filter_))
+            changed |= ui_.propertyFloat(ui, kInspectorProperty + 12, dock.x, y, dock.width,
+                                         text("prop.pitch"), pitchDeg, 1.0f, -89.0f, 89.0f);
+        if (changed) {
+            Camera aimed = view;
+            aimed.yaw = yawDeg / toDegrees;
+            aimed.pitch = pitchDeg / toDegrees;
+            body.orientation = orientationFromCamera(aimed);
+            body.syncPrevTransform();
+            markSceneDirty();
+        }
+    }
+    y += kRowStep;
+
+    // The active camera is the one the viewport looks through. Only one body
+    // can hold it, so setting it takes the flag off every other camera - which
+    // is what setActiveCamera does.
+    if (ui_.checkbox(ui, kInspectorProperty + 10, dock.x, y, dock.width, text("cam.active"),
+                     body.activeCamera)) {
+        world.setActiveCamera(body.activeCamera ? activeBody_ : -1);
+        markSceneDirty();
+    }
+    y += 24.0f;
 }
 
 void Editor::drawMaterialSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y) {

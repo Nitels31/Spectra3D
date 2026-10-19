@@ -34,6 +34,15 @@ public:
     const RigidBody* find(int index) const;
     void remove(int index);
 
+    // The scene's active camera: the body the viewport looks through, or -1
+    // when the scene has none and the editor's own free camera is in charge.
+    int findActiveCamera() const;
+
+    // Makes `index` the active camera and clears the flag on every other body.
+    // A body that is not a camera is ignored, and -1 clears the flag on
+    // everything - which is how the viewport goes back to the free camera.
+    void setActiveCamera(int index);
+
 private:
     // One resolved contact for the current step. `bodyB` == kNoBody for arena
     // walls, in which case `wall`/`slot` address the warm-start cache.

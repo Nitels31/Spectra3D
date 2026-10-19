@@ -38,10 +38,13 @@ public:
     // 0..1, from FixedClock::alpha(). A body is drawn at
     // lerp(prevPosition, position, alpha) so the 60 Hz physics reads as smooth
     // motion at any refresh rate. 0 reproduces the old behaviour exactly.
+    // `hiddenBody` is a body index the caller does not want drawn - the camera
+    // the viewport is looking through, which sits at the eye and would fill the
+    // screen with its own icon. -1 for none.
     void renderWorld(const PhysicsWorld& world, const MeshRegistry& meshes,
                      const TextureRegistry& textures, const Camera& camera,
                      const Viewport& viewport, bool showGrid, bool showVectors,
-                     float alpha);
+                     float alpha, int hiddenBody = -1);
 
     void renderSelection(const RigidBody& body);
 
@@ -76,13 +79,14 @@ private:
     void buildArenaGrid();
     void drawArena(const Camera& camera);
     void drawBodies(const PhysicsWorld& world, const MeshRegistry& meshes,
-                     const TextureRegistry& textures, float alpha);
+                     const TextureRegistry& textures, float alpha, int hiddenBody);
     void drawDebugVectors(const PhysicsWorld& world);
 
     void extractFrustum(const float* projection, const float* view);
     bool sphereVisible(const Vec3& center, float radius) const;
     bool drawImportedMesh(const RigidBody& body, const MeshRegistry& meshes,
                           const TextureRegistry& textures, const Quat& orientation);
+    void drawCameraEntity(const RigidBody& body, const Quat& orientation);
 
     PrimitiveCache primitives_;
     float projection_[16] = {};

@@ -57,7 +57,7 @@ int spawnShape(int shapeValue, float x, float y, float z, float sx, float sy, fl
     ScriptState* state = activeState();
     if (!state || !state->world) return -1;
 
-    if (shapeValue < 0 || shapeValue > (int)Shape::Mesh) {
+    if (shapeValue < 0 || shapeValue > (int)Shape::Camera) {
         Log::error("engine::spawnShape: %d is not a Shape value", shapeValue);
         return -1;
     }
@@ -65,6 +65,13 @@ int spawnShape(int shapeValue, float x, float y, float z, float sx, float sy, fl
     if (shape == Shape::Mesh) {
         // A mesh body needs a MeshRegistry handle that only importModel can get.
         Log::error("engine::spawnShape: use engine::importModel for ShapeMesh");
+        return -1;
+    }
+    if (shape == Shape::Camera) {
+        // A camera has no volume, so the size a script passes would mean
+        // nothing, and the one thing a script wants from a camera - to be the
+        // one the game looks through - has a function of its own.
+        Log::error("engine::spawnShape: use engine::createCamera for ShapeCamera");
         return -1;
     }
 
@@ -152,6 +159,19 @@ void wakeBody(int index) {
     body->wake();
 }
 
+float getBodyFov(int index) {
+    const RigidBody* body = resolveBody("getBodyFov", index);
+    return body ? body->cameraFov : 0.0f;
+}
+
+void setBodyFov(int index, float degrees) {
+    RigidBody* body = resolveBody("setBodyFov", index);
+    if (!body) return;
+    // The same range the editor's own field uses, so a script cannot open a
+    // lens the editor would not let a person open.
+    body->cameraFov = clampf(degrees, 10.0f, 170.0f);
+}
+
 // --- declarations -----------------------------------------------------------
 //
 // None of these mention a namespace: the host points the engine's default
@@ -185,6 +205,8 @@ const Binding kBindings[] = {
     {"float getBodySpeed(int index)", asFUNCTION(getBodySpeed)},
     {"int getBodyShape(int index)", asFUNCTION(getBodyShape)},
     {"void wakeBody(int index)", asFUNCTION(wakeBody)},
+    {"float getBodyFov(int index)", asFUNCTION(getBodyFov)},
+    {"void setBodyFov(int index, float degrees)", asFUNCTION(setBodyFov)},
 };
 
 // Enum values are the underlying ordinals of s3d::Shape, so a script can pass
@@ -206,6 +228,7 @@ const EnumValue kShapeValues[] = {
     {"ShapePyramid", (int)Shape::Pyramid},
     {"ShapePrism", (int)Shape::Prism},
     {"ShapeMesh", (int)Shape::Mesh},
+    {"ShapeCamera", (int)Shape::Camera},
 };
 
 const char* const kGravityEnum = "Gravity";

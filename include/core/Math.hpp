@@ -91,10 +91,19 @@ inline Quat nlerp(const Quat& a, const Quat& b, float t) {
         .normalized();
 }
 
+// Turns a vector by a quaternion: v + 2w(u x v) + 2u x (u x v).
+//
+// The middle term is the one that matters and the one that is easy to get
+// wrong: it is 2w times the CROSS PRODUCT of the axis and the vector, not 2w
+// times the axis. With the axis in its place, a vector perpendicular to the
+// axis would keep its direction and only shrink - a quarter turn about Y would
+// take (1,0,0) to (0,1,0) instead of to (0,0,-1), and the vector would never
+// swing around the axis at all. Mat3::fromQuat builds the same rotation as a
+// matrix and agrees with this.
 inline Vec3 rotate(const Quat& q, const Vec3& v) {
     const Vec3 u{q.x, q.y, q.z};
     const Vec3 t = cross(u, v) * 2.0f;
-    return v + u * (q.w * 2.0f) + cross(u, t);
+    return v + t * q.w + cross(u, t);
 }
 
 inline Quat integrate(const Quat& q, const Vec3& worldOmega, float dt) {

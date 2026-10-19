@@ -74,6 +74,11 @@ private:
     TextureRegistry textures_;
     i18n::Localizer localizer_;
     Camera camera_;
+    // The body index of the camera the viewport is looking through, or -1 when
+    // the free camera is in charge. The body itself is not drawn while it is
+    // the eye: its icon would be a hand's width from the near plane and would
+    // fill the screen.
+    int sceneCamera_ = -1;
     SceneRenderer sceneRenderer_;
     UiRenderer uiRenderer_;
     Launcher launcher_;

@@ -190,6 +190,10 @@ void Editor::drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
         const Color tint = rowTint(index);
         if (body.shape == Shape::Sphere)
             ui.fillCircle(dock.x + 31.0f, y + 10.0f, 5.0f, tint);
+        else if (body.isCamera())
+            // A triangle, not a square: a camera is the one body in the tree
+            // that is not a thing in the world.
+            drawCameraIcon(ui, dock.x + 26.0f, y + 5.0f, 10.0f, tint);
         else
             ui.fillRect(dock.x + 26.0f, y + 5.0f, 10.0f, 10.0f, tint);
 

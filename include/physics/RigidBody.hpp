@@ -15,6 +15,13 @@ enum class Shape {
     Pyramid,
     Prism,
     Mesh, // rendered asset, collided as a box hull
+    // A camera in the scene: a thing that is looked at rather than a thing that
+    // is looked through. It is never collided and never simulated.
+    //
+    // Last in the list on purpose: the ordinal is what a saved scene stores, so
+    // a new shape has to be appended or every scene written before it changes
+    // what it means.
+    Camera,
 };
 
 // Collision primitive of a rigid body plus everything the simulation needs to
@@ -55,6 +62,11 @@ struct RigidBody {
     float prismHeight = 1.0f;
     int prismSides = 5;
 
+    // A camera's field of view in degrees, measured vertically - the same
+    // measure the engine's own view camera uses, so the two mean the same
+    // thing and a camera entity needs no conversion to be looked through.
+    float cameraFov = 70.0f;
+
     // `mesh` indexes MeshRegistry, which lives one layer up in `assets`. The
     // physics layer therefore only carries the opaque handle, never the type.
     int mesh = -1;
@@ -83,6 +95,11 @@ bool asleep = false;
     // because those are editor marks too, and a star that forgets itself on reload
     // is not a star.
     bool favorite = false;
+
+    // The scene's active camera: the one the viewport looks through. Only one
+    // body carries it at a time - see PhysicsWorld::setActiveCamera, which is
+    // the only thing that should ever set it.
+    bool activeCamera = false;
 
     // --- soft constraint ---------------------------------------------------
     bool anchorPosition = false;
@@ -119,6 +136,7 @@ bool asleep = false;
     void wake();
 
     bool hasMesh() const { return mesh >= 0; }
+    bool isCamera() const { return shape == Shape::Camera; }
 };
 
 const char* shapeName(Shape s);

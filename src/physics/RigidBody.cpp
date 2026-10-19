@@ -84,6 +84,20 @@ void RigidBody::configure(float newMass) {
             boundRadius = std::sqrt(r * r + halfExtents.y * halfExtents.y);
             return;
         }
+        case Shape::Camera: {
+            // A camera is a scene object, not a thing in the world. It has no
+            // mass to speak of and no inertia to speak of either, and the
+            // inverse mass is zero so that nothing can ever push it around.
+            //
+            // The size is the gizmo's, not a collision hull: a camera is never
+            // collided, and the box it is picked by is this one.
+            const float r = 0.12f;
+            halfExtents = {r, r, r};
+            invMass = 0.0f;
+            setInertia(1.0f, 1.0f, 1.0f);
+            boundRadius = r;
+            return;
+        }
         default: break;
     }
 
@@ -132,6 +146,7 @@ const char* shapeName(Shape s) {
         case Shape::Pyramid: return "Pyramid";
         case Shape::Prism: return "Prism";
         case Shape::Mesh: return "Mesh";
+        case Shape::Camera: return "Camera";
     }
     return "?";
 }

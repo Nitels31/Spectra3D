@@ -258,6 +258,7 @@ set(SPECTRA_SRC_SCRIPT
 )
 set(SPECTRA_SRC_SCENE
     src/scene/BodyFactory.cpp
+    src/scene/CameraEntity.cpp
     src/scene/SceneSerializer.cpp
 )
 set(SPECTRA_SRC_UI

@@ -5,6 +5,7 @@
 #include "core/Str.hpp"
 #include "platform/Filesystem.hpp"
 #include "scene/BodyFactory.hpp"
+#include "scene/CameraEntity.hpp"
 #include "ui/Theme.hpp"
 
 #include <algorithm>
@@ -181,6 +182,9 @@ void Editor::buildMenuRows() {
     open(kMenuCreate);
     for (int i = 0; i < kShapeCount; ++i)
         add(Action::Shape, i, text(kShapeLabelKeys[i]));
+    // The camera is not a shape - it has no volume and is never collided - so
+    // it gets its own row rather than a place in the shape list.
+    add(Action::Camera, 0, text("shape.camera"));
     const std::vector<std::string>& models = assets_.files();
     add(Action::None, 0, nullptr, false, true);
     if (models.empty()) {
@@ -456,6 +460,25 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
             activeBody_ = index;
             selectedBodies_.assign(1, index);
         }
+        break;
+    }
+    case Action::Camera: {
+        // A camera is placed where the editor is looking, and it looks the same
+        // way the editor does - so the new camera sees what the editor saw.
+        RigidBody body;
+        body.shape = Shape::Camera;
+        body.cameraFov = camera.fovDeg;
+        body.position = camera.position + camera.forward().normalized() * 3.0f;
+        body.orientation = orientationFromCamera(camera);
+        body.configure(1.0f);
+        body.syncPrevTransform();
+
+        world.bodies.push_back(body);
+        const int index = (int)world.bodies.size() - 1;
+        activeBody_ = index;
+        selectedBodies_.assign(1, index);
+        markSceneDirty();
+        Log::info("Created camera %d", index);
         break;
     }
     case Action::Model: {

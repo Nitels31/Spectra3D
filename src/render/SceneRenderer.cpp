@@ -45,6 +45,24 @@ void applyRotation(const Quat& q) {
     glMultMatrixf(m);
 }
 
+// The four corners of a camera's far plane, in the camera's own space.
+//
+// The frustum is what says "this is a camera" - a box on its own is a box. The
+// shape is the field of view, widened sideways because a screen is wider than
+// it is tall; the icon is a schematic, not a promise about the exact view.
+void cameraFrustum(const RigidBody& body, float length, Vec3 out[4]) {
+    const float halfHeight = length * std::tan(body.cameraFov * 0.5f * kPi / 180.0f);
+    const float halfWidth = halfHeight * 1.6f;
+    out[0] = Vec3{halfWidth, halfHeight, -length};
+    out[1] = Vec3{-halfWidth, halfHeight, -length};
+    out[2] = Vec3{-halfWidth, -halfHeight, -length};
+    out[3] = Vec3{halfWidth, -halfHeight, -length};
+}
+
+// How far the frustum reaches, and how far in front of the body the lens sits.
+constexpr float kCameraFrustumLength = 1.2f;
+constexpr float kCameraLensOffset = 0.12f;
+
 } // namespace
 
 void SceneRenderer::initialize(const Vec3& arenaMin, const Vec3& arenaMax) {
@@ -122,7 +140,7 @@ void SceneRenderer::beginFrame(int framebufferWidth, int framebufferHeight) {
 void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& meshes,
                                  const TextureRegistry& textures, const Camera& camera,
                                  const Viewport& viewport, bool showGrid,
-                                 bool showVectors, float alpha) {
+                                 bool showVectors, float alpha, int hiddenBody) {
     if (viewport.width < 1 || viewport.height < 1) return;
 
     glEnable(GL_SCISSOR_TEST);
@@ -134,7 +152,7 @@ void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& m
     extractFrustum(projection_, view_);
 
     if (showGrid) drawArena(camera);
-    drawBodies(world, meshes, textures, alpha);
+    drawBodies(world, meshes, textures, alpha, hiddenBody);
 
     if (showVectors) drawDebugVectors(world);
     glEnable(GL_LIGHTING);
@@ -384,10 +402,16 @@ bool SceneRenderer::drawImportedMesh(const RigidBody& body, const MeshRegistry& 
 }
 
 void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& meshes,
-                               const TextureRegistry& textures, float alpha) {
+                               const TextureRegistry& textures, float alpha, int hiddenBody) {
     int paletteIndex = 0;
-    for (const RigidBody& body : world.bodies) {
+    for (int index = 0; index < (int)world.bodies.size(); ++index) {
+        const RigidBody& body = world.bodies[(size_t)index];
         if (!body.visible) continue;
+        // The camera the viewport is looking through sits at the eye. Drawn
+        // there, its own icon is a hand's width from the near plane and fills
+        // the screen - the view becomes a grey wall. It is not drawn, the way
+        // an engine does not draw the camera it is rendering from.
+        if (index == hiddenBody) continue;
         if (!sphereVisible(body.position, body.boundRadius)) continue;
 
         // Interpolated between the state before the last physics step and the
@@ -463,6 +487,13 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
                 glCallList(primitives_.pyramid());
                 break;
             }
+            case Shape::Camera: {
+                // A camera is drawn as what it is: a body with a lens, and the
+                // frustum it looks through. The frustum is the part that says
+                // something - a box on its own is a box.
+                drawCameraEntity(body, drawOrientation);
+                break;
+            }
             default: {
                 applyRotation(drawOrientation);
                 glScalef(body.halfExtents.x, body.halfExtents.y, body.halfExtents.z);
@@ -476,12 +507,58 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
     }
 }
 
+void SceneRenderer::drawCameraEntity(const RigidBody& body, const Quat& orientation) {
+    // The body: a small box, the way a camera is drawn everywhere else. The
+    // palette colour is already in the GL colour, so the box takes it.
+    applyRotation(orientation);
+    glScalef(body.halfExtents.x, body.halfExtents.y, body.halfExtents.z);
+    glCallList(primitives_.cube());
+
+    // The lens: a wireframe frustum from the front of the body to the far
+    // plane. Immediate mode rather than a display list, because its size
+    // depends on the field of view, which is a per-camera value.
+    //
+    // Not named `far`: windows.h defines it as a macro, and an array called
+    // that does not survive the preprocessor.
+    Vec3 corners[4];
+    cameraFrustum(body, kCameraFrustumLength, corners);
+
+    glLineWidth(1.5f);
+    glColor3f(0.45f, 0.85f, 1.0f);
+    glBegin(GL_LINES);
+    for (int i = 0; i < 4; ++i) {
+        glVertex3f(0.0f, 0.0f, -kCameraLensOffset);
+        glVertex3f(corners[i].x, corners[i].y, corners[i].z);
+        glVertex3f(corners[i].x, corners[i].y, corners[i].z);
+        glVertex3f(corners[(i + 1) & 3].x, corners[(i + 1) & 3].y, corners[(i + 1) & 3].z);
+    }
+    glEnd();
+    glLineWidth(1.0f);
+}
+
 void SceneRenderer::renderSelection(const RigidBody& body) {
     glDisable(GL_LIGHTING);
     glLineWidth(2.0f);
     glColor3f(1.0f, 0.85f, 0.25f);
 
-    if (body.shape == Shape::Sphere) {
+    if (body.shape == Shape::Camera) {
+        // A camera is outlined by its frustum, not by a box around its body:
+        // the box would be a dozen pixels across, and what a camera is is the
+        // part of the world it looks at.
+        Vec3 corners[4];
+        cameraFrustum(body, kCameraFrustumLength, corners);
+        // The frustum is in the camera's own space, so it is turned into world
+        // space before it is drawn - the same way the icon is.
+        const Vec3 lens =
+            body.position + rotate(body.orientation, Vec3{0.0f, 0.0f, -kCameraLensOffset});
+        glBegin(GL_LINES);
+        for (int i = 0; i < 4; ++i) {
+            const Vec3 corner = body.position + rotate(body.orientation, corners[i]);
+            glVertex3f(lens.x, lens.y, lens.z);
+            glVertex3f(corner.x, corner.y, corner.z);
+        }
+        glEnd();
+    } else if (body.shape == Shape::Sphere) {
         const float r = body.halfExtents.x + 0.06f;
         for (int plane = 0; plane < 3; ++plane) {
             glBegin(GL_LINE_LOOP);

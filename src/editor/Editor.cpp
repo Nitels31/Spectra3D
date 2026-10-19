@@ -921,6 +921,21 @@ void Editor::drawStar(UiRenderer& ui, float cx, float cy, float radius, const Co
     ui.fillRect(cx - 1.2f, cy - 1.2f, 2.4f, 2.4f, tint);
 }
 
+void Editor::drawCameraIcon(UiRenderer& ui, float x, float y, float size,
+                             const Color& tint) {
+    // A triangle, pointing right: the shape a camera is drawn as everywhere
+    // else. The batcher has no triangle, so it is built out of rows of
+    // rectangles - the same way the toolbar's play button is.
+    constexpr int kRows = 5;
+    const float rowHeight = size / (float)kRows;
+    for (int i = 0; i < kRows; ++i) {
+        // The apex is on the right, so the widest row is the first one.
+        const float t = 1.0f - (float)i / (float)(kRows - 1);
+        const float width = size * t;
+        ui.fillRect(x, y + (float)i * rowHeight, width, rowHeight + 0.5f, tint);
+    }
+}
+
 void Editor::handleViewport(PhysicsWorld& world, Camera& camera, Window& window) {
     if (ui_.cameraCaptured()) {
         dragAxis_ = -1;
@@ -1063,11 +1078,13 @@ void Editor::loadScene(PhysicsWorld& world) {
     Log::info(text("log.loaded"), (int)world.bodies.size());
 }
 
-void Editor::renderOverlay(SceneRenderer& scene, PhysicsWorld& world) {
+void Editor::renderOverlay(SceneRenderer& scene, PhysicsWorld& world, int hiddenBody) {
     for (int index : selectedBodies_) {
+        if (index == hiddenBody) continue;
         const RigidBody* body = world.find(index);
         if (body) scene.renderSelection(*body);
     }
+    if (activeBody_ == hiddenBody) return;
     const RigidBody* body = world.find(activeBody_);
     if (!body) return;
 
