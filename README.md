@@ -7,6 +7,7 @@ goes through a **launcher**: you pick or create a project, and the editor opens.
 project may carry **AngelScript** scripts that run when you press Play.
 
 Licensed under the [Apache License 2.0](LICENSE).
+
 URL
 [![Telegram Bot](https://img.shields.io/badge/Telegram_Bot-Spectra3D-blue?logo=telegram)](https://t.me/spectra3d_bot)
 
