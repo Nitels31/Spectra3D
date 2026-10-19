@@ -507,12 +507,21 @@ folder.
 
 ## Docks, zones and the saved workspace
 
-Four panels — hierarchy, inspector, console, favorites — live in six places: the
-left column, the right column, the bottom strip, the two bottom corners, and free
-float over the scene. The model is `Editor::Panel{PanelZone, Rect floatRect, bool
-open}`, `zoneRect()` produces the rectangle, and `recomputeLayout()` derives the
-scene rectangle from **which columns and rows are occupied** — a floating panel
-gives its space back.
+Five panels — hierarchy, inspector, console, favorites, sounds — live in six
+places: the left column, the right column, the bottom strip, the two bottom
+corners, and free float over the scene. The model is
+`Editor::Panel{PanelZone, Rect floatRect, bool open}`, `zoneRect()` produces the
+rectangle, and `recomputeLayout()` derives the scene rectangle from **which
+columns and rows are occupied** — a floating panel gives its space back.
+
+**Every panel has a place of its own.** The hierarchy has the left column, the
+inspector the right one, the console the bottom strip, the favorites the
+bottom-left corner and the sounds the bottom-right one. That is Unity's
+arrangement, and the reason for it is not decoration: a panel that has no
+place is a panel nobody opens, and a panel that is closed is a panel that is
+one click away from being looked at and never is. The corners are where the
+console stops covering the side columns, and a corner with a panel in it is
+space that earns its place; a corner with nothing in it is a hole.
 
 **Why the corners are their own zones.** The bottom-left and bottom-right corners
 are where the console stops covering the side columns. With one bottom strip, a
@@ -530,7 +539,7 @@ the whole layout is a grid of two columns and two rows:
   column          strip          column
 ```
 
-- **Drag by the title bar** (six dots — `drawPanelChrome`, shared by all four). Drop
+- **Drag by the title bar** (six dots — `drawPanelChrome`, shared by all five). Drop
   it on another zone and whoever was there swaps into the zone it came from
   (**a swap, not an eviction**); drop it over the scene and it becomes a floating
   window with a border and a shadow, drawn over the docked ones and not drawn twice.
@@ -592,6 +601,11 @@ the binary.
   ignored, and two panels in one zone (only possible in a hand-edited file) send the
   later one floating. A zero-sized rectangle means "this panel has never floated"
   and keeps the size the editor started with.
+- **The file's version says what it was written by.** Version 2 is the layout
+  where the favorites and the sounds have corners of their own; a file from
+  before that has them floating and closed, because there was nowhere else for
+  them to be, and the two keep the places they have now. The other panels are
+  read from the file as they always were.
 - **Sizes that did not change are not written.** The drag sets `layoutDirty_` and
   `handleInput` writes the file once, which is cheap (200 bytes) and keeps a
   frame-by-frame drag from turning into a file write per frame.

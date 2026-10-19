@@ -20,7 +20,10 @@ namespace {
 // Schema version this build writes. A file with a higher number is still read -
 // every key here is optional - but it is reported, because it means another build
 // laid the workspace out.
-constexpr int kLayoutVersion = 1;
+// 2: the favorites and the sounds moved into the bottom corners. A file
+// written before that has them floating and closed, and the two keep the
+// places they have now.
+constexpr int kLayoutVersion = 2;
 
 // `key=value` lines, `#` comments, blank lines skipped: the same shape as the
 // manifest, so one reader's rules apply to every text file the engine writes.
@@ -220,10 +223,29 @@ void Editor::loadLayout() {
     // count), but a hand-edited one can, and two panels in one zone would have
     // them drawn on top of each other - so the later one floats instead. Float is
     // the last zone, so indexing by zone covers exactly the docked ones.
+    //
+    // A file written before the panels had corners of their own has them
+    // floating and closed, because there was nowhere else for them to be. The
+    // file is right about everything else and wrong about those two, so they
+    // keep the places they have now - and the file says which version wrote it,
+    // which is what tells the two apart.
+    const bool oldLayout = version < 2;
+    if (oldLayout)
+        Log::info("Editor: layout '%s' is from before the panels had corners; "
+                  "the favorites and the sounds keep their new places",
+                  path.c_str());
+
     bool edgeTaken[(int)PanelZone::Float] = {};
     for (int i = 0; i < kPanelCount; ++i) {
         if (!seen[i]) continue;
         Panel& target = panels_[i];
+        const bool moved = i == (int)PanelId::Favorites || i == (int)PanelId::Sounds;
+        if (oldLayout && moved) {
+            // The place the panel has now, and the rectangle it had when it
+            // was floating - so that dragging it out lands where it used to.
+            target.floatRect = loaded[i].floatRect;
+            continue;
+        }
         const PanelZone zone = loaded[i].zone;
         if (zone != PanelZone::Float && loaded[i].open && edgeTaken[(int)zone]) {
             Log::warn("Editor: two panels want the %s edge, '%s' floats", zoneName(zone),
@@ -239,7 +261,6 @@ void Editor::loadLayout() {
         target.open = loaded[i].open;
         target.floatRect = loaded[i].floatRect;
     }
-
     leftWidth_ = left;
     rightWidth_ = right;
     bottomHeight_ = bottom;

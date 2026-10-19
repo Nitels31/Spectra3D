@@ -750,17 +750,22 @@ Panels, top to bottom:
   gives its space to the scene. Sizes, zones, floating panels and closed panels
   are remembered in `<project>/editorlayout.txt`, so a project opens the way you
   left it.
+* **Every panel has a place of its own** - the hierarchy on the left, the
+  inspector on the right, the console along the bottom, the **favorites in the
+  bottom-left corner** and the **sounds in the bottom-right one**. That is
+  Unity's arrangement: a panel that has no place is a panel nobody opens, and a
+  corner with nothing in it is a hole in the window.
 * **Hierarchy** - a tree of objects with search (filtered by visible name). The
   star on each row puts an object into favorites; the star in the header leaves
   only favorites. Favorites are saved in `scene.txt` together with the object.
-* **Favorites** - a separate panel (closed by default, opened from
-  **View -> Favorites**): a list of stars, the same gesture in the same column;
-  clicking a row selects the object, clicking the star removes it from favorites.
-  Clicking the panel lets you drag it to an edge or into the scene.
-* **Sounds** - a separate panel (closed by default, opened from
-  **View -> Sounds**): the sounds the engine has loaded, the device they play
-  through, and two buttons per row - one plays the sound, the other gives it to
-  the object that is selected. See [Sound](#sound).
+* **Favorites** - a panel in the bottom-left corner: a list of stars, the same
+  gesture in the same column; clicking a row selects the object, clicking the
+  star removes it from favorites. Clicking the panel lets you drag it to an edge
+  or into the scene.
+* **Sounds** - a panel in the bottom-right corner: the sounds the engine has
+  loaded, the device they play through, and two buttons per row - one plays the
+  sound, the other gives it to the object that is selected. See
+  [Sound](#sound).
 * **Inspector** - a property filter and the sections Transform / Shape / Material /
   Flags / Sound / Anchor / State / Node; the body never leaves the panel's bounds
   (scissor) and scrolls with the mouse wheel; on the right, a scrollbar when there

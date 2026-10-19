@@ -71,15 +71,21 @@ Editor::Editor(MeshRegistry& meshes, i18n::Localizer& localizer, SoundDevice& so
     // Favorites starts closed and floating: a fourth panel that appears over the
     // scene on the first launch is a panel nobody asked for, and every edge is
     // already taken by a panel that was there before it. The View menu opens it.
+    // The two panels that have a place of their own. The rest of the screen is
+    // the hierarchy on the left, the inspector on the right and the console
+    // along the bottom; what is left of the bottom row are the two corners, and
+    // a panel that has no place of its own is a panel nobody opens.
+    //
+    // Unity puts its Project window in the bottom-left corner for the same
+    // reason: the space under the hierarchy is worth more than a gap.
     Panel& favorites = panels_[(int)PanelId::Favorites];
-    favorites.zone = PanelZone::Float;
-    favorites.open = false;
+    favorites.zone = PanelZone::BottomLeft;
+    favorites.open = true;
     favorites.floatRect = Rect{340.0f, 130.0f, 260.0f, 300.0f};
-    // The sounds panel starts closed as well, for the same reason: a panel that
-    // appears over the scene on the first launch is a panel nobody asked for.
+
     Panel& sounds = panels_[(int)PanelId::Sounds];
-    sounds.zone = PanelZone::Float;
-    sounds.open = false;
+    sounds.zone = PanelZone::BottomRight;
+    sounds.open = true;
     sounds.floatRect = Rect{620.0f, 130.0f, 260.0f, 260.0f};
 }
 
