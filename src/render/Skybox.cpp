@@ -76,25 +76,32 @@ const Face kFaces[6] = {
 // care which.
 const char* const kFaceExtensions[] = {".png", ".jpg", ".jpeg", ".bmp"};
 
-// The colour the sky is made of when there are no images: a blue above the
-// horizon, a muted ground below it, and the pale band where the two meet.
-constexpr Color kZenith{0.20f, 0.42f, 0.82f};
-constexpr Color kHorizon{0.74f, 0.84f, 0.94f};
-constexpr Color kGround{0.32f, 0.30f, 0.27f};
+// The colour the sky is made of when there are no images: a deep blue above,
+// a white band at the horizon, and a dark ground below it.
+//
+// The white band is what makes a sky look like a sky rather than a wash of
+// blue, and the dark ground is what keeps the world's own colours - the grid,
+// the bodies - from being read against a bright background. A pale sky swallows
+// everything in front of it, and at night it is a lamp in the face.
+constexpr Color kZenith{0.16f, 0.27f, 0.55f};
+constexpr Color kHorizon{1.00f, 1.00f, 1.00f};
+constexpr Color kGround{0.19f, 0.19f, 0.23f};
 
 // The colour of the sky in one direction.
 Color skyColour(const Vec3& direction) {
     const float y = direction.y;
     if (y >= 0.0f) {
-        // Above the horizon: the zenith colour down to the horizon colour. The
-        // exponent keeps most of the gradient in the upper half of the sky,
-        // which is where a person looks.
-        const float t = std::pow(y, 0.55f);
+        // Above the horizon: the horizon colour up to the zenith colour. The
+        // exponent is what puts the blue where a person looks rather than
+        // right at the edge of it: the blue starts a few degrees above the
+        // horizon, and the white is the last thin band before it.
+        const float t = std::pow(y, 0.5f);
         return Color{kHorizon.r + (kZenith.r - kHorizon.r) * t,
                      kHorizon.g + (kZenith.g - kHorizon.g) * t,
                      kHorizon.b + (kZenith.b - kHorizon.b) * t};
     }
-    const float t = std::pow(-y, 0.5f);
+    // Below: the ground, darkening away from the horizon.
+    const float t = std::pow(-y, 0.3f);
     return Color{kHorizon.r + (kGround.r - kHorizon.r) * t,
                  kHorizon.g + (kGround.g - kHorizon.g) * t,
                  kHorizon.b + (kGround.b - kHorizon.b) * t};
@@ -253,9 +260,17 @@ void Skybox::draw(const Camera& camera) const {
     // label's colour. The sky is the picture, not a tint of it.
     glColor3f(1.0f, 1.0f, 1.0f);
     glEnable(GL_TEXTURE_CUBE_MAP);
-    // The texture coordinate is generated from the cube's own vertices, which
-    // is what puts the right part of the sky on the right part of the cube.
+    // The texture coordinate is generated from the cube's own vertices, which is
+    // what puts the right part of the sky on the right part of the cube.
+    //
+    // The three generators have to be enabled as well: setting the mode is
+    // only saying what the coordinate would be, and without them there is no
+    // coordinate at all - the whole cube samples one texel and the sky is a
+    // flat colour.
     glTexGenf(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR);
+    glEnable(GL_TEXTURE_GEN_S);
+    glEnable(GL_TEXTURE_GEN_T);
+    glEnable(GL_TEXTURE_GEN_R);
     glBindTexture(GL_TEXTURE_CUBE_MAP, cube_);
 
     glPushMatrix();
@@ -288,6 +303,9 @@ void Skybox::draw(const Camera& camera) const {
     glPopMatrix();
 
     glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+    glDisable(GL_TEXTURE_GEN_S);
+    glDisable(GL_TEXTURE_GEN_T);
+    glDisable(GL_TEXTURE_GEN_R);
     glTexGenf(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR);
     glDisable(GL_TEXTURE_CUBE_MAP);
     glEnable(GL_DEPTH_TEST);

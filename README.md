@@ -963,8 +963,16 @@ Two places are looked at:
 A folder that is not there, or that does not hold six images, is not a skybox:
 the engine keeps the sky it has and says so in the log.
 
-With no sky anywhere, the engine makes one - a blue gradient above the horizon
-and a muted ground below it - so the world always has a horizon.
+With no sky anywhere the engine makes one - a deep blue above a white horizon
+over a dark ground, which is what a scene gets when there is nothing else to
+show.
+
+`assets/skies/` holds ready-made skyboxes. They are not loaded by default: copy
+the folder you want into a project's `sky/` folder to use it.
+
+To make a skybox of your own, drop six images named after the direction each
+one looks at - `px`, `nx`, `py`, `ny`, `pz`, `nz` - into a folder and point a
+project's `sky/` at it.
 
 ## Third-party licenses
 
@@ -996,6 +1004,26 @@ Every stb library is released under the identical public-domain **or** MIT-0 ter
 so `third_party/stb/LICENSE` is the single text covering `stb/` as a whole - it is
 not a copy that could drift from the individual libraries, and no `stb_image.h` or
 `stb_vorbis.c` carries a second copy of it.
+
+### The sky in `assets/skies/`
+
+`assets/skies/kloofendal_43d_clear/` is a ready-made skybox: six 2048x2048 faces
+of *Kloofendal 43d Clear (Pure Sky)*, converted from the equirectangular original
+to the cube map the engine draws.
+
+The original is from [Poly Haven](https://polyhaven.com/a/kloofendal_43d_clear_puresky),
+which is **CC0** - public domain, no attribution required, though a credit is
+always welcome. The faces are a derivative of a CC0 work and carry the same
+terms.
+
+It is not loaded by default: copy the folder into a project's `sky/` folder (or
+into `assets/sky/`) to use it. The engine's own sky - a deep blue over a white
+horizon over a dark ground - is what a scene gets when there is no skybox to
+load.
+
+To make a skybox of your own, drop six images named after the direction each
+one looks at - `px`, `nx`, `py`, `ny`, `pz`, `nz` - into a folder and point a
+project's `sky/` at it.
 
 miniaudio embeds dr_wav, dr_flac and dr_mp3 itself but **not** stb_vorbis: its
 Vorbis backend is behind `STB_VORBIS_INCLUDE_STB_VORBIS_H` in the header, so `.ogg`
