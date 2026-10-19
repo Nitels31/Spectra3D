@@ -151,6 +151,10 @@ void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& m
     glDisable(GL_LIGHTING);
     extractFrustum(projection_, view_);
 
+    // The sky first, with the depth test off: it is behind everything, and
+    // everything else is drawn over it.
+    sky_.draw(camera);
+
     if (showGrid) drawArena(camera);
     drawBodies(world, meshes, textures, alpha, hiddenBody);
 

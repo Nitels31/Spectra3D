@@ -9,6 +9,7 @@
 #include "render/Camera.hpp"
 #include "render/Color.hpp"
 #include "render/PrimitiveCache.hpp"
+#include "render/Skybox.hpp"
 
 namespace s3d {
 
@@ -58,6 +59,11 @@ public:
 
     const PrimitiveCache& primitives() const { return primitives_; }
 
+    // The sky the world is seen against. It lives here because it is a GL
+    // object, and this is the class that owns GL objects.
+    Skybox& sky() { return sky_; }
+    const Skybox& sky() const { return sky_; }
+
 private:
     // The arena grid geometry is fixed: 201 candidate lines from -100..100 on
     // both X and Z, with v == 0 skipped because the world axes are drawn as
@@ -89,6 +95,7 @@ private:
     void drawCameraEntity(const RigidBody& body, const Quat& orientation);
 
     PrimitiveCache primitives_;
+    Skybox sky_;
     float projection_[16] = {};
     float view_[16] = {};
     float frustum_[6][4] = {};

@@ -136,6 +136,7 @@ bool Application::initialize() {
     localizer_.loadBundles();
     uiRenderer_.buildFonts();
     sceneRenderer_.initialize(world_.arenaMin, world_.arenaMax);
+    loadSky();
 
     // The banner shows the context the engine actually holds, not the version the
     // driver likes to advertise: a 3.3 compatibility context on an NVIDIA card
@@ -164,6 +165,30 @@ bool Application::initialize() {
     reportStartupInfo();
     previousTime_ = window_.time();
     return true;
+}
+
+void Application::loadSky() {
+    // The sky is a folder of six faces. A project's own sky wins over the one
+    // the engine ships, the way a project's own scene wins over the engine's
+    // default - and if there is neither, the engine makes a sky of its own, so
+    // the world always has a horizon.
+    //
+    // The project's folder is looked for when the project is opened, because
+    // that is when the project is known. The engine's own is here, and the
+    // default is what is left when neither folder holds six images.
+    const std::string assets = fs::assetRoot();
+    if (!assets.empty()) sceneRenderer_.sky().load(str::join(assets, "sky"));
+    if (!sceneRenderer_.sky().valid()) {
+        sceneRenderer_.sky().buildDefault();
+        Log::info("Sky: the built-in one");
+    }
+}
+
+void Application::loadProjectSky(const std::string& projectDir) {
+    if (projectDir.empty()) return;
+    // A project that has a sky of its own uses it; one that has not keeps
+    // whatever the engine is using.
+    if (sceneRenderer_.sky().load(str::join(projectDir, "sky"))) return;
 }
 
 void Application::reportStartupInfo() {
@@ -302,6 +327,9 @@ void Application::openProject(const ProjectInfo& project) {
     // Before the scene is read: loading a model is what pulls its textures in, so
     // the mesh registry needs to know where to put them.
     meshes_.setTextureRegistry(&textures_);
+
+    // A project may have a sky of its own, and it wins over the engine's.
+    loadProjectSky(project_.path);
     if (fs::exists(scenePath)) {
         // A missing or empty scene is a fresh project, not an error.
         scenes::load(world_, meshes_, scenePath);

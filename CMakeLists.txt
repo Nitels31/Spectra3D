@@ -268,6 +268,7 @@ set(SPECTRA_SRC_UI
 set(SPECTRA_SRC_RENDER
     src/render/Camera.cpp
     src/render/PrimitiveCache.cpp
+    src/render/Skybox.cpp
     src/render/TextAtlas.cpp
     src/render/UiRenderer.cpp
     src/render/SceneRenderer.cpp

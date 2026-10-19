@@ -905,18 +905,66 @@ In the launcher (`Launcher::handleKeys`):
 
 Scene saving and loading: `Editor::saveScene()` / `Editor::loadScene()` live in the
 **File** menu (Save / Load / Reload from disk) and write to the current project's
-`scene.txt`.
+`scene.json`.
+
+**Save As** asks *where* the scene goes, not what it is called: the platform's
+own folder chooser opens, and the name stays what it was. A name typed into a
+dialog is a spelling test; a folder chosen in Explorer is a place.
 
 ## Scene format
 
-`scene.txt` in the project directory is one line per body, spaces as the
-separator: the `Shape` number, position, velocity, orientation (w x y z),
-half-extents, mass, friction, restitution, density, angular velocity, mesh scale,
-**the mesh name** or `-`, static / visible / locked, anchors, spring stiffness and,
-as the last field, **favorite** (star). Everything after the mesh name is optional,
-so scenes saved before those fields open as they are - just without stars. Meshes
-are looked up by name in `assets/models`, then in the working directory, so a scene
-survives a restart.
+`scene.json` in the project directory is a JSON document: named fields, named
+shapes, and a position on one line rather than four. It is the only format a
+scene is written in.
+
+```json
+{
+    "format": "spectra3d-scene",
+    "version": 1,
+    "gravity": "negY",
+    "bodies": [
+        {
+            "shape": "box",
+            "position": [1, 2, 3],
+            "velocity": [0, 0, 0],
+            "angularVelocity": [0, 0, 0],
+            "orientation": [1, 0, 0, 0],
+            "halfExtents": [0.5, 0.5, 0.5],
+            "mass": 1,
+            "material": { "friction": 0.5, "restitution": 0.3, "density": 1, "isStatic": false },
+            "flags": { "visible": true, "locked": false, "favorite": false }
+        }
+    ]
+}
+```
+
+A shape is one of `box`, `sphere`, `cylinder`, `capsule`, `cone`, `pyramid`,
+`prism`, `mesh`, `camera`. A `mesh` body carries a `mesh` object with the
+model's name and its scale; a `camera` carries a `camera` object with its field
+of view and whether it is the one the game looks through. Meshes are looked up
+by name in `assets/models`, then in the working directory, so a scene survives a
+restart.
+
+The project manifest names the file its scene is in (`scene=scene.json`), so a
+project can keep its scene somewhere else.
+
+## Skybox
+
+The sky the world is seen against is a cubemap: six faces, drawn on a cube
+around the camera.
+
+A skybox is a **folder of six images**, named after the direction each one
+looks at - `px`, `nx`, `py`, `ny`, `pz`, `nz` - with `.png`, `.jpg` or `.bmp`.
+Two places are looked at:
+
+- `<project>/sky/` - the project's own sky, which wins.
+- `assets/sky/` - the sky the engine ships.
+
+A folder that is not there, or that does not hold six images, is not a skybox:
+the engine keeps the sky it has and says so in the log.
+
+With no sky anywhere, the engine makes one - a blue gradient above the horizon
+and a muted ground below it - so the world always has a horizon.
 
 ## Third-party licenses
 

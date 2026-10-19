@@ -54,6 +54,10 @@ private:
     void updateSimulation(float dt, bool stepping);
     void renderScene();
     void reportStartupInfo();
+    // The sky the world is seen against: the engine's own, the project's, or the
+    // one the engine makes for itself.
+    void loadSky();
+    void loadProjectSky(const std::string& projectDir);
 
     // Runs every .as file in the project's scripts folder. Called when play mode
     // starts so scripts see a live world.
