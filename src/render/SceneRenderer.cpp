@@ -50,24 +50,6 @@ const Color kBodyPalette[8] = {{0.86f, 0.36f, 0.33f}, {0.36f, 0.62f, 0.90f},
                                {0.72f, 0.49f, 0.86f}, {0.91f, 0.53f, 0.26f},
                                {0.35f, 0.75f, 0.73f}, {0.83f, 0.83f, 0.87f}};
 
-// Writes the quaternion rotation straight into the column-major 4x4 GL layout.
-// This is the transpose of Mat3::fromQuat() with the same expressions in the
-// same order, so it produces bit-identical floats without materialising and
-// transposing an intermediate Mat3 (which also default-initialised 9 floats it
-// immediately overwrote).
-void applyRotation(const Quat& q) {
-    const float xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z;
-    const float xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z;
-    const float wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
-    const float r0 = 1 - 2 * (yy + zz), r1 = 2 * (xy - wz), r2 = 2 * (xz + wy);
-    const float r3 = 2 * (xy + wz), r4 = 1 - 2 * (xx + zz), r5 = 2 * (yz - wx);
-    const float r6 = 2 * (xz - wy), r7 = 2 * (yz + wx), r8 = 1 - 2 * (xx + yy);
-
-    const float m[16] = {r0, r3, r6, 0.0f, r1, r4, r7, 0.0f,
-                         r2, r5, r8, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
-    glMultMatrixf(m);
-}
-
 // The four corners of a camera's far plane, in the camera's own space.
 //
 // The frustum is what says "this is a camera" - a box on its own is a box. The
@@ -654,85 +636,6 @@ void SceneRenderer::drawDebugVectors(const PhysicsWorld& world) {
     glLineWidth(1.0f);
 }
 
-// Draws an imported mesh inside the body transform the caller already installed.
-// Returns false when the body has no usable mesh, so the caller can fall back to
-// its primitive.
-bool SceneRenderer::drawImportedMesh(const RigidBody& body, const MeshRegistry& meshes,
-                                      const TextureRegistry& textures, const Quat& orientation) {
-    if (!body.hasMesh()) return false;
-    const MeshAsset* mesh = meshes.at(body.mesh);
-    if (!mesh) return false;
-
-    const float scale = body.meshScale * mesh->scale;
-    applyRotation(orientation);
-    glScalef(scale, scale, scale);
-    glTranslatef(-mesh->center.x, -mesh->center.y, -mesh->center.z);
-
-    const size_t stride = sizeof(float) * kMeshVertexFloats;
-
-    glEnableClientState(GL_VERTEX_ARRAY);
-    glEnableClientState(GL_NORMAL_ARRAY);
-    for (const MeshPart& part : mesh->parts) {
-        // A part with colours of its own is drawn with them: the flat colour is
-        // the colour of the part, and the vertex colours are the colours of the
-        // ground it is made of. Only one of the two can be in force - a colour
-        // array switched on makes the flat colour go quiet - so the flat one is
-        // only set when there is no array.
-        const bool vertexColors =
-            part.colors.size() == part.vertices.size() / kMeshVertexFloats * 3 &&
-            !part.colors.empty();
-        if (vertexColors) {
-            glEnableClientState(GL_COLOR_ARRAY);
-            glColorPointer(3, GL_FLOAT, 0, part.colors.data());
-        } else {
-            glColor3f(part.color[0], part.color[1], part.color[2]);
-        }
-        glVertexPointer(3, GL_FLOAT, (GLsizei)stride, part.vertices.data() + kMeshPositionOffset);
-        glNormalPointer(GL_FLOAT, (GLsizei)stride,
-                        part.vertices.data() + kMeshNormalOffset);
-
-        // Texturing is per part, so a model with one mapped material and one flat
-        // one draws both in the same loop. The flat part has texturing switched
-        // off rather than bound to nothing: a texture name that was never given
-        // an image is an incomplete texture, and an incomplete texture samples as
-        // black on some drivers and white on others. Off is the answer that is the
-        // same everywhere.
-        const unsigned tex = textures.at(part.texture);
-        const bool hasTexture = tex != 0;
-        if (hasTexture) {
-            glBindTexture(GL_TEXTURE_2D, tex);
-            glEnable(GL_TEXTURE_2D);
-            glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-            glTexCoordPointer(2, GL_FLOAT, (GLsizei)stride,
-                              part.vertices.data() + kMeshTexCoordOffset);
-        } else {
-            glDisable(GL_TEXTURE_2D);
-            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-        }
-
-        if (!part.indices.empty()) {
-            glDrawElements(GL_TRIANGLES, (GLsizei)part.indices.size(), GL_UNSIGNED_INT,
-                           part.indices.data());
-        } else {
-            glDrawArrays(GL_TRIANGLES, 0,
-                         (GLsizei)(part.vertices.size() / kMeshVertexFloats));
-        }
-
-        if (hasTexture) {
-            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-            glDisable(GL_TEXTURE_2D);
-            glBindTexture(GL_TEXTURE_2D, 0);
-        }
-    }
-    glDisableClientState(GL_VERTEX_ARRAY);
-    glDisableClientState(GL_NORMAL_ARRAY);
-    // The colour array too: it is switched on for the parts that carry colours
-    // of their own, and a colour array left switched on would answer for every
-    // draw after this one - the flat colours of the primitives would go quiet
-    // and everything would be painted in the last colour of the last model.
-    glDisableClientState(GL_COLOR_ARRAY);
-    return true;
-}
 
 void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& meshes,
                                const TextureRegistry& textures, float alpha, int hiddenBody) {
@@ -848,7 +751,10 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
             // A camera is drawn as what it is: a body with a lens, and the
             // frustum it looks through. The frustum is the part that says
             // something - a box on its own is a box.
-            drawCameraEntity(body, drawOrientation);
+            model = Mat4::compose(drawPosition, drawOrientation, body.halfExtents);
+            sceneProgram_.setMat4("uModel", model.m);
+            glCallList(primitives_.cube());
+            drawCameraEntity(body, model);
             break;
         }
         default: {
@@ -861,6 +767,12 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
         ++paletteIndex;
     }
     gl::UseProgram(0);
+
+    // The fixed pipeline's own matrix, back to the camera's: the lines and the
+    // gizmo that are drawn after the bodies are in the world, and the matrix
+    // of the last body is not the world.
+    glMatrixMode(GL_MODELVIEW);
+    glLoadMatrixf(view_);
 }
 
 // The uniforms the scene pass shares: the sun, the sky and the shadow map.
@@ -982,17 +894,18 @@ bool SceneRenderer::drawMeshWithShader(const MeshAsset& mesh, const TextureRegis
     return true;
 }
 
-void SceneRenderer::drawCameraEntity(const RigidBody& body, const Quat& orientation) {
-    // The body: a small box, the way a camera is drawn everywhere else. The
-    // palette colour is already in the GL colour, so the box takes it.
-    applyRotation(orientation);
-    glScalef(body.halfExtents.x, body.halfExtents.y, body.halfExtents.z);
-    glCallList(primitives_.cube());
-
+void SceneRenderer::drawCameraEntity(const RigidBody& body, const Mat4& model) {
     // The lens: a wireframe frustum from the front of the body to the far
     // plane. Immediate mode rather than a display list, because its size
     // depends on the field of view, which is a per-camera value.
     //
+    // The lines are drawn by the fixed pipeline and the frustum is in the
+    // camera's own space, so the matrix has to be the body's: without it the
+    // frustum is drawn at the origin of the world.
+    glMatrixMode(GL_MODELVIEW);
+    glLoadMatrixf(model.m);
+    glDisable(GL_LIGHTING);
+
     // Not named `far`: windows.h defines it as a macro, and an array called
     // that does not survive the preprocessor.
     Vec3 corners[4];

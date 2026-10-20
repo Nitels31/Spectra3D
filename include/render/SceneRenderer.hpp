@@ -159,9 +159,7 @@ private:
 
     void extractFrustum(const float* projection, const float* view);
     bool sphereVisible(const Vec3& center, float radius) const;
-    bool drawImportedMesh(const RigidBody& body, const MeshRegistry& meshes,
-                          const TextureRegistry& textures, const Quat& orientation);
-    void drawCameraEntity(const RigidBody& body, const Quat& orientation);
+    void drawCameraEntity(const RigidBody& body, const Mat4& model);
 
     PrimitiveCache primitives_;
     Skybox sky_;
