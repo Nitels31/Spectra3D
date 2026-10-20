@@ -994,56 +994,10 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
         }
     }
 
-    // The shadows of the project that is selected. They are the project's and
-    // not the machine's: a scene that looks the same on another machine is the
-    // same scene, and the shadows are a part of how it looks.
-    ProjectInfo* project = projects_.projectAt(selectedProject());
-    SelectPaint shadowQualityPaint, shadowResolutionPaint, shadowCascadesPaint;
-    if (project && rowY + kFieldHeight * 2.0f + 30.0f < body.y + body.height) {
-        const SelectItem qualities[] = {
-            {text("settings.shadowOff"), 0},
-            {text("settings.shadowHard"), 1},
-            {text("settings.shadowFiltered"), 2},
-            {text("settings.shadowSoft"), 3},
-        };
-        const int before = project->shadowQuality;
-        shadowQualityPaint = drawSelectField(ui, ctx, Rect{body.x, rowY, selectW, 0.0f},
-                                             text("settings.shadowQuality"), qualities, 4,
-                                             project->shadowQuality, kShadowQualitySelect, fbWidth);
-        if (project->shadowQuality != before) projects_.writeManifest(*project);
-        rowY += kFieldHeight + kTextHeight + 16.0f;
-
-        const SelectItem resolutions[] = {
-            {text("settings.shadowSize1024"), 1024},
-            {text("settings.shadowSize2048"), 2048},
-            {text("settings.shadowSize4096"), 4096},
-        };
-        const int size = project->shadowResolution;
-        shadowResolutionPaint = drawSelectField(ui, ctx, Rect{body.x, rowY, selectW, 0.0f},
-                                                text("settings.shadowSize"), resolutions, 3,
-                                                project->shadowResolution,
-                                                kShadowResolutionSelect, fbWidth);
-        if (project->shadowResolution != size) projects_.writeManifest(*project);
-        rowY += kFieldHeight + kTextHeight + 16.0f;
-
-        const SelectItem cascades[] = {
-            {text("settings.shadowCascades1"), 1},
-            {text("settings.shadowCascades2"), 2},
-            {text("settings.shadowCascades3"), 3},
-            {text("settings.shadowCascades4"), 4},
-        };
-        const int stretches = project->shadowCascades;
-        shadowCascadesPaint = drawSelectField(ui, ctx, Rect{body.x, rowY, selectW, 0.0f},
-                                               text("settings.shadowCascades"), cascades, 4,
-                                               project->shadowCascades, kShadowCascadesSelect,
-                                               fbWidth);
-        if (project->shadowCascades != stretches) projects_.writeManifest(*project);
-        rowY += kFieldHeight + kTextHeight + 16.0f;
-    }
-
     // Row 6: how many projects the current root yields, so an empty list has a
     // number attached to it instead of looking broken.
-    rowY += 6.0f;    if (rowY + kRowHeight < body.y + body.height) {
+    rowY += 6.0f;
+    if (rowY + kRowHeight < body.y + body.height) {
         char buffer[128];
         std::snprintf(buffer, sizeof(buffer), text("launcher.settingsSummary"),
                       (int)projects_.projects().size(), (int)settings_.recentProjects.size());
@@ -1072,9 +1026,6 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
     paintOpen(themePaint);
     paintOpen(capPaint);
     paintOpen(iconPaint);
-    paintOpen(shadowQualityPaint);
-    paintOpen(shadowResolutionPaint);
-    paintOpen(shadowCascadesPaint);
 }
 
 void Launcher::drawAccount(UiRenderer& ui, UiContext& ctx, int fbWidth) {

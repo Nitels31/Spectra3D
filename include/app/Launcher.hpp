@@ -87,11 +87,6 @@ private:
         kLanguageSelect = 1042,
         kIconSelect = 1043,
         kThreadsSelect = 1044,
-        // The shadows of the selected project: how they are drawn, how big the
-        // map is and how many stretches of the scene get a map of their own.
-        kShadowQualitySelect = 1045,
-        kShadowResolutionSelect = 1046,
-        kShadowCascadesSelect = 1047,
 
         // Sidebar and tab strip are not clickable in the row sense, so they get
         // ids below kRowIdBase.
