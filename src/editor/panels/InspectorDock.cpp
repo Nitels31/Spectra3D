@@ -162,10 +162,15 @@ void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
 void Editor::drawEmptyInspector(UiRenderer& ui, const Rect& dock, float y) {
     // Centred in the dock, and nothing that looks like a card floating in the
     // corner: an empty inspector should read as empty space.
+    //
+    // The title is fitted to the dock like everything else. A title wider than
+    // the panel and centred anyway starts to the left of the panel, and the
+    // words run off the edge of the window - a message that is cut in half is
+    // a message nobody reads.
     const char* title = text("inspector.nothing");
     const char* hint = text("inspector.click");
     const float centreY = y + std::fmax(0.0f, (dock.height - (y - dock.y) - 40.0f) * 0.35f);
-    ui.text(dock.x + (dock.width - ui.textWidth(title)) * 0.5f, centreY, title, theme::textDim);
+    ui.textFit(dock.x + 8.0f, centreY, dock.width - 16.0f, title, theme::textDim);
     ui.textFit(dock.x + 8.0f, centreY + 20.0f, dock.width - 16.0f, hint, theme::textDim);
 }
 

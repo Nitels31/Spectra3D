@@ -351,6 +351,14 @@ all on a third - and the engine that draws no letters is an engine that cannot
 be used. One font in the assets is the same letters on every machine the engine
 runs on, and it is the same letters for the interface and for the code.
 
+**THE ATLAS AND THE LETTERS ARE THE SAME TABLE.** The atlas is baked with
+`codepointAt(slot)` and read with `glyphIndex(codePoint)`, and the two have to
+agree about which slot holds which letter. They did not: every Cyrillic
+letter was drawn as the one after it, and a word in Ukrainian came out as a
+word in a language nobody speaks - the letters were right and the words were
+not. `editortest` asks the two tables the same question about every slot, and
+the answer has to be the same number every time.
+
 ### `ui`
 
 `Theme` (colours and metrics) and `UiContext` — immediate mode. `UiContext` owns the

@@ -819,8 +819,13 @@ int Launcher::drawSelectList(UiRenderer& ui, UiContext& ctx, const SelectPaint& 
 
     // Scrolling: the wheel over the list, and Up/Down while it is open, so the
     // list can be walked without hunting for a scrollbar.
+    //
+    // The wheel is counted in notches - one up, one down - and a notch is a
+    // row. Dividing the number by forty and rounding it up made half of the
+    // notches disappear: a notch down was a quarter of a row, rounded up to
+    // nothing, and the list would only go up.
     if (overList && ctx.scrollDelta() != 0.0) {
-        const int notches = (int)std::ceil(ctx.scrollDelta() / 40.0);
+        const int notches = (int)ctx.scrollDelta();
         selectScroll_ = std::clamp(selectScroll_ - notches, 0, maxScroll);
     }
     // Keyboard walk: Down/Up page through the list, Home/End jump to the ends.

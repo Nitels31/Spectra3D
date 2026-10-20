@@ -127,6 +127,15 @@ public:
     /// Swallow the current click so widgets underneath don't react to it.
     void consumePointerClick() { pointerPressed_ = false; pointerReleased_ = false; activeId_ = 0; }
 
+    // True when a widget has already taken this frame's press.
+    //
+    // A control that is drawn by hand - the X that closes a panel - asks this
+    // before it acts. The widget under the pointer is the one the user is
+    // aiming at, and a hand-drawn control that answers the same click as the
+    // widget under it is how a button under a button gets pressed: the click
+    // closes the panel and presses the button at the same time.
+    bool pressClaimedByWidget() const { return activeId_ != 0; }
+
     // --- widgets ------------------------------------------------------------
     bool button(UiRenderer& ui, int id, float x, float y, float w, float h,
                 const char* label, bool toggled = false);

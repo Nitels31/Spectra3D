@@ -77,13 +77,19 @@ void Editor::drawConsolePanel(UiRenderer& ui, const Rect& panel) {
     // title that cannot be grabbed. The title gives way when the filters need
     // the room - two things drawn on top of each other are worse than one of
     // them missing.
+    //
+    // The filters also keep clear of the X that closes the panel. The X is
+    // drawn by hand in the corner of the header, and the filters were laid out
+    // from the same corner: they ended up under it, and a click on the X
+    // pressed a filter instead of closing the panel.
     const char* title = text("tab.console");
-    const float filtersLeft = panel.x + panel.width - 8.0f - filtersWidth + 4.0f;
+    const float closeRoom = 30.0f;  // the X and the air around it
+    const float filtersLeft = panel.x + panel.width - closeRoom - filtersWidth + 4.0f;
     if (filtersLeft > panel.x + 18.0f + ui.textWidth(title) + 8.0f)
         ui.text(panel.x + 18.0f, panel.y + 6.0f, title, theme::text);
 
     // Right to left, so the leftmost filter ends up next to the title.
-    float x = panel.x + panel.width - 8.0f;
+    float x = panel.x + panel.width - closeRoom;
     for (int i = 2; i >= 0; --i) {
         const LevelFilter& filter = filters[i];
         const char* label = labels[i];

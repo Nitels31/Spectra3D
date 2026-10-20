@@ -47,9 +47,12 @@ std::string shaderPath(const std::string& relative) {
     if (fs::exists(inBuild)) return inBuild;
 
     // The source tree: so that the engine runs out of the tree, before
-    // anything has been staged.
-    const std::string source = str::join(SPECTRA_SHADER_DIR, relative);
-    if (!source.empty() && fs::exists(source)) return source;
+    // anything has been staged. The build points at the folder the shaders
+    // are in and not at the folder above it - the shaders live in
+    // "src/shaders" and the engine asks for "shaders/scene.vert".
+    const std::string source = str::join(SPECTRA_SHADER_DIR, kShaderFolder);
+    const std::string inSource = str::join(source, relative);
+    if (!source.empty() && fs::exists(inSource)) return inSource;
 
     // And the working directory, for the rest.
     const std::string here = str::join(kShaderFolder, relative);
@@ -59,6 +62,7 @@ std::string shaderPath(const std::string& relative) {
     // follows says which file was looked for and where.
     return inBuild;
 }
+
 
 ShaderProgram::~ShaderProgram() {
     if (program_) gl::DeleteProgram(program_);

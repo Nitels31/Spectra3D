@@ -713,6 +713,37 @@ void testFont() {
     FT_Done_FreeType(library);
 }
 
+// EVERY LETTER IS THE LETTER IT SHOULD BE
+
+void testGlyphTable() {
+    heading("the atlas and the letters agree");
+    // The atlas is baked with one table and read with the other, so the two
+    // have to be the same table. They were not: every Cyrillic letter was
+    // drawn as the one after it, and a word in Ukrainian came out as a word in
+    // a language nobody speaks.
+    int wrong = 0;
+    for (int slot = 0; slot < TextAtlas::kGlyphCount; ++slot) {
+        const unsigned cp = TextAtlas::codepointAt(slot);
+        if (TextAtlas::glyphIndex(cp) != slot) ++wrong;
+    }
+    check(wrong == 0, "every baked letter is found again by its own code point");
+
+    // And the letters the interface needs are all there.
+    check(TextAtlas::glyphIndex('A') >= 0, "a latin letter is in the atlas");
+    check(TextAtlas::glyphIndex(0x410) >= 0, "a cyrillic letter is in the atlas");
+    check(TextAtlas::glyphIndex(0x401) >= 0, "the ukrainian Є is in the atlas");
+    check(TextAtlas::glyphIndex(0x451) >= 0, "the ukrainian є is in the atlas");
+    check(TextAtlas::glyphIndex(0xE4) >= 0, "a german umlaut is in the atlas");
+    check(TextAtlas::glyphIndex(0xE7) >= 0, "a french cedilla is in the atlas");
+
+    // The letter a slot holds is the letter that is looked up: the two
+    // tables, one after the other.
+    const unsigned ukrainian = 0x413; // Г
+    const int slot = TextAtlas::glyphIndex(ukrainian);
+    check(slot >= 0 && TextAtlas::codepointAt(slot) == ukrainian,
+          "a cyrillic letter is the letter its slot holds");
+}
+
 // THE SHADOWS ARE THE PROJECT'S, AND THE SUN IS WHERE THE SETTINGS SAY
 void testShadowSettings() {
     heading("the sun is where the settings say it is");
@@ -796,6 +827,7 @@ int main() {
     testTextCodepoints();
     testWidgetIds();
     testShaders();
+    testGlyphTable();
     testShadowSettings();
     testFont();
 

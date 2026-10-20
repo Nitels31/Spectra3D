@@ -314,7 +314,7 @@ int Application::run() {
         previousTime_ = now;
         if (dt > kMaxFrameTime) dt = kMaxFrameTime; // avoid huge catch-up steps
 
-// Esc belongs to the launcher here. In the editor it is the panels' - the
+        // Esc belongs to the launcher here. In the editor it is the panels' - the
         // open menu, the search field, the numeric value editor - and this call
         // would eat the edge before any of them got to read it.
         if (!inEditor_ && window_.takeKeyPress(GLFW_KEY_ESCAPE)) {

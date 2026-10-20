@@ -89,9 +89,17 @@ constexpr int kExtraLatinSlot = 233;
 
 int TextAtlas::glyphIndex(unsigned cp) {
     if (cp >= 32 && cp <= 126) return (int)cp - 32;
-    if (cp == 0x401) return 160; // Є
-    if (cp == 0x451) return 161; // є
-    if (cp >= 0x410 && cp <= 0x44F) return 96 + (int)(cp - 0x410);
+    // The Cyrillic block, and then the two letters outside it.
+    //
+    // The slots have to be the ones `codepointAt` bakes into, and they used to
+    // be one higher than they are now: every Cyrillic letter was drawn as the
+    // one after it, and a word in Ukrainian came out as a word in a language
+    // nobody speaks. The atlas is baked with one table and read with the
+    // other, so the two have to be the same table - and the only way to be
+    // sure of that is to have them agree by construction.
+    if (cp >= 0x410 && cp <= 0x44F) return 95 + (int)(cp - 0x410);
+    if (cp == 0x401) return 159; // Є
+    if (cp == 0x451) return 160; // є
     for (int i = 0; i < 8; ++i)
         if (cp == kExtraCodePoints[i]) return kFirstExtraSlot + i;
     if (cp >= kLatin1FirstCp && cp <= kLatin1LastCp)

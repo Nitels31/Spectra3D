@@ -250,9 +250,15 @@ void Editor::drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
 
     // "Nothing matches" instead of an empty box with no explanation. Below the
     // root row, which is always there - it is what a filter returns to.
+    //
+    // And a scene with nothing in it says so: a filter that finds nothing and
+    // an empty scene are two different things, and telling a person that
+    // nothing matches a filter they never set is a small lie.
     if (filterRows_.empty()) {
-        ui.textFit(dock.x + 10.0f, rowsTop + kRowStep + 4.0f, dock.width - 20.0f,
-                   text("hierarchy.noMatches"), theme::textDim);
+        const char* message =
+            hierarchyFilter_.empty() ? text("layers.empty") : text("hierarchy.noMatches");
+        ui.textFit(dock.x + 10.0f, rowsTop + kRowStep + 4.0f, dock.width - 20.0f, message,
+                   theme::textDim);
     }
 }
 

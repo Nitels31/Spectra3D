@@ -439,7 +439,13 @@ void Editor::drawPanelChrome(UiRenderer& ui, PanelId id) {
         ui.fillRect(close.x + o, close.y + o, kStroke, kStroke, tint);
         ui.fillRect(close.x + 12.0f - o + 2.0f, close.y + o, kStroke, kStroke, tint);
     }
-    if (pressAccepted() && closeHovered && !ui_.pressOnOverlay()) {
+    // The X is not a widget but a shape drawn by hand, so it does not go
+    // through the widget layer that decides who owns the press. It asks the
+    // layer instead: a widget under the pointer has already taken the press,
+    // and two things answering the same click is how a button under a button
+    // gets pressed.
+    if (pressAccepted() && closeHovered && !ui_.pressOnOverlay() &&
+        !ui_.pressClaimedByWidget()) {
         panels_[(int)id].open = false;
         markLayoutDirty();
         return;
