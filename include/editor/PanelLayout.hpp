@@ -31,8 +31,8 @@ constexpr bool zoneIsRight(PanelZone zone) {
 }
 
 // How many panels the editor has: the hierarchy, the inspector, the console, the
-// favorites and the sounds.
-inline constexpr int kPanelCount = 5;
+// favorites, the sounds and the landform.
+inline constexpr int kPanelCount = 6;
 
 // The bounds for every panel size, wherever the size came from: a drag, a layout
 // file, a hand-edited one. Shared rather than repeated, because "too small to be

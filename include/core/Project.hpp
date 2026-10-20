@@ -132,6 +132,11 @@ struct Settings {
     // image - so this is the only thing standing between a laptop and a fan.
     int frameRateCap = 60;
 
+    // How many threads the loader may use. One is the same as no threads at
+    // all; six is what a machine with a lot of cores can actually use for
+    // reading a folder of models.
+    int loaderThreads = 4;
+
 // Which icon file to use, by name only - the path is always
     // assets/image/icons/, never something settings.ini can redirect. Switching it
     // repaints the window and the task bar entry immediately and survives the next

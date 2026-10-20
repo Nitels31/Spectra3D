@@ -76,6 +76,14 @@ Editor::Editor(MeshRegistry& meshes, i18n::Localizer& localizer, SoundDevice& so
     sounds.zone = PanelZone::BottomRight;
     sounds.open = true;
     sounds.floatRect = Rect{620.0f, 130.0f, 260.0f, 260.0f};
+
+    // The landform is a tool window: it makes a piece of ground and is in the
+    // way of nothing. It starts closed, so a window that opens the editor is
+    // not a window with a tool in it; the View menu brings it back.
+    Panel& landform = panels_[(int)PanelId::Landform];
+    landform.zone = PanelZone::Float;
+    landform.open = false;
+    landform.floatRect = Rect{700.0f, 90.0f, 280.0f, 320.0f};
 }
 
 bool Editor::consumeSingleStep() {
@@ -136,6 +144,7 @@ const char* Editor::panelTitle(PanelId id) const {
     case PanelId::Console: return text("tab.console");
     case PanelId::Favorites: return text("tab.favorites");
     case PanelId::Sounds: return text("tab.sounds");
+    case PanelId::Landform: return text("tab.landform");
     case PanelId::PanelCount: break;
     }
     return "";
@@ -1208,6 +1217,7 @@ void Editor::drawPanelById(UiRenderer& ui, PhysicsWorld& world, Window& window, 
     case PanelId::Console: drawConsolePanel(ui, panel); break;
     case PanelId::Favorites: drawFavoritesDock(ui, world, panel); break;
     case PanelId::Sounds: drawSoundsDock(ui, world, panel); break;
+    case PanelId::Landform: drawLandformPanel(ui, world, panel); break;
     case PanelId::PanelCount: break;
     }
     drawPanelChrome(ui, id);

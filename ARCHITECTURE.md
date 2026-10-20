@@ -665,6 +665,28 @@ favorites, and its own panel (`panels/FavoritesDock.cpp`) listing the starred bo
 scene data written into `scene.txt`, and it is read as an optional field, so scenes
 saved before there were stars open as they are.
 
+**A LANDFORM IS MADE OF NOISE.** The Landform panel says how low and how high
+the ground goes, how big it is and how finely it is cut into squares, and the
+button makes it: the height of every square comes from a value noise, so the
+same seed is the same ground on every machine. The squares are cut in rows and a
+row does not depend on the next, so the making is spread over as many threads
+as the settings say - one to six. The ground lands in the scene as an ordinary
+body, a mesh like any other, so the renderer and the physics do not know or
+care that this one was not read from a file.
+
+The noise itself is in `scene/Noise.hpp` and is worth a word: it is a hash of
+the integer lattice, smoothed, summed over four octaves. It is a picture and
+not a measurement, so the hash behind it is the cheap sine everybody uses and
+does not care how it turns out.
+
+**THE LOADER READS IN PARALLEL.** A model is a file that takes a while to read,
+and reading it touches no GL, so the models a scene names are parsed on as many
+threads as the settings ask for and their textures are uploaded afterwards, on
+the thread that owns the context. The log is written from those threads too, so
+it is safe to write from more than one: the file is written under a lock, and a
+message from another thread waits in a queue until the thread that owns the log
+takes it.
+
 **The saved workspace.** `EditorLayout.cpp` reads and writes
 `<project>/editorlayout.txt`: the dock sizes, each panel's zone, rectangle and
 whether it is open, and the favorites-only flag. The file lives in the project, not

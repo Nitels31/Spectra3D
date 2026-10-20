@@ -90,12 +90,10 @@ void appendJoined(std::string& out, const std::string& dir, const std::string& n
 
 } // namespace
 
-int resolveMesh(MeshRegistry& meshes, const std::string& name) {
-    const int cached = meshes.find(name);
-    if (cached >= 0) return cached;
-
-    // The asset root only changes while the working directory is being adopted,
-    // so the models directory is resolved once and reused for every body.
+// The file a model name is in. The asset root only changes while the working
+// directory is being adopted, so the models directory is resolved once and
+// reused for every body.
+std::string findMeshFile(const std::string& name) {
     static std::string cachedRoot;
     static std::string modelsDir;
     const std::string& root = fs::assetRoot();
@@ -111,18 +109,44 @@ int resolveMesh(MeshRegistry& meshes, const std::string& name) {
     for (const std::string& ext : meshExtensions()) {
         appendJoined(bundledPath, modelsDir, name);
         bundledPath += ext;
-        // Probing several extensions is expected to miss, so the attempts stay
-        // quiet and the caller reports one warning if every candidate failed.
-        const int index = meshes.importFile(bundledPath, /*quiet=*/true);
-        if (index >= 0) return index;
+        if (fs::exists(bundledPath)) return bundledPath;
 
         localPath.clear();
         localPath += name;
         localPath += ext;
-        const int local = meshes.importFile(localPath, /*quiet=*/true);
-        if (local >= 0) return local;
+        if (fs::exists(localPath)) return localPath;
     }
-    return -1;
+    return std::string();
+}
+
+int resolveMesh(MeshRegistry& meshes, const std::string& name) {
+    const int cached = meshes.find(name);
+    if (cached >= 0) return cached;
+
+    // Probing several extensions is expected to miss, so the attempts stay
+    // quiet and the caller reports one warning if every candidate failed.
+    const std::string path = findMeshFile(name);
+    if (path.empty()) return -1;
+    return meshes.importFile(path, /*quiet=*/true);
+}
+
+void preloadMeshes(MeshRegistry& meshes, const std::vector<std::string>& names, int threads) {
+    if (names.empty()) return;
+
+    // The names become files first: the probing is a listing of the disk, and
+    // it is cheap next to the parse.
+    std::vector<std::string> paths;
+    paths.reserve(names.size());
+    for (const std::string& name : names) {
+        if (meshes.find(name) >= 0) continue;
+        const std::string path = findMeshFile(name);
+        if (path.empty()) continue;
+        paths.push_back(path);
+    }
+
+    // And the files are parsed in parallel: that is the slow part of opening a
+    // project and it touches no GL.
+    meshes.importFiles(paths, threads > 0 ? threads : meshes.loaderThreads());
 }
 
 // --- JSON --------------------------------------------------------------------
@@ -418,7 +442,7 @@ bool saveJson(const PhysicsWorld& world, const MeshRegistry& meshes, const std::
     return (bool)file;
 }
 
-bool loadJson(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path) {
+bool loadJson(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path, int threads) {
     using nlohmann::json;
 
     std::string text;
@@ -584,8 +608,32 @@ bool save(const PhysicsWorld& world, const MeshRegistry& meshes, const std::stri
     return saveJson(world, meshes, path);
 }
 
-bool load(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path) {
-    return loadJson(world, meshes, path);
+std::vector<std::string> sceneMeshNames(const std::string& path) {
+    using nlohmann::json;
+    std::vector<std::string> names;
+
+    std::string text;
+    size_t size = 0;
+    if (!readWholeFile(path, text, size)) return names;
+    json root;
+    try {
+        root = json::parse(text);
+    } catch (const std::exception&) {
+        return names;
+    }
+    if (!root.is_object() || !root.contains("bodies") || !root["bodies"].is_array()) return names;
+
+    for (const json& node : root["bodies"]) {
+        if (!node.is_object()) continue;
+        const json& mesh = node["mesh"];
+        if (!mesh.is_object() || !mesh.contains("name") || !mesh["name"].is_string()) continue;
+        names.push_back(mesh["name"].get<std::string>());
+    }
+    return names;
+}
+
+bool load(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path, int threads) {
+    return loadJson(world, meshes, path, threads);
 }
 
 } // namespace scenes

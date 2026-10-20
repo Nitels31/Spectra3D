@@ -14,7 +14,9 @@
 #include "ui/UiContext.hpp"
 #include "editor/AssetBrowser.hpp"
 #include "editor/Gizmo.hpp"
+#include "scene/Landform.hpp"
 #include "editor/Gizmo.hpp"
+#include "scene/Landform.hpp"
 #include "editor/PanelLayout.hpp"
 
 namespace s3d {
@@ -38,6 +40,7 @@ enum class PanelId {
     Console = 2,
     Favorites,
     Sounds,
+    Landform,
     PanelCount
 };
 // Where a panel can be, and the geometry that follows from it, live in
@@ -62,6 +65,12 @@ public:
         kHierarchySearch = 440,
         kFavoriteRow = 460,
         kSoundRow = 480,
+        kLandformMinHeight = 490,
+        kLandformMaxHeight = 491,
+        kLandformWidth = 492,
+        kLandformDepth = 493,
+        kLandformCells = 494,
+        kLandformGenerate = 495,
         kInspectorDock = 500,
         kInspectorProperty = 600,
         kFilterField = 700,
@@ -127,6 +136,8 @@ kHelpClose = 1400,
     // The application owns gravity (it sets it from the manifest), so a keyboard
     // axis change there has to be able to say "this is an edit".
     void markSceneDirty() { sceneDirty_ = true; }
+    // How many threads the loader and the landform may use.
+    void setLoaderThreads(int threads) { loaderThreads_ = threads < 1 ? 1 : (threads > 6 ? 6 : threads); }
     // The application owns the launcher, the manifest and the build, so the editor
     // asks for those through this one-shot request instead of reaching for them.
     enum class ShellRequest { None, NewProject, OpenProject, SaveProject, Build, BuildRun };
@@ -276,6 +287,16 @@ private:
                               int index);
     static void formatPrefixed(char* out, size_t size, const char* prefix, const char* value);
 
+    // --- the landform --------------------------------------------------------
+    // What the Landform panel says: how low and how high the ground goes, how
+    // big it is, and how finely it is cut. The cells are a whole number, so
+    // they are kept apart from the rest.
+    LandformSettings landform_;
+    float landformCells_ = 64.0f;
+    // How many threads the making may use. The user picks the number in the
+    // settings, and the panel uses it.
+    int loaderThreads_ = 4;
+
     // --- hierarchy -----------------------------------------------------------
     // The label a row shows is built the same way for the row and for the filter,
     // so the filter can never disagree with what is on screen. Neither allocates:
@@ -354,6 +375,9 @@ private:
         ToggleFavorite,
         // View: which panels are on screen at all.
         TogglePanel,
+        // Create: a piece of ground, made of noise. It opens the panel that
+        // says how the ground is made.
+        Landform,
     };
 
     // One row of a dropdown. `text` is borrowed: every label comes either from the
@@ -460,6 +484,10 @@ private:
     // The sounds the engine has loaded, and the buttons that play them and
     // give them to the body that is selected.
     void drawSoundsDock(UiRenderer& ui, PhysicsWorld& world, const Rect& dock);
+    // The Landform panel: the shape of the ground, made of noise.
+    void drawLandformPanel(UiRenderer& ui, PhysicsWorld& world, const Rect& dock);
+    // Makes the ground the panel describes and puts it in the scene.
+    void makeLandform(PhysicsWorld& world);
     // One panel, wherever it currently is: its own rectangle decides the rest.
     void drawPanelById(UiRenderer& ui, PhysicsWorld& world, Window& window, PanelId id);
     void drawDockedPanels(UiRenderer& ui, PhysicsWorld& world, Window& window);

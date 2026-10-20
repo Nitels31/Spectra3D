@@ -157,6 +157,8 @@ bool Application::initialize() {
     window_.applyIcon(launcher_.settings().appIcon.c_str());
     inEditor_ = false;
 
+
+
     scripts_.setDiagnosticSink([](const script::Host::Diagnostic& d) {
         if (d.isError)
             Log::error("script %s (%d,%d): %s", d.section.c_str(), d.row, d.col,
@@ -322,8 +324,13 @@ int Application::run() {
             continue;
         }
 
-if (inEditor_)
+if (inEditor_) {
+            // The loader and the landform make things on as many threads as the
+            // user asked for, and the setting is read every frame so a change
+            // takes hold at once.
+            editor_->setLoaderThreads(launcher_.settings().loaderThreads);
             runEditorFrame((float)dt);
+        }
         else
             runLauncherFrame();
 
@@ -379,7 +386,9 @@ void Application::runLauncherFrame() {
     openProject(project);
 }
 
-void Application::openProject(const ProjectInfo& project) {
+// The world a project opens with: the gravity, the camera, the models and the
+// scene. A game needs this much and an editor needs this much.
+void Application::loadProjectWorld(const ProjectInfo& project) {
     project_ = project;
     world_.clear();
     world_.setGravity((GravityAxis)project_.gravity);
@@ -392,6 +401,9 @@ void Application::openProject(const ProjectInfo& project) {
     // Before the scene is read: loading a model is what pulls its textures in, so
     // the mesh registry needs to know where to put them.
     meshes_.setTextureRegistry(&textures_);
+    // How many threads the loader may use. The user picked the number, and the
+    // models of a project are the slow part of opening it.
+    meshes_.setLoaderThreads(launcher_.settings().loaderThreads);
 
     // A project may have a sky of its own, and it wins over the engine's.
     loadProjectSky(project_.path);
@@ -399,6 +411,11 @@ void Application::openProject(const ProjectInfo& project) {
         // A missing or empty scene is a fresh project, not an error.
         scenes::load(world_, meshes_, scenePath);
     }
+}
+
+void Application::openProject(const ProjectInfo& project) {
+    loadProjectWorld(project);
+    const std::string scenePath = ProjectLibrary::scenePath(project_);
 
     editor_ = std::make_unique<Editor>(meshes_, localizer_, sound_);
     editor_->setScenePath(scenePath);
@@ -573,6 +590,38 @@ if (editor_->consumeTimeReset()) simulationTime_ = 0.0;
 // it needs beside it, the assets it loads, and the project itself. There is no
 // separate player binary to look for - this file IS the player - so "build" is a
 // staging folder that can be copied to another machine and run from there.
+// The models the project uses, and their pictures, staged into the build.
+//
+// A model without its picture still draws, in its flat colour, and that is not
+// what anybody meant - so the pictures go with it. The project's own models are
+// already in the project folder and travel with it.
+int Application::stageModels(const std::string& assets, const std::string& target,
+                             const ProjectInfo& project) {
+    const std::string scenePath = ProjectLibrary::scenePath(project);
+    const std::vector<std::string> names = scenes::sceneMeshNames(scenePath);
+    if (names.empty()) return 0;
+
+    const std::string modelsOut = str::join(str::join(target, "assets"), "models");
+    int copied = 0;
+    for (const std::string& name : names) {
+        const std::string path = scenes::findMeshFile(name);
+        if (path.empty()) continue;
+        if (fs::copyTree(path, str::join(modelsOut, str::fileName(path)))) copied++;
+
+        // The pictures the model refers to. They are the files the loader
+        // recorded, so they are the files the game will look for.
+        const int index = meshes_.find(name);
+        if (index < 0) continue;
+        for (const std::string& texture : meshes_.textureFilesOf(index)) {
+            if (texture.empty()) continue;
+            if (fs::copyTree(texture, str::join(modelsOut, str::fileName(texture)))) copied++;
+        }
+    }
+    Log::info("Build: %d model file(s) staged for %d model(s) named by the scene", copied,
+              (int)names.size());
+    return copied;
+}
+
 bool Application::stageBuild(const std::string& target, bool alsoRun) {
     if (target.empty()) {
         Log::error("Build: no folder chosen");
@@ -604,8 +653,23 @@ bool Application::stageBuild(const std::string& target, bool alsoRun) {
 
     // Assets travel with the build: a build that starts and then finds no models
     // and no language is a build that cannot be used.
+    //
+    // The models are the exception. A folder of them is the biggest thing in
+    // the assets, and a build that carries all of them carries the ones nobody
+    // will ever open - so only the ones the scene names are staged, with their
+    // pictures. The project's own models travel with the project.
     const std::string assets = str::join(exeDir, "assets");
-    if (fs::isDirectory(assets) && fs::copyTree(assets, str::join(target, "assets"))) copied++;
+    if (fs::isDirectory(assets)) {
+        std::vector<fs::DirEntry> assetEntries;
+        fs::listDirectoryEx(assets, assetEntries);
+        for (const fs::DirEntry& entry : assetEntries) {
+            if (entry.isDir && str::equalsIgnoreAscii(entry.name, "models")) continue;
+            if (fs::copyTree(str::join(assets, entry.name),
+                             str::join(str::join(target, "assets"), entry.name)))
+                copied++;
+        }
+        copied += stageModels(assets, target, project_);
+    }
 
     // The project, entry by entry rather than as one tree, and into
     // "<build>/project/<name>". The folder name is not decoration: a built program

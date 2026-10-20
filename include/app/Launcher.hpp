@@ -86,6 +86,7 @@ private:
         kFrameCapSelect = 1041,
         kLanguageSelect = 1042,
         kIconSelect = 1043,
+        kThreadsSelect = 1044,
 
         // Sidebar and tab strip are not clickable in the row sense, so they get
         // ids below kRowIdBase.
@@ -152,6 +153,8 @@ private:
     void applyRoot(const std::string& root);
     void setLanguage(LanguageTag tag);
     void setFrameRateCap(int cap);
+    // How many threads the loader may use, 1 to 6.
+    void setLoaderThreads(int threads);
     void setTheme(theme::ThemeId id);
     // Repaints the window and the task bar entry with a different file from
     // assets/image/icons/, and remembers it. Called from the settings dropdown and

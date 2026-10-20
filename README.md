@@ -589,6 +589,19 @@ both its hits and its misses when a module is replaced, the input bindings with 
 window, the event queue's ordering and cap, and a compile error as an ERROR
 diagnostic.
 
+### Making a landform
+
+**Create > Landform** opens the Landform panel. It says how low and how high the
+ground goes, how big it is and how finely it is cut into squares, and **Generate**
+makes it: the height of every square comes from a value noise, so the same seed
+is the same ground on every machine. The ground lands in the scene at the origin
+as an ordinary body.
+
+The making is spread over as many threads as **Settings > Loader threads** says
+(one to six), and the models a scene names are read the same way - the parse
+touches no GL, so it runs in parallel and the textures are uploaded afterwards,
+on the thread that owns the context.
+
 ### Checking the editor
 
 The panel geometry is checked the same way - with no window and no editor:

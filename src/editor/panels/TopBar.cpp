@@ -188,6 +188,10 @@ void Editor::buildMenuRows() {
     // The camera is not a shape - it has no volume and is never collided - so
     // it gets its own row rather than a place in the shape list.
     add(Action::Camera, 0, text("shape.camera"));
+    add(Action::None, 0, nullptr, false, true);
+    // The ground. It is not a shape - it is made, and the panel that says how
+    // is where it is made.
+    add(Action::Landform, 0, text("tab.landform"));
     const std::vector<std::string>& models = assets_.files();
     add(Action::None, 0, nullptr, false, true);
     if (models.empty()) {
@@ -432,6 +436,7 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
             markSceneDirty();
         }
         break;
+    case Action::Landform:
     case Action::TogglePanel:
         if (param >= 0 && param < kPanelCount) {
             Panel& panel = panels_[param];

@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
+#include <thread>
 
 namespace s3d {
 namespace {
@@ -13,6 +15,27 @@ constexpr size_t kTrimTo = 128;
 std::vector<Log::Entry> g_entries;
 std::string g_dir;
 FILE* g_file = nullptr;
+
+// The loader threads write here too, so the file is written under a lock and a
+// message from another thread waits in a queue: the ring buffer belongs to the
+// thread that reads it, and the editor's console panel reads it every frame.
+std::mutex g_mutex;
+std::vector<Log::Entry> g_pending;
+std::thread::id g_owner;
+
+// The thread that first logged anything owns the ring buffer.
+bool isOwner() {
+    if (g_owner == std::thread::id()) {
+        g_owner = std::this_thread::get_id();
+        return true;
+    }
+    return g_owner == std::this_thread::get_id();
+}
+
+void trim() {
+    if (g_entries.size() > kMaxEntries)
+        g_entries.erase(g_entries.begin(), g_entries.begin() + (g_entries.size() - kTrimTo));
+}
 
 const char* levelTag(Log::Level l) {
     switch (l) {
@@ -59,9 +82,14 @@ void Log::write(Level level, const char* fmt, va_list args) {
     Entry e;
     e.level = level;
     vsnprintf(e.text, sizeof(e.text), fmt, args);
-    g_entries.push_back(e);
-    if (g_entries.size() > kMaxEntries)
-        g_entries.erase(g_entries.begin(), g_entries.begin() + (g_entries.size() - kTrimTo));
+    if (isOwner()) {
+        g_entries.push_back(e);
+        trim();
+    } else {
+        // Another thread: the entry waits for the owner to take it.
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_pending.push_back(e);
+    }
 
     // Render "[TAG] text\n" once and hand the same bytes to both sinks; the
     // previous code formatted the same line twice through stdio. vsnprintf
@@ -80,9 +108,13 @@ void Log::write(Level level, const char* fmt, va_list args) {
     const size_t lineLength = 3 + tagLength + textLength + 1;
     line[lineLength - 1] = '\n';
 
-    if (g_file) {
-        fwrite(line, 1, lineLength, g_file);
-        if (level != Level::Info) fflush(g_file);
+    {
+        // The file is shared, so its writes are locked.
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (g_file) {
+            fwrite(line, 1, lineLength, g_file);
+            if (level != Level::Info) fflush(g_file);
+        }
     }
     // stderr stays unbuffered, so every message still reaches the console as it
     // is logged.
@@ -111,6 +143,19 @@ void Log::error(const char* fmt, ...) {
 }
 
 const std::vector<Log::Entry>& Log::entries() { return g_entries; }
+
+void Log::drain() {
+    // The messages the other threads wrote, in the order they were written.
+    std::vector<Entry> pending;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        pending.swap(g_pending);
+    }
+    for (const Entry& e : pending) {
+        g_entries.push_back(e);
+        trim();
+    }
+}
 
 void Log::clear() { g_entries.clear(); }
 

@@ -51,6 +51,11 @@ private:
     // Hands the window over to the editor for `project`.
     void openProject(const ProjectInfo& project);
     void closeProject();
+    // The world a project opens with, without an editor in it: what a built
+    // game starts.
+    void loadProjectWorld(const ProjectInfo& project);
+
+
 
     void updateCameraInput(Window& window, float dt, bool allowMove = true);
     void updateSimulation(float dt, bool stepping);
@@ -80,6 +85,9 @@ private:
     // files and the project into that folder, and starting the copy, is the
     // shell's job. Returns false with the reason in the log when it cannot.
     bool stageBuild(const std::string& target, bool alsoRun);
+    // The models the project uses, and their pictures, staged into the build.
+    int stageModels(const std::string& assets, const std::string& target,
+                    const ProjectInfo& project);
 
     Window window_;
     PhysicsWorld world_;
@@ -107,6 +115,8 @@ private:
 
     ProjectInfo project_;
     bool inEditor_ = false;
+
+
 
     // 60 Hz simulation, at most TWO steps per rendered frame.
     //

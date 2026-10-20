@@ -249,6 +249,7 @@ set(SPECTRA_SRC_EDITOR
     src/editor/AssetBrowser.cpp
     src/editor/panels/TopBar.cpp
     src/editor/panels/TopBarOverlay.cpp
+    src/editor/panels/LandformPanel.cpp
     src/editor/panels/LeftColumn.cpp
     src/editor/panels/FavoritesDock.cpp
     src/editor/panels/ScenePanel.cpp
@@ -268,6 +269,8 @@ set(SPECTRA_SRC_SCRIPT
 set(SPECTRA_SRC_SCENE
     src/scene/BodyFactory.cpp
     src/scene/CameraEntity.cpp
+    src/scene/Landform.cpp
+    src/scene/Noise.cpp
     src/scene/SceneSerializer.cpp
 )
 set(SPECTRA_SRC_UI
