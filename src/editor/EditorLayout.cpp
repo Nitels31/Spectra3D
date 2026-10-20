@@ -230,6 +230,8 @@ void Editor::loadLayout() {
 
     if (version > kLayoutVersion)
         Log::info("Editor: layout '%s' was written by a newer build (v%d)", path.c_str(), version);
+    Log::info("Editor: layout '%s' loaded (v%d): left %.0f, right %.0f, bottom %.0f/%.0f/%.0f",
+              path.c_str(), version, left, right, bottom, bottomLeft, bottomRight);
 
     // One panel per zone. The file cannot produce two (a swap always keeps the
     // count), but a hand-edited one can, and two panels in one zone would have
@@ -328,6 +330,7 @@ void Editor::saveLayout() {
     }
 
     if (!fs::writeFile(path, text)) Log::warn("Editor: cannot write the layout '%s'", path.c_str());
+    else Log::info("Editor: layout '%s' saved", path.c_str());
 }
 
 } // namespace s3d

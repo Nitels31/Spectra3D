@@ -398,7 +398,7 @@ void Editor::handlePanelDrag(PhysicsWorld& world) {
         return;
     }
 
-    if (ui_.pointerPressed()) {
+    if (ui_.pointerPressed() && pointerArmed_) {
         // Grips are tested BEFORE the title bar, and that order is the whole
         // reason the console can be resized at all: its only grip is its top
         // edge, which is also the first five pixels of its title bar. Tested the
@@ -488,7 +488,7 @@ void Editor::drawPanelChrome(UiRenderer& ui, PanelId id) {
         ui.fillRect(close.x + o, close.y + o, kStroke, kStroke, tint);
         ui.fillRect(close.x + 12.0f - o + 2.0f, close.y + o, kStroke, kStroke, tint);
     }
-    if (closeHovered && ui_.pointerPressed()) {
+    if (pressAccepted() && closeHovered) {
         panels_[(int)id].open = false;
         markLayoutDirty();
         return;
@@ -789,6 +789,26 @@ void Editor::handleInput(PhysicsWorld& world, Camera& camera, Window& window, in
     // or selecting a body in the scene underneath it.
     ui_.claimPointer(popupOpen() ? kPopupCapture : 0);
     viewRay_.valid = false;
+
+    // The window changed size. The pointer's position in the framebuffer moved
+    // with it, and a drag that went on would take that movement for the user's
+    // own and move a panel by it - the panel ends up where the window's edge
+    // was, not where the hand is. The drag is cancelled instead: the hand did
+    // not do it, so the hand is not asked to finish it.
+    if (fbWidth != fbWidth_ || fbHeight != fbHeight_) {
+        dragPanel_ = -1;
+        resizePanel_ = -1;
+        resizeEdges_ = 0;
+    }
+
+    // A press counts only after a release. The button can already be down when
+    // the editor appears - the click that opened the project is the launcher's
+    // and the mouse is still held - and a press here would be the second half
+    // of somebody else's click: the one that picked a panel up and dragged it
+    // to the end of its track, and then wrote the workspace out with the panel
+    // at its smallest.
+    if (!pointerArmed_ && !ui_.pointerDown()) pointerArmed_ = true;
+
     recomputeLayout(fbWidth, fbHeight);
     // The workspace comes back the way it was left, but only once the window size
     // is known: a floating panel restored onto a screen that has since shrunk has
@@ -823,7 +843,7 @@ bool Editor::tryNavigationGizmo(Camera& camera) {
     const Rect viewport = layout_.viewport;
     const float centerX = viewport.x + viewport.width - 52.0f;
     const float centerY = viewport.y + 52.0f;
-    if (!ui_.pointerPressed()) return false;
+    if (!pressAccepted()) return false;
 
     for (const NavBall& ball : kNavBalls) {
         const float dx = ui_.pointerX() - (centerX + ball.dx);
@@ -1080,7 +1100,7 @@ const Rect viewport = layout_.viewport;
     // Pan is a viewport drag, not a UI press: start it here and keep feeding it
     // below, so the camera tracks the pointer for as long as the button is down.
     if (tool_ == Tool::Pan) {
-        if (ui_.pointerPressed()) {
+        if (pressAccepted()) {
             panStartPointer_ = {ui_.pointerX(), ui_.pointerY(), 0.0f};
             panStartCamera_ = camera.position;
             // One screen pixel of drag per world unit at the focal plane, so the
@@ -1109,7 +1129,7 @@ const Rect viewport = layout_.viewport;
         return;
     }
 
-    if (ui_.pointerPressed()) {
+    if (pressAccepted()) {
         if (tryGizmoGrip(world, camera)) {
             const RigidBody* body = world.find(activeBody_);
             gizmo::Mode mode = gizmo::Mode::Move;
@@ -1134,7 +1154,7 @@ if (ui_.pointerDown() && dragAxis_ >= 0 && world.find(activeBody_)) {
         dragAxis_ = -1;
         return;
     }
-    if (ui_.pointerPressed())
+    if (pressAccepted())
         handleSelectionClick(world, camera.position, viewportRay(camera));
 }
 
