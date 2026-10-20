@@ -10,3 +10,6 @@ build-*/
 # Runtime output produced next to the binary
 scene.txt
 engine.log
+
+# Test folder
+test_screenshot

@@ -308,7 +308,9 @@ set(SPECTRA_SRC_PLATFORM
     src/platform/Window.cpp
     src/platform/Filesystem.cpp
     src/platform/GlFunctions.cpp
+    src/platform/Screenshot.cpp
 )
+
 set(SPECTRA_SRC_CORE
     src/core/Log.cpp
     src/core/Project.cpp

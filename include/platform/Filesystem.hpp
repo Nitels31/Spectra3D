@@ -25,7 +25,12 @@ void adoptAssetWorkingDir();
 // Absolute directory that holds the bundled assets. Empty when not found.
 const std::string& assetRoot();
 
-bool isDirectory(const std::string& path);
+    // Creates the directory and the ones above it. Does nothing when it is
+    // already there.
+    bool ensureDirectory(const std::string& path);
+
+    bool isDirectory(const std::string& path);
+
 bool exists(const std::string& path);
 
 // One entry as reported by the OS listing, including whether it is a directory.

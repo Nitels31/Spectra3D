@@ -3,6 +3,7 @@
 #include "core/Log.hpp"
 #include "core/Str.hpp"
 #include "platform/Filesystem.hpp"
+#include "platform/Screenshot.hpp"
 #include "render/GlInfo.hpp"
 #include "scene/CameraEntity.hpp"
 #include "scene/SceneSerializer.hpp"
@@ -324,6 +325,15 @@ int Application::run() {
             continue;
         }
 
+        // The picture of the screen, in the editor and in the launcher alike.
+        //
+        // It is asked for here and taken at the end of the frame, because the
+        // picture has to be read out of the framebuffer before it is swapped -
+        // after the swap the picture on the screen is the one that was there
+        // before. And it is asked for here, before the editor's own input, so
+        // that a panel with the keyboard cannot take the key away.
+        if (window_.takeKeyPress(GLFW_KEY_F12)) screenshotRequested_ = true;
+
 if (inEditor_) {
             // The loader and the landform make things on as many threads as the
             // user asked for, and the setting is read every frame so a change
@@ -334,7 +344,19 @@ if (inEditor_) {
         else
             runLauncherFrame();
 
+        // And the picture, before the buffer is swapped. It goes into the
+        // system's temporary folder and not next to the program: a build
+        // folder full of pictures is a build folder nobody can read.
+        if (screenshotRequested_) {
+            screenshotRequested_ = false;
+            const std::string folder = screenshot::pictureFolder();
+            const std::string path = screenshot::nextPath(folder);
+            if (screenshot::save(path, window_.framebufferWidth(), window_.framebufferHeight()))
+                Log::info("The picture is in '%s'", path.c_str());
+        }
+
         window_.present();
+
 
         // Everything this frame did not read dies with it - here, at the end of
         // the frame that had its chance to read it, and not at the top of the

@@ -52,6 +52,20 @@ std::string wideToUtf8(const wchar_t* w, size_t len) {
     WideCharToMultiByte(CP_UTF8, 0, w, (int)len, &out[0], n, nullptr, nullptr);
     return out;
 }
+
+// The path with the separators the platform's own calls want.
+//
+// Windows takes a forward slash in most of its calls, but not in all of them:
+// FindFirstFileA and RemoveDirectoryA refuse a path that has one in it. The
+// engine builds its paths with whichever separator the name it was given had,
+// so a path can carry both - and a folder that is emptied and not taken away
+// is a folder the user cannot get rid of.
+std::string nativePath(const std::string& path) {
+    std::string out = path;
+    for (char& c : out)
+        if (c == '/') c = '\\';
+    return out;
+}
 #endif
 
 std::string parentOf(const std::string& dir) {
@@ -175,7 +189,7 @@ const std::string& assetRoot() { return g_assetRoot; }
 
 bool exists(const std::string& path) {
 #if defined(_WIN32)
-    return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+    return GetFileAttributesA(nativePath(path).c_str()) != INVALID_FILE_ATTRIBUTES;
 #else
     struct stat st;
     return stat(path.c_str(), &st) == 0;
@@ -184,7 +198,7 @@ bool exists(const std::string& path) {
 
 bool isDirectory(const std::string& path) {
 #if defined(_WIN32)
-    const DWORD attr = GetFileAttributesA(path.c_str());
+    const DWORD attr = GetFileAttributesA(nativePath(path).c_str());
     return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
 #else
     struct stat st;
@@ -196,7 +210,7 @@ bool listDirectoryEx(const std::string& dir, std::vector<DirEntry>& out) {
     out.clear();
 #if defined(_WIN32)
     WIN32_FIND_DATAA fd;
-    const std::string pattern = str::join(dir, "*");
+    const std::string pattern = nativePath(str::join(dir, "*"));
     HANDLE h = FindFirstFileA(pattern.c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return false;
     do {
@@ -335,13 +349,16 @@ bool copyEntry(const std::string& src, const std::string& dst, bool isDir) {
         // build target that has never been written to is not there yet.
         makeParents(dst);
 #if defined(_WIN32)
-        if (CopyFileA(src.c_str(), dst.c_str(), FALSE) != 0) return true;
+        // The paths with the separators the platform's own calls want.
+        const std::string source = nativePath(src);
+        const std::string target = nativePath(dst);
+        if (CopyFileA(source.c_str(), target.c_str(), FALSE) != 0) return true;
         // A file already open for writing cannot be overwritten in place. It is
         // copied aside and the original is replaced, which is what a rebuild of a
         // folder that holds the running program needs.
-        const std::string aside = dst + ".new";
-        if (CopyFileA(src.c_str(), aside.c_str(), FALSE) == 0) return false;
-        if (!MoveFileExA(aside.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        const std::string aside = target + ".new";
+        if (CopyFileA(source.c_str(), aside.c_str(), FALSE) == 0) return false;
+        if (!MoveFileExA(aside.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) {
             DeleteFileA(aside.c_str());
             return false;
         }
@@ -365,6 +382,14 @@ bool copyEntry(const std::string& src, const std::string& dst, bool isDir) {
 
 } // namespace
 
+bool ensureDirectory(const std::string& path) {
+    if (path.empty()) return false;
+    if (isDirectory(path)) return true;
+    makeParents(path);
+    makeDirectory(path);
+    return isDirectory(path);
+}
+
 bool copyTree(const std::string& src, const std::string& dst) {
     if (src.empty() || dst.empty() || !exists(src)) return false;
     return copyEntry(src, dst, isDirectory(src));
@@ -376,23 +401,29 @@ namespace {
 // reads as "children first, then this entry", which is the only order the
 // platform calls accept.
 bool removeEntry(const std::string& path, bool isDir) {
+#if defined(_WIN32)
+    // The path with the separators the platform's own calls want.
+    const std::string native = nativePath(path);
+#else
+    const std::string native = path;
+#endif
     if (!isDir) {
 #if defined(_WIN32)
         // A read-only file cannot be deleted on Windows, and DeleteFile fails
         // instead of clearing the attribute for us.
-        const DWORD attr = GetFileAttributesA(path.c_str());
+        const DWORD attr = GetFileAttributesA(native.c_str());
         if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY))
-            SetFileAttributesA(path.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
-        return DeleteFileA(path.c_str()) != 0;
+            SetFileAttributesA(native.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
+        return DeleteFileA(native.c_str()) != 0;
 #else
         return std::remove(path.c_str()) == 0;
 #endif
     }
 #if defined(_WIN32)
-    const DWORD attr = GetFileAttributesA(path.c_str());
+    const DWORD attr = GetFileAttributesA(native.c_str());
     if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY))
-        SetFileAttributesA(path.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
-    return RemoveDirectoryA(path.c_str()) != 0;
+        SetFileAttributesA(native.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
+    return RemoveDirectoryA(native.c_str()) != 0;
 #else
     return rmdir(path.c_str()) == 0;
 #endif
@@ -404,6 +435,11 @@ bool removeTree(const std::string& path) {
     if (path.empty()) return false;
 
     const bool dir = isDirectory(path);
+    // Taking away something that is not there is not a failure: the folder is
+    // gone either way, and a caller that cleans up after itself must not be
+    // told it did something wrong.
+    if (!dir && !exists(path)) return true;
+
     bool ok = true;
     if (dir) {
         std::vector<DirEntry> entries;

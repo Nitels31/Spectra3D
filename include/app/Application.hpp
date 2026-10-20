@@ -140,6 +140,9 @@ private:
     // 1 until the first step says otherwise, because 1 is "draw the transform the
     // world actually has" and that is the right answer whenever nothing has moved.
     float clockAlpha_ = 1.0f;
+    // True on the frame the user asked for a picture of the screen. The picture
+    // is taken at the end of that frame, before the buffer is swapped.
+    bool screenshotRequested_ = false;
     // The cap above, named because Application.cpp quotes it in a comment and a
     // hook budget is the thing that has to be reasoned about.
     static constexpr int kMaxStepsPerRenderedFrame = 2;

@@ -168,6 +168,17 @@ listing, the executable path, finding the asset root, `adoptAssetWorkingDir()`, 
 the shell folder dialog. There is no separate GL loader — the engine targets the
 fixed-function pipeline and includes `<GL/gl.h>` directly.
 
+**THE PICTURE OF THE SCREEN IS A FILE.** `Screenshot.hpp` writes what is on
+the screen into a PNG, and **F12** takes one — in the editor and in the
+launcher alike. The file goes next to the program, numbered so that a picture
+taken yesterday is not overwritten by one taken today.
+
+Half of the bugs this engine has ever had were found by looking at a picture
+of it, and a picture that has to be taken with a screenshot program and put
+in a folder by hand is a picture that is not taken. The read is out of the
+framebuffer, so it has to happen **before the buffer is swapped**: after the
+swap the picture on the screen is the one that was there before.
+
 **The asset root is found in the places a program is run from.** Next to the
 binary, then `../share/spectra3d` (where `make install` puts it), then the source
 tree the build knows about, then the working directory. A program that cannot
