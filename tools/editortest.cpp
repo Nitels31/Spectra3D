@@ -13,13 +13,17 @@
 
 #include "editor/PanelLayout.hpp"
 #include "editor/Picking.hpp"
+#include "editor/Editor.hpp"
 
 #include "core/Math.hpp"
 #include "core/Str.hpp"
 #include "platform/Filesystem.hpp"
+#include "platform/Window.hpp"
 #include "render/Camera.hpp"
 #include "render/SceneRenderer.hpp"
 #include "render/TextAtlas.hpp"
+#include "scene/Landform.hpp"
+#include "scene/Noise.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -247,6 +251,281 @@ void testPictureAndPointer() {
 
 // THE FONT THE ENGINE SHIPS HAS EVERY LETTER THE ATLAS NEEDS
 
+// A FLOATING WINDOW DOES NOT LAND ON ANOTHER ONE
+
+void testFloatingPanels() {
+    heading("a floating window does not land on another one");
+    Workspace ws = sampleWorkspace();
+    // Two windows, one dropped on top of the other.
+    ws.zones[kFavorites] = PanelZone::Float;
+    ws.zones[kSounds] = PanelZone::Float;
+    ws.floatRects[kFavorites] = Rect{100.0f, 100.0f, 300.0f, 200.0f};
+    ws.floatRects[kSounds] = Rect{120.0f, 120.0f, 300.0f, 200.0f};
+
+    const Rect spot = findFreeSpot(ws, kSounds, ws.floatRects[kSounds]);
+    check(!rectsOverlap(spot, ws.floatRects[kFavorites]),
+          "the window is put where it covers nothing");
+    check(spot.x >= 0.0f && spot.y >= 0.0f && spot.x + spot.width <= (float)ws.fbWidth &&
+              spot.y + spot.height <= (float)ws.fbHeight,
+          "and it stays inside the window");
+
+    // A window with room keeps the place it was dropped in.
+    ws.floatRects[kSounds] = Rect{600.0f, 300.0f, 300.0f, 200.0f};
+    const Rect same = findFreeSpot(ws, kSounds, ws.floatRects[kSounds]);
+    check(nearly(same.x, 600.0f) && nearly(same.y, 300.0f),
+          "a window with room stays where it was");
+
+    // A window that covers a panel is moved: the panel underneath cannot be
+    // reached while the window is on top of it.
+    Workspace plain = sampleWorkspace();
+    plain.open[kConsole] = false;
+    plain.open[kFavorites] = false;
+    plain.open[kSounds] = false;
+    const Rect overTheTree = zoneRect(plain, PanelZone::Left);
+    plain.zones[kSounds] = PanelZone::Float;
+    plain.floatRects[kSounds] = overTheTree;
+    const Rect moved = findFreeSpot(plain, kSounds, overTheTree);
+    check(!rectsOverlap(moved, overTheTree), "a window over a panel is moved off it");
+
+    // Two panels that stand next to each other do not overlap: the edges
+    // touch and nothing is covered.
+    check(!rectsOverlap(Rect{0.0f, 0.0f, 100.0f, 100.0f}, Rect{100.0f, 0.0f, 100.0f, 100.0f}),
+          "two panels side by side do not overlap");
+    check(rectsOverlap(Rect{0.0f, 0.0f, 100.0f, 100.0f}, Rect{99.0f, 0.0f, 100.0f, 100.0f}),
+          "but two panels on top of each other do");
+}
+
+// THE NOISE IS A NOISE AND NOT A PICTURE OF ONE
+
+void testNoise() {
+    heading("the noise is a noise");
+    check(perlinNoise(1.25f, 3.5f, 7u) == perlinNoise(1.25f, 3.5f, 7u),
+          "the same seed gives the same value");
+    check(perlinNoise(1.25f, 3.5f, 7u) != perlinNoise(1.25f, 3.5f, 8u),
+          "a different seed gives a different value");
+
+    float lowest = 1.0f, highest = 0.0f;
+    for (int i = 0; i < 400; ++i) {
+        const float v = fbm((float)i * 0.37f, (float)i * 0.11f, 3u, 5);
+        if (v < lowest) lowest = v;
+        if (v > highest) highest = v;
+    }
+    check(lowest >= 0.0f && highest <= 1.0f, "the noise stays between 0 and 1");
+
+    // And it is CONTINUOUS: two points that are close together have values
+    // that are close together. A hash of a float is not - the value at one
+    // point says nothing about the value next to it, and the ground comes out
+    // as a field of cubes with rounded corners.
+    float biggestStep = 0.0f;
+    for (int i = 0; i < 400; ++i) {
+        const float x = (float)i * 0.37f;
+        const float a = fbm(x, 1.0f, 3u, 5);
+        const float b = fbm(x + 0.001f, 1.0f, 3u, 5);
+        biggestStep = std::fmax(biggestStep, std::fabs(a - b));
+    }
+    check(biggestStep < 0.02f, "two nearby points have nearly the same value");
+
+    // The shapes of the ground are made of the same noise, and each of them
+    // is a different answer to the same question.
+    const float hills = fbm(1.0f, 2.0f, 11u, 5);
+    const float sharp = ridgedFbm(1.0f, 2.0f, 11u, 5);
+    check(hills >= 0.0f && hills <= 1.0f && sharp >= 0.0f && sharp <= 1.0f,
+          "the ridges stay between 0 and 1 too");
+    check(hills != sharp, "and the ridges are not the hills");
+}
+
+// THE GROUND IS MADE OF NOISE AND STANDS WHERE IT SAYS
+
+void testLandform() {
+    heading("the ground is made and it is where it says it is");
+    LandformSettings settings;
+    settings.cells = 32;
+    settings.width = 40.0f;
+    settings.depth = 30.0f;
+    settings.minHeight = 2.0f;
+    settings.maxHeight = 10.0f;
+    settings.seed = 5;
+
+    Landform landform;
+    landform.build(settings);
+    check(landform.ready(), "the ground is made");
+
+    const MeshAsset mesh = landform.toMesh();
+    check(mesh.parts.size() == 1, "the ground is one part");
+    const MeshPart& part = mesh.parts[0];
+    const int side = settings.cells + 1;
+    check(part.vertices.size() == (size_t)side * (size_t)side * kMeshVertexFloats,
+          "the ground has a vertex for every square");
+    check(part.indices.size() == (size_t)settings.cells * (size_t)settings.cells * 6,
+          "and two triangles for every square");
+    check(part.colors.size() == (size_t)side * (size_t)side * 3,
+          "and a colour for every vertex");
+
+    float lowest = 1e9f, highest = -1e9f;
+    for (size_t i = 0; i < part.vertices.size(); i += kMeshVertexFloats) {
+        const float y = part.vertices[i + kMeshPositionOffset + 1];
+        lowest = std::fmin(lowest, y);
+        highest = std::fmax(highest, y);
+    }
+    check(lowest >= settings.minHeight - 0.01f && highest <= settings.maxHeight + 0.01f,
+          "the ground stays between the heights that were asked for");
+    check(highest - lowest > (settings.maxHeight - settings.minHeight) * 0.9f,
+          "and it uses the whole of that range");
+
+    // The ground the editor asks about is the ground that was drawn. A body
+    // put on the new piece of ground has to stand on it and not near it.
+    const float halfWidth = settings.width * 0.5f;
+    const float halfDepth = settings.depth * 0.5f;
+    const float stepX = settings.width / (float)settings.cells;
+    const float stepZ = settings.depth / (float)settings.cells;
+    bool matches = true;
+    for (int row = 0; row < side; row += 7) {
+        for (int col = 0; col < side; col += 5) {
+            const size_t at = ((size_t)row * (size_t)side + (size_t)col) * kMeshVertexFloats;
+            const float x = -halfWidth + (float)col * stepX;
+            const float z = -halfDepth + (float)row * stepZ;
+            const float drawn = part.vertices[at + kMeshPositionOffset + 1];
+            if (std::fabs(drawn - landform.heightAt(x, z)) > 0.01f) matches = false;
+        }
+    }
+    check(matches, "the height the editor asks about is the height that was drawn");
+
+    // The same seed is the same ground, and another seed is another ground.
+    Landform again;
+    again.build(settings);
+    Landform other;
+    LandformSettings otherSettings = settings;
+    otherSettings.seed = 6;
+    other.build(otherSettings);
+    float difference = 0.0f;
+    for (int row = 0; row < side; row += 5) {
+        for (int col = 0; col < side; col += 5) {
+            difference += std::fabs(landform.heightAt((float)col, (float)row) -
+                                    other.heightAt((float)col, (float)row));
+        }
+    }
+    check(difference > 0.0f, "another seed is another ground");
+
+    // The shapes are different shapes.
+    float shapeDifference = 0.0f;
+    for (int shape = 0; shape < kLandformShapeCount; ++shape) {
+        LandformSettings shaped = settings;
+        shaped.shape = (LandformShape)shape;
+        Landform piece;
+        piece.build(shaped);
+        shapeDifference += std::fabs(piece.heightAt(3.0f, 4.0f) - landform.heightAt(3.0f, 4.0f));
+    }
+    check(shapeDifference > 0.0f, "the shapes are not the same ground");
+}
+
+// THE CHARACTERS A FIELD CAN HOLD ARE THE CHARACTERS THE ENGINE CAN DRAW
+
+void testTextCodepoints() {
+    heading("a field can hold what the engine can draw");
+    // Every character the window lets into a field must have a glyph: a
+    // character that is put in a field and cannot be drawn is an invisible
+    // mark in the middle of a name.
+    int missing = 0;
+    int firstMissing = 0;
+    for (unsigned cp = 32; cp < 0x300; ++cp) {
+        if (!Window::textCodepointSupported(cp)) continue;
+        if (TextAtlas::glyphIndex(cp) >= 0) continue;
+        if (!missing) firstMissing = (int)cp;
+        ++missing;
+    }
+    if (missing) {
+        char what[96];
+        std::snprintf(what, sizeof(what), "every accepted character has a glyph (U+%04X is missing)",
+                      firstMissing);
+        check(false, what);
+    } else {
+        check(true, "every accepted character has a glyph");
+    }
+
+    // And the other way round: a character the engine can draw but the window
+    // will not accept is a letter that cannot be typed - which is what a
+    // Ukrainian name in a text field is.
+    int refused = 0;
+    for (unsigned cp = 32; cp < 0x300; ++cp) {
+        if (TextAtlas::glyphIndex(cp) < 0) continue;
+        if (Window::textCodepointSupported(cp)) continue;
+        ++refused;
+    }
+    check(refused == 0, "every character the engine can draw can be typed");
+
+    // The Cyrillic, which is the whole point: the interface is written in it.
+    check(Window::textCodepointSupported(0x410) && Window::textCodepointSupported(0x44F),
+          "the Cyrillic block can be typed");
+    check(Window::textCodepointSupported(0x401) && Window::textCodepointSupported(0x451),
+          "and the letters outside it");
+
+    // A letter is two bytes, and a backspace takes off the letter and not one
+    // of its bytes.
+    char utf8[4];
+    const int bytes = str::utf8Encode(0x410, utf8);
+    check(bytes == 2, "a Cyrillic letter is two bytes");
+    const char text[3] = {'a', utf8[0], utf8[1]};
+    check(str::utf8WithoutLast(text, 3) == 1, "and the backspace takes off the whole letter");
+}
+
+// NO TWO WIDGETS SHARE AN ID
+
+void testWidgetIds() {
+    heading("no two widgets share an id");
+    // Every stretch of ids the editor hands out. A shared id is a widget that
+    // takes the press away from another one - and the two are in different
+    // corners of the window, so the press lands in the wrong place.
+    struct Range {
+        int first;
+        int last;
+        const char* what;
+    };
+    const Range ranges[] = {
+        {Editor::kTopBar, Editor::kTransportStop, "the top bar"},
+        {Editor::kTopBarTool, Editor::kTopBarTool + 4, "the tools in the bar"},
+        {Editor::kMenuRow, Editor::kMenuRow + 71, "the menus"},
+        {Editor::kToolbarHelp, Editor::kToolbarCounter, "the toolbar"},
+        {Editor::kLayerRow, Editor::kLayerRow + 11, "the layers"},
+        {Editor::kLayerToggle, Editor::kLayerToggle, "the layer toggle"},
+        {Editor::kHelpClose, Editor::kHelpClose, "the help"},
+        {Editor::kPanelGrip, Editor::kPanelGrip, "the panel grip"},
+        {Editor::kHierarchyRow, Editor::kHierarchyRow + 499, "the hierarchy's rows"},
+        {Editor::kHierarchyStar, Editor::kHierarchySearch, "the hierarchy's header"},
+        {Editor::kFavoriteRow, Editor::kFavoriteRow + 99, "the favorites"},
+        {Editor::kSoundRow, Editor::kSoundRow + 99, "the sounds"},
+        {Editor::kLandformMinHeight, Editor::kLandformCells, "the landform's numbers"},
+        {Editor::kLandformGenerate, Editor::kLandformGenerate, "the landform's button"},
+        {Editor::kLandformColor, Editor::kLandformColor + 5, "the landform's colours"},
+        {Editor::kLandformShape, Editor::kLandformShape + 5, "the landform's shapes"},
+        {Editor::kLandformSeed, Editor::kLandformRandom, "the landform's fields"},
+        {Editor::kInspectorDock, Editor::kInspectorDock, "the inspector"},
+        {Editor::kInspectorProperty, Editor::kInspectorProperty + 39,
+         "the inspector's numbers"},
+        {Editor::kFilterField, Editor::kConsoleFilter, "the filters"},
+        {Editor::kSceneHeader, Editor::kSceneHeader, "the scene header"},
+    };
+    const int count = (int)(sizeof(ranges) / sizeof(ranges[0]));
+
+    int clashes = 0;
+    char firstClash[128] = "";
+    for (int i = 0; i < count; ++i) {
+        for (int j = i + 1; j < count; ++j) {
+            if (ranges[i].first > ranges[j].last || ranges[j].first > ranges[i].last) continue;
+            if (!clashes)
+                std::snprintf(firstClash, sizeof(firstClash), "%s and %s share an id",
+                              ranges[i].what, ranges[j].what);
+            ++clashes;
+        }
+    }
+    if (clashes) {
+        char what[160];
+        std::snprintf(what, sizeof(what), "no two stretches of ids meet (%s)", firstClash);
+        check(false, what);
+    } else {
+        check(true, "no two stretches of ids meet");
+    }
+}
+
 void testFont() {
     heading("the shipped font has the letters");
     const std::string& assets = fs::assetRoot();
@@ -329,7 +608,12 @@ int main() {
     testClosedPanel();
     testResize();
     testGrips();
+    testFloatingPanels();
     testPictureAndPointer();
+    testNoise();
+    testLandform();
+    testTextCodepoints();
+    testWidgetIds();
     testFont();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);

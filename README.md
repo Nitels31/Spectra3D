@@ -581,7 +581,7 @@ cmake --build build --config Release
 build\scripttest.exe
 ```
 
-120 checks: the entry-point rule and its interaction with hooks, a `dt` hook that is
+123 checks: the entry-point rule and its interaction with hooks, a `dt` hook that is
 not an entry point, `onUpdate` / `onFixedUpdate` / `onStop` each called only on their
 own turn, a duplicate hook declaration reported as a warning, a hook that raises an
 exception mid-flight followed by a hook that still runs, the function cache dropping
@@ -591,11 +591,37 @@ diagnostic.
 
 ### Making a landform
 
-**Create > Landform** opens the Landform panel. It says how low and how high the
-ground goes, how big it is and how finely it is cut into squares, and **Generate**
-makes it: the height of every square comes from a value noise, so the same seed
-is the same ground on every machine. The ground lands in the scene at the origin
-as an ordinary body.
+> ### ⚠ This is a test, and it may cause errors
+>
+> The landform generation is **an experiment**, not a finished feature. It is
+> here because the ground it makes is the only way to see the new noise, the
+> new shapes and the new colouring at work - and because a thing that is only
+> half finished is easier to fix while it is still small.
+>
+> **Expect it to misbehave.** A shape that is not the shape you expected. A
+> ground that is too spiky, too flat, or has a seam along its edge. A panel
+> whose button is hard to reach. A scene that costs more than it should. A
+> ground that is not saved with the scene yet, and that is not the ground you
+> made the last time.
+>
+> Nothing is lost by trying it - **Ctrl+Z** takes the ground away again - but
+> do not build a project on top of it yet, and do not be surprised when the
+> shape of the ground changes without being asked.
+
+**Create > Landform** opens the Landform panel. It says what shape the ground takes
+(hills, mountains, an island, a plateau, a canyon, dunes), how low and how high it
+goes, how big it is, how finely it is cut into squares, and how the noise under it
+is made - how large the features are, how much detail, how much the shapes are
+bent, how sharp the ridges are, how much the ground is let slide downhill and how
+much it is smoothed afterwards. **Generate** makes it and puts it in the scene at
+the origin as an ordinary body.
+
+The height of every square comes from real noise - Perlin's gradient noise, in
+octaves, with the shapes bent by another noise and the ground let slide downhill
+afterwards - so the same seed is the same ground on every machine. The ground is
+coloured by its height and its steepness: sand at the bottom, grass on the
+slopes, stone on what is too steep to hold anything, snow at the top. The seed
+moves on after every ground, so the next **Generate** gives a different one.
 
 The making is spread over as many threads as **Settings > Loader threads** says
 (one to six), and the models a scene names are read the same way - the parse
@@ -612,16 +638,20 @@ cmake --build build --config Release
 build\editortest.exe
 ```
 
-45 checks: that the window is tiled (each column ends where the panel in its own
+73 checks: that the window is tiled (each column ends where the panel in its own
 corner begins, the console is the middle column's rectangle and sits directly
 under the view), that a closed panel reserves nothing, that a grip moves the
 thing it is on and nothing else (the top edge of the favourites panel changes
 its height and the console's height is not touched; its right edge changes the
 column and not the height), that a grip is on the edge of its own panel and not
-on a whole line of the screen, that the picture and the pointer agree about
+on a whole line of the screen, that a floating window is put where it covers no
+other window, that the picture and the pointer agree about
 where a thing is (the ray in the middle of the viewport is the camera's
 forward, and the frustum the renderer builds is the camera's field of view over
-the same rectangle), and that the font the engine ships has every letter the
+the same rectangle), that the noise is a noise (two points that are close
+together have nearly the same value), that the ground is made of it and stands
+where it says it does, that a text field can hold every character the engine can
+draw, that no two stretches of widget ids meet, and that the font the engine ships has every letter the
 atlas draws.
 
 The geometry itself is in `editor/PanelLayout.hpp` rather than inside the
@@ -965,25 +995,35 @@ during that same tick.
 
 ## Controls
 
-**There are no hotkeys in the editor that change the scene.** Play / Pause / Stop,
-saving, loading and deleting are buttons in the interface only; this is a deliberate
-choice and the keys should not come back. The reason is practical: STOP restores
-the snapshot taken when Play began, so everything built during the run disappears;
-DEL and scene loading destroyed work immediately. The keys that remain destroy
-nothing:
+**The keys that change the scene are few, and they are the ones everybody
+reaches for.** Play / Pause / Stop, saving and loading are buttons in the
+interface only; that part is a deliberate choice and those keys should not come
+back. The reason is practical: STOP restores the snapshot taken when Play began,
+so everything built during the run disappears. The keys that remain destroy
+nothing, or can be taken back:
 
 | Key / mouse | Action |
 |---|---|
 | LMB | select an object / drag the gizmo / drag and resize panels / UI |
 | RMB (hold) | look around with the camera |
 | `W A S D`, `SPACE`/`C` | camera flight (+`SHIFT` to boost) |
+| Arrows | move the camera in the plane of the screen (+`SHIFT` to move faster) |
+| `Delete` | delete the selected objects |
+| `Ctrl+Z` | take the last change back |
 | `1..6` | gravity direction `-Y +Y -X +X -Z +Z` |
 | `Esc` | close a panel hanging from the top bar and clear the search |
 | `Enter` | run the first command search match |
 
-The camera and gravity only have power in the editor - in the launcher these keys
-do nothing. `Editor::handleHotkeys()` (`src/editor/Editor.cpp`) is deliberately
-empty: Play mode, saving, loading and deleting live on buttons and menu items only.
+A key does nothing while a text field has the keyboard: the characters go into
+the field, and the field is the only thing that hears the key. The camera and
+gravity only have power in the editor - in the launcher these keys do nothing.
+`Editor::handleHotkeys()` (`src/editor/Editor.cpp`) holds the four keys above;
+Play mode, saving and loading live on buttons and menu items only.
+
+**Ctrl+Z** undoes the changes the editor made: a deletion, a creation, a body
+that was dragged or moved, a number that was typed into the inspector. The undo
+stack holds a hundred changes, and the redo stack is emptied by a new change -
+the way it is everywhere else.
 
 In the launcher (`Launcher::handleKeys`):
 
