@@ -104,11 +104,23 @@ Vec3 rayFromViewport(float pixelX, float pixelY, const Rect& viewport, const Vec
     const float localY = pixelY - viewport.y;
     // The viewport's own space: the middle of it is the camera's forward, and
     // the edges are the camera's field of view. The same two numbers the
-    // projection matrix is built from, so the pointer and the picture agree
-    // about where a thing is.
+    // projection is built from, so the pointer and the picture agree about
+    // where a thing is.
     const float ndcX = 2.0f * localX / viewport.width - 1.0f;
     const float ndcY = 1.0f - 2.0f * localY / viewport.height;
     return (forward + right * (ndcX * tanX) + up * (ndcY * tanY)).normalized();
+}
+
+void viewRayTangents(const Camera& camera, float width, float height, float& tanX, float& tanY) {
+    // The camera's field of view is over the viewport's height, and the
+    // horizontal one follows from the aspect. The renderer projects with the
+    // same two numbers, and they are here rather than in the editor so a test
+    // can compare the two.
+    const float tanHalf = std::tan(camera.fovDeg * kPi / 360.0f);
+    const float h = height > 1.0f ? height : 1.0f;
+    const float w = width > 1.0f ? width : 1.0f;
+    tanY = tanHalf;
+    tanX = tanHalf * (w / h);
 }
 
 } // namespace picking

@@ -7,8 +7,6 @@
 namespace s3d {
 namespace {
 
-constexpr double kNearPlane = 0.1;
-constexpr double kFarPlane = 900.0;
 
 // The two halves of the grid. The minor lines are one unit apart and are the
 // ones the eye reads as a floor; the major lines are ten units apart and they
@@ -125,18 +123,26 @@ void SceneRenderer::initialize(const Vec3& arenaMin, const Vec3& arenaMax) {
     buildArenaGrid();
 }
 
-void SceneRenderer::setProjection(const Camera& camera, const Viewport& viewport) {
-    // The frustum is the camera's field of view, and it is the same frustum the
-    // editor picks with: the vertical one over the viewport's height, and the
-    // horizontal one following from its aspect. A frustum that is wider than
-    // the camera's own would make the pointer and the picture disagree about
-    // where a thing is, and the horizon would sit at the wrong height.
+void cameraFrustum(const Camera& camera, int width, int height, double& halfWidth,
+                    double& halfHeight) {
+    // The frustum is the camera's field of view: the vertical one over the
+    // height, and the horizontal one following from the aspect.
+    //
+    // It is a free function and not a line inside the renderer because the
+    // editor picks with the same numbers, and the two have to be the same
+    // numbers: a frustum that is wider than the camera's own would make the
+    // pointer and the picture disagree about where a thing is, and the horizon
+    // would sit at the wrong height.
     const double tanHalf = std::tan(camera.fovDeg * kPi / 360.0);
-    const double height = (double)std::max(1, viewport.height);
-    const double width = (double)std::max(1, viewport.width);
+    const double h = (double)std::max(1, height);
+    const double w = (double)std::max(1, width);
+    halfHeight = tanHalf * kNearPlane;
+    halfWidth = tanHalf * kNearPlane * (w / h);
+}
 
-    const double halfHeight = tanHalf * kNearPlane;
-    const double halfWidth = tanHalf * kNearPlane * (width / height);
+void SceneRenderer::setProjection(const Camera& camera, const Viewport& viewport) {
+    double halfWidth = 0.0, halfHeight = 0.0;
+    cameraFrustum(camera, viewport.width, viewport.height, halfWidth, halfHeight);
 
     projection_[0] = (float)(2.0 * kNearPlane / (2.0 * halfWidth));
     projection_[5] = (float)(2.0 * kNearPlane / (2.0 * halfHeight));

@@ -531,6 +531,15 @@ corners, and free float over the scene. The model is
 rectangle, and `recomputeLayout()` derives the scene rectangle from **which
 columns and rows are occupied** — a floating panel gives its space back.
 
+**The geometry is in `editor/PanelLayout.hpp`, not in the editor.** The zones,
+the workspace as numbers (`Workspace`: the sizes the user chose, where every
+panel is, whether it is open) and the rectangles they make up are plain data
+and plain functions there, and the editor fills a workspace in every frame and
+asks them. The reason is `tools/editortest.cpp`: a layout that can only be
+checked by opening the editor and looking at it is a layout that is checked by
+nobody, and every geometry bug of this editor was found by taking a screenshot
+and squinting at it. The numbers can be checked instead.
+
 **Every panel has a place of its own.** The hierarchy has the left column, the
 inspector the right one, the console the bottom strip, the favorites the
 bottom-left corner and the sounds the bottom-right one. That is Unity's
@@ -980,6 +989,18 @@ The scripting layer is checked headlessly by `scripttest` (46 checks,
 hook returns `false` **silently**, a present one runs, a compile error produces an
 ERROR diagnostic, and a `shared`-only script compiles without complaint. `ctest` runs
 it when the tools are built.
+
+The editor's panel geometry is checked headlessly by `editortest` (45 checks,
+`tools/editortest.cpp`): the window is tiled, a closed panel reserves nothing, a
+grip moves the thing it is on and nothing else, a grip is on the edge of its own
+panel and not on a whole line of the screen, the picture and the pointer agree
+about where a thing is, and the font the engine ships has every letter the atlas
+draws. It needs no window and no editor - the geometry is plain functions over
+plain data, which is why it can be asked about here.
+
+It has already paid for itself: the first run of it found that the atlas's slot
+table counted 96 ASCII characters where there are 95, and spent the last slot
+on U+007F, which no font draws and nothing ever asked for.
 
 `tools/ui_language_test.ps1` drives the real `spectra3d.exe` with injected Windows
 input and checks, in order: opening the language dropdown does **not** change the

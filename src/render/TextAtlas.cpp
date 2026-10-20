@@ -61,23 +61,29 @@ const char* const kSystemFontPaths[] = {
     "/System/Library/Fonts/Supplemental/Courier New.ttf",
 };
 
+// The printable ASCII is 95 characters, U+0020..U+007E, and the slot table
+// counted 96 of them: the last slot was U+007F, which no font draws and
+// nothing ever asked for, and the table was one longer than the letters in it.
+// The number of slots is the number of letters now.
+constexpr int kAsciiSlots = 95;
+
 // Cyrillic extras beyond the contiguous U+0410..U+044F block.
 const unsigned kExtraCodePoints[8] = {0x404, 0x454, 0x406, 0x456,
                                       0x407, 0x457, 0x490, 0x491};
-constexpr int kFirstExtraSlot = 162;
+constexpr int kFirstExtraSlot = 161;
 
 // Latin-1, appended after the Cyrillic blocks: German umlauts and the sharp s,
 // every French vowel and the cedilla. U+00C0..U+00FF is one contiguous run, so
 // it costs a pair of lines instead of another hand-written list.
 constexpr unsigned kLatin1FirstCp = 0xC0;
 constexpr unsigned kLatin1LastCp = 0xFF;
-constexpr int kLatin1FirstSlot = 170;
+constexpr int kLatin1FirstSlot = 169;
 
 // Outside Latin-1 and still inside what a UI sets in those languages: the French
 // guillemets, the oe ligature (both cases), and the Spanish opening marks - all
 // of which live below U+00C0 and would otherwise be one more range each.
 const unsigned kExtraLatin[6] = {0xAB, 0xBB, 0x152, 0x153, 0xA1, 0xBF};
-constexpr int kExtraLatinSlot = 234;
+constexpr int kExtraLatinSlot = 233;
 
 } // namespace
 
@@ -95,15 +101,23 @@ int TextAtlas::glyphIndex(unsigned cp) {
     return -1;
 }
 
-unsigned TextAtlas::codepointAt(int index) const {
-    if (index < 96) return (unsigned)(32 + index);
-    if (index == 160) return 0x401;
-    if (index == 161) return 0x451;
+unsigned TextAtlas::codepointAt(int index) {
+    if (index < kAsciiSlots) return (unsigned)(32 + index);
+    if (index == 159) return 0x401;
+    if (index == 160) return 0x451;
     if (index >= kFirstExtraSlot && index < kLatin1FirstSlot)
         return kExtraCodePoints[index - kFirstExtraSlot];
     if (index >= kExtraLatinSlot) return kExtraLatin[index - kExtraLatinSlot];
     if (index >= kLatin1FirstSlot) return kLatin1FirstCp + (unsigned)(index - kLatin1FirstSlot);
-    return 0x410u + (unsigned)(index - 96);
+    return 0x410u + (unsigned)(index - 95);
+}
+
+float TextAtlas::baselineFor(float lineHeight, float capHeight, float descender) {
+    // The middle of the line, with the cap height above the baseline and the
+    // descender below it. A font whose letters are taller than the line sticks
+    // out of it a little at the top and the same little at the bottom, which is
+    // what a line that is too tight for its font looks like.
+    return (lineHeight - (capHeight + descender)) * 0.5f + capHeight;
 }
 
 TextAtlas::~TextAtlas() { release(); }
@@ -215,7 +229,7 @@ bool TextAtlas::build() {
         const float below = glyphs_[i].height - glyphs_[i].offsetY;
         if (below > descender) descender = below;
     }
-    baseline_ = ((float)kLineHeight - (capHeight + descender)) * 0.5f + capHeight;
+    baseline_ = baselineFor((float)kLineHeight, capHeight, descender);
 
     Log::info("Text: atlas %d/%d glyphs from '%s' (%s)", fitted, kGlyphCount, face->family_name,
               used.c_str());

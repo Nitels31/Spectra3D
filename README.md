@@ -29,7 +29,7 @@ src/                 implementation (.cpp), split by layer
   ui/                Theme (palettes), UiContext
   scene/             BodyFactory, SceneSerializer
   i18n/              Localizer
-  editor/            Editor, panels/, Picking, Gizmo, AssetBrowser
+  editor/            Editor, panels/, PanelLayout, Picking, Gizmo, AssetBrowser
   script/            ScriptHost, Bindings, BindEngine, BindScene, BindCamera,
                    BindInput, BindString
   app/               Application, Launcher, FixedClock, main
@@ -44,7 +44,7 @@ third_party/         glfw, freetype, angelscript, miniaudio,
                     stb/ (stb_image, stb_vorbis), json/
 assets/              lang/*.lang, image/{icons,textures}/*, models/*.{glb,obj,ply,fbx},
                      sky.jpg, sounds/*.wav, fonts/JetBrainsMono-Regular.ttf
-tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp, skygen.cpp,
+tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp, editortest.cpp, skygen.cpp,
                      soundgen.cpp - standalone
                      utilities for reading assets, checking the scripting
                      layer (46 checks), making the sky and making the test
@@ -110,7 +110,7 @@ CMake options:
 | Option | Default | Effect |
 |---|---|---|
 | `SPECTRA_SCRIPTING` | `ON` | builds `third_party/angelscript` and defines `SPECTRA_SCRIPTING=1`; `OFF` removes the scripting layer (the log then says `built without scripting`) |
-| `SPECTRA_BUILD_TOOLS` | `OFF` | builds `glbinfo` / `fbxtest` / `scripttest` / `skygen` / `soundgen`; off by default so a normal build produces exactly one `.exe`. Turn on with `-DSPECTRA_BUILD_TOOLS=ON` |
+| `SPECTRA_BUILD_TOOLS` | `OFF` | builds `glbinfo` / `fbxtest` / `scripttest` / `editortest` / `skygen` / `soundgen`; off by default so a normal build produces exactly one `.exe`. Turn on with `-DSPECTRA_BUILD_TOOLS=ON` |
 
 **The first build is slow**: `third_party/angelscript/source/*.cpp` compiles into a
 static library called `spectra_angelscript`. That is expected;
@@ -588,6 +588,32 @@ exception mid-flight followed by a hook that still runs, the function cache drop
 both its hits and its misses when a module is replaced, the input bindings with no
 window, the event queue's ordering and cap, and a compile error as an ERROR
 diagnostic.
+
+### Checking the editor
+
+The panel geometry is checked the same way - with no window and no editor:
+
+```bat
+cmake -S . -B build -DSPECTRA_BUILD_TOOLS=ON
+cmake --build build --config Release
+build\editortest.exe
+```
+
+45 checks: that the window is tiled (each column ends where the panel in its own
+corner begins, the console is the middle column's rectangle and sits directly
+under the view), that a closed panel reserves nothing, that a grip moves the
+thing it is on and nothing else (the top edge of the favourites panel changes
+its height and the console's height is not touched; its right edge changes the
+column and not the height), that a grip is on the edge of its own panel and not
+on a whole line of the screen, that the picture and the pointer agree about
+where a thing is (the ray in the middle of the viewport is the camera's
+forward, and the frustum the renderer builds is the camera's field of view over
+the same rectangle), and that the font the engine ships has every letter the
+atlas draws.
+
+The geometry itself is in `editor/PanelLayout.hpp` rather than inside the
+editor, and that is the whole point of it: a number that decides where a panel
+sits can be checked, and a screenshot has to be looked at.
 
 ## Features
 

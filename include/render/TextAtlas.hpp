@@ -12,7 +12,7 @@ namespace s3d {
 // marks - which keeps the atlas at a fixed 1024x1024 single page.
 class TextAtlas {
 public:
-    static constexpr int kGlyphCount = 240;
+    static constexpr int kGlyphCount = 239;
     static constexpr int kPixelSize = 18;
     // The height of one line of text, in pixels. The interface lays its text out
     // in lines of this height, and the font is baked bigger than that - the
@@ -53,6 +53,17 @@ public:
 
     // Maps a code point to a slot in the atlas, or -1 when unsupported.
     static int glyphIndex(unsigned codePoint);
+    // The code point in a slot: the other direction of the same table.
+    static unsigned codepointAt(int index);
+
+    // The baseline in a line of `lineHeight` pixels, from the font's own
+    // metrics: the cap height above it and the descender below it.
+    //
+    // The ascent is not the answer - a font whose ascent is taller than its
+    // own em (JetBrains Mono's is) would push the whole line down and out of
+    // the box it is drawn in. The visible box of the text is what has to sit in
+    // the middle of the line, and that is the cap height and the descender.
+    static float baselineFor(float lineHeight, float capHeight, float descender);
 
     float textWidth(const char* utf8) const;
     // Appends the textured quads for `utf8` into `batch` (x, y, u, v, r, g, b).
@@ -63,8 +74,6 @@ public:
                      const char* utf8, float r, float g, float b, float scale = 1.0f) const;
 
 private:
-    unsigned codepointAt(int index) const;
-
     std::array<Glyph, kGlyphCount> glyphs_{};
     unsigned texture_ = 0;
     bool ready_ = false;

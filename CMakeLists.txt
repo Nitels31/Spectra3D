@@ -243,6 +243,7 @@ set(SPECTRA_SRC_APP
 set(SPECTRA_SRC_EDITOR
     src/editor/Editor.cpp
     src/editor/EditorLayout.cpp
+    src/editor/PanelLayout.cpp
     src/editor/Picking.cpp
     src/editor/Gizmo.cpp
     src/editor/AssetBrowser.cpp
@@ -519,8 +520,18 @@ if(SPECTRA_BUILD_TOOLS)
         target_link_libraries(scripttest PRIVATE spectra_runtime)
         spectra_warnings(scripttest)
 
+        # Headless check of the editor's panel geometry, of the picture and the
+        # pointer agreeing about where a thing is, and of the font the engine
+        # ships. The editor's own sources are compiled in, because the geometry
+        # is theirs: a layout that can only be checked by opening the editor and
+        # looking at it is a layout that is checked by nobody.
+        add_executable(editortest tools/editortest.cpp ${SPECTRA_SRC_EDITOR})
+        target_link_libraries(editortest PRIVATE spectra_runtime)
+        spectra_warnings(editortest)
+
         enable_testing()
         add_test(NAME scripttest COMMAND scripttest)
+        add_test(NAME editortest COMMAND editortest)
     endif()
 endif()
 
@@ -532,7 +543,7 @@ install(TARGETS spectra3d RUNTIME DESTINATION bin)
 if(SPECTRA_BUILD_TOOLS)
     install(TARGETS glbinfo fbxtest skygen soundgen RUNTIME DESTINATION bin)
     if(SPECTRA_SCRIPTING)
-        install(TARGETS scripttest RUNTIME DESTINATION bin)
+        install(TARGETS scripttest editortest RUNTIME DESTINATION bin)
     endif()
 endif()
 # The engine looks for assets relative to the binary first and share/spectra3d

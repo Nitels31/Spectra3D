@@ -14,23 +14,11 @@
 #include "ui/UiContext.hpp"
 #include "editor/AssetBrowser.hpp"
 #include "editor/Gizmo.hpp"
+#include "editor/Gizmo.hpp"
+#include "editor/PanelLayout.hpp"
 
 namespace s3d {
 
-// Panel geometry, recomputed once per frame from the framebuffer size. Panels
-// read these instead of recomputing offsets.
-//
-// The shape follows the editor sketch: a top bar with the menus, the transport in
-// its middle and the search/layers/help cluster on the right, the hierarchy down
-// the left, the viewport in the middle with its own header strip and a tool
-// column down its left edge, the inspector on the right, and a console across the
-// bottom under the viewport and the inspector.
-struct EditorLayout {
-    Rect menuBar;
-    Rect viewport;
-    Rect sceneHeader;    // "Scene" strip across the top of the viewport
-    Rect viewportTools;  // vertical tool column inside the viewport, on the left
-};
 
 // Panels that can be dragged between the edges and the middle of the window, the
 // way Unity's are. Four of them, and five places to be: the two vertical edges, the
@@ -52,23 +40,11 @@ enum class PanelId {
     Sounds,
     PanelCount
 };
-enum class PanelZone { Left, Right, Bottom, BottomLeft, BottomRight, Float };
+// Where a panel can be, and the geometry that follows from it, live in
+// PanelLayout.hpp: the zones, the workspace as numbers, and the rectangles they
+// make up. They are there and not here because a test has to be able to ask the
+// same questions the editor asks - with no window and no editor.
 
-// Which side of the window a zone sits on. The grip, the resize and the layout file
-// all have to ask the same question, and three comparisons per site is three places
-// to forget the third one.
-constexpr bool zoneIsBottom(PanelZone zone) {
-    return zone == PanelZone::Bottom || zone == PanelZone::BottomLeft ||
-           zone == PanelZone::BottomRight;
-}
-constexpr bool zoneIsLeft(PanelZone zone) {
-    return zone == PanelZone::Left || zone == PanelZone::BottomLeft;
-}
-constexpr bool zoneIsRight(PanelZone zone) {
-    return zone == PanelZone::Right || zone == PanelZone::BottomRight;
-}
-
-inline constexpr int kPanelCount = (int)PanelId::PanelCount;
 
 // Godot-style editor shell. Owns selection, play mode and the UI context, and
 // delegates drawing to the panels in `panels/`.
@@ -163,7 +139,7 @@ kHelpClose = 1400,
 
     bool showVectors() const { return showVectors_; }
     bool showGrid() const { return showGrid_; }
-    const EditorLayout& layout() const { return layout_; }
+    const LayoutRects& layout() const { return layout_; }
 
     void saveScene(const PhysicsWorld& world);
     void loadScene(PhysicsWorld& world);
@@ -175,14 +151,7 @@ kHelpClose = 1400,
                          std::vector<std::string>& out);
 
 private:
-    // Bounds for every panel size, wherever the size came from: a drag, a layout
-    // file, a hand-edited one. Shared rather than repeated, because "too small to
-    // be a panel" has to mean the same number in all three places.
-    static constexpr float kPanelMinWidth = 160.0f;
-    static constexpr float kPanelMinHeight = 88.0f;
-    static constexpr float kDockMinWidth = 180.0f;
-    static constexpr float kDockMaxWidth = 520.0f;
-    static constexpr float kConsoleMinHeight = 80.0f;
+
 
     // --- input phases -------------------------------------------------------
     void handleHotkeys(PhysicsWorld& world, Window& window);
@@ -509,6 +478,9 @@ private:
     // hit tests have already run by the time anyone can see that they are covered.
     bool popupOpen() const;
     PanelZone zoneAt(float x, float y) const;
+    // The window as numbers: the sizes the user chose, where every panel is and
+    // whether it is open. The geometry is computed from this and nothing else.
+    Workspace workspace() const;
     Rect zoneRect(PanelZone zone) const;
     void commitPanelDrop();
     // Resizing. `panelGripsAt` is the hit test both the drag and the highlight
@@ -599,7 +571,7 @@ private:
     TextField toolbarSearch_;
     std::string projectName_;
     Camera homeCamera_;
-    EditorLayout layout_;
+    LayoutRects layout_;
 
     // --- gizmo drag ---------------------------------------------------------
     int dragAxis_ = -1;

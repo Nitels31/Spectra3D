@@ -13,6 +13,20 @@
 
 namespace s3d {
 
+// The planes the camera's frustum is cut at. Public because the frustum is
+// checkable: a test has to be able to ask what the renderer projects with.
+inline constexpr double kNearPlane = 0.1;
+inline constexpr double kFarPlane = 900.0;
+
+// The frustum the camera's field of view makes at the near plane, over a
+// viewport of this size. The renderer projects with it and the editor picks
+// with the same numbers, and the two have to be the same numbers: a frustum
+// that is wider than the camera's own would make the pointer and the picture
+// disagree about where a thing is, and the horizon would sit at the wrong
+// height.
+void cameraFrustum(const Camera& camera, int width, int height, double& halfWidth,
+                    double& halfHeight);
+
 // Viewport rect handed down from the editor layout. `glY` is the GL-convention
 // bottom edge, which is what glViewport expects.
 struct Viewport {

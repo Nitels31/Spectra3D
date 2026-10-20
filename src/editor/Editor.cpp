@@ -14,23 +14,12 @@
 namespace s3d {
 namespace {
 
-constexpr float kMinViewportSize = 120.0f;
-// "Scene" strip above the viewport, and the vertical tool column inside it.
-constexpr float kSceneHeaderHeight = 26.0f;
-constexpr float kToolStripWidth = 34.0f;
 // Console height under the viewport and the inspector when it is docked there.
 constexpr float kConsoleHeight = 156.0f;
 // Height of a panel's title bar: the handle it is dragged by. Every panel uses the
 // same one, so a grip always sits in the same place on all of them.
 constexpr float kPanelHeaderHeight = 24.0f;
-// How close the pointer has to be to an edge to grab it. A docked panel has one
-// edge, the divider against the scene; a floating one has four, plus the corners.
-// The corner box is the larger of the two on purpose: inside it the pointer is
-// taking two edges at once, and taking only one of them is what makes a window
-// feel as if it slipped.
-constexpr float kDockGrip = 6.0f;
-constexpr float kFloatGrip = 5.0f;
-constexpr float kFloatCorner = 14.0f;
+
 // Fallback when no project is open: next to the binary.
 const char* const kDefaultSceneFile = "scene.json";
 
@@ -95,77 +84,32 @@ bool Editor::consumeSingleStep() {
     return requested;
 }
 
-// Where a panel in `zone` sits this frame. A zone nobody occupies is an empty
-// rect at the origin, so a panel that is floating does not keep an invisible claim
-// on the edge it came from.
-Rect Editor::zoneRect(PanelZone zone) const {
-    if (zone == PanelZone::Float) return Rect{};
-
-    const float width = (float)fbWidth_;
-    const float height = (float)fbHeight_;
-    const float top = theme::menuBarHeight;
-
-    // Occupancy, not identity: a column or the bottom row is only as wide as it is
-    // because of what else is docked in it, so a floating panel must not keep an
-    // invisible claim on the space it used to have. Closed panels are not there
-    // either - "where is anything docked?" is a question about what is on screen.
-    //
-    // The zone a panel is being dragged towards counts as occupied too, or the drop
-    // preview would be measured against a layout that does not exist yet: the panel
-    // arriving in the bottom-left corner has not landed, and without this it would
-    // be previewed as a rectangle of zero width. The dragged panel is left in the
-    // loop as well - a drag that leaves a column has not vacated it yet, which is
-    // exactly what the frame it is previewed in shows.
-    bool leftTaken = dragPanel_ >= 0 && zoneIsLeft(dropZone_);
-    bool rightTaken = dragPanel_ >= 0 && zoneIsRight(dropZone_);
-    bool bottomLeftTaken = dragPanel_ >= 0 && dropZone_ == PanelZone::BottomLeft;
-    bool bottomRightTaken = dragPanel_ >= 0 && dropZone_ == PanelZone::BottomRight;
+// The window as numbers: the sizes the user chose, where every panel is and
+// whether it is open. The geometry is computed from this and nothing else, so
+// a test can build one and ask the same questions the editor does.
+Workspace Editor::workspace() const {
+    Workspace ws;
+    ws.fbWidth = fbWidth_;
+    ws.fbHeight = fbHeight_;
+    ws.leftWidth = leftWidth_;
+    ws.rightWidth = rightWidth_;
+    ws.bottomHeight = bottomHeight_;
+    ws.bottomLeftHeight = bottomLeftHeight_;
+    ws.bottomRightHeight = bottomRightHeight_;
     for (int i = 0; i < kPanelCount; ++i) {
-        if (!panels_[i].open) continue;
-        const PanelZone other = panels_[i].zone;
-        leftTaken = leftTaken || zoneIsLeft(other);
-        rightTaken = rightTaken || zoneIsRight(other);
-        bottomLeftTaken = bottomLeftTaken || other == PanelZone::BottomLeft;
-        bottomRightTaken = bottomRightTaken || other == PanelZone::BottomRight;
+        ws.zones[i] = panels_[i].zone;
+        ws.open[i] = panels_[i].open;
+        ws.floatRects[i] = panels_[i].floatRect;
     }
-
-    // Two columns and three panels along the bottom, and every one of them has a
-    // height of its own.
-    //
-    // Each column ends where the panel in its own corner begins: the hierarchy
-    // is above the favourites panel, the inspector is above the sounds one, and
-    // the scene is above the console. That is the whole rule, and it is what
-    // keeps the panels from moving each other around - the bottom is not one
-    // strip split in three, so dragging one panel's edge changes that panel and
-    // nothing else. A row that shared one height made the favourites panel
-    // reach up and shorten the inspector on the other side of the window.
-    const float leftW = leftTaken ? leftWidth_ : 0.0f;
-    const float rightW = rightTaken ? rightWidth_ : 0.0f;
-
-    // The bottom of each column: the top of the panel standing in its corner, or
-    // the bottom of the window when the corner is empty. A closed panel reserves
-    // nothing - that is the whole point of closing it.
-    const float leftBottom = bottomLeftTaken ? height - bottomLeftHeight_ : height;
-    const float rightBottom = bottomRightTaken ? height - bottomRightHeight_ : height;
-    // The width of the middle column, where the scene and the console are.
-    const float middleW = std::fmax(0.0f, width - leftW - rightW);
-
-    switch (zone) {
-    case PanelZone::Left:
-        return Rect{0.0f, top, leftW, std::fmax(0.0f, leftBottom - top)};
-    case PanelZone::Right:
-        return Rect{width - rightW, top, rightW, std::fmax(0.0f, rightBottom - top)};
-    case PanelZone::BottomLeft:
-        return Rect{0.0f, height - bottomLeftHeight_, leftW, bottomLeftHeight_};
-    case PanelZone::BottomRight:
-        return Rect{width - rightW, height - bottomRightHeight_, rightW, bottomRightHeight_};
-    case PanelZone::Bottom:
-        return Rect{leftW, height - bottomHeight_, middleW, bottomHeight_};
-    case PanelZone::Float:
-        break;
-    }
-    return Rect{};
+    ws.dragPanel = dragPanel_;
+    ws.dropZone = dropZone_;
+    return ws;
 }
+
+// Where a panel in `zone` sits this frame. The geometry itself is in
+// PanelLayout.hpp, and this is the editor's copy of the state it is computed
+// from.
+Rect Editor::zoneRect(PanelZone zone) const { return s3d::zoneRect(workspace(), zone); }
 
 Rect Editor::panelRect(PanelId id) const {
     const Panel& panel = panels_[(int)id];
@@ -257,60 +201,17 @@ void Editor::commitPanelDrop() {
 //
 // A docked panel has exactly one: the edge that faces the scene. A floating one
 // has all four, and their corners take two edges at once.
+//
+// The geometry of it is in PanelLayout.hpp, where a test can ask the same
+// question without a window. This is the editor's version of it, with the one
+// thing the geometry does not know about: the X in the title bar wins its
+// corner. It sits in the top right, which is exactly where a dock's grip or a
+// floating panel's corner is, and a close button that resized the panel instead
+// of closing it would be the most annoying thing in the window.
 unsigned Editor::panelGripsAt(int index, float x, float y) const {
     if (index < 0 || index >= kPanelCount || !panels_[index].open) return 0;
-    const Rect panel = panelRect((PanelId)index);
-    if (panel.width <= 0.0f || panel.height <= 0.0f) return 0;
-
-    // The X in the title bar wins its corner. It sits in the top right, which is
-    // exactly where a dock's grip or a floating panel's corner is, and a close
-    // button that resized the panel instead of closing it would be the most
-    // annoying thing in the window.
     if (panelCloseRect((PanelId)index).contains(x, y)) return 0;
-
-    if (panels_[index].zone != PanelZone::Float) {
-        // The whole edge counts, not just the part below the title bar: for the
-        // bottom row the grip IS the first line of the title bar, and a grip that
-        // stopped where the title bar starts would leave the console with nowhere
-        // to resize from. Every bottom zone - the strip and both corners - resizes
-        // the same row, so they all take the same edge.
-        //
-        // The grip belongs to the edge and to nothing else: a panel in the
-        // bottom strip has one grip - its top edge - and the pointer has to be
-        // over THAT edge of THAT panel. Without the other direction the console
-        // lit up its whole top edge while the pointer was anywhere along that
-        // line, even over the inspector on the other side of the window, and the
-        // line came and went in pieces as the pointer crossed the panels.
-        const bool overX = x >= panel.x - kDockGrip && x <= panel.x + panel.width + kDockGrip;
-        const bool overY = y >= panel.y - kDockGrip && y <= panel.y + panel.height + kDockGrip;
-        if (zoneIsLeft(panels_[index].zone) && overY &&
-            std::fabs(x - (panel.x + panel.width)) <= kDockGrip)
-            return kGripRight;
-        if (zoneIsRight(panels_[index].zone) && overY && std::fabs(x - panel.x) <= kDockGrip)
-            return kGripLeft;
-        if (zoneIsBottom(panels_[index].zone) && overX &&
-            std::fabs(y - panel.y) <= kDockGrip)
-            return kGripTop;
-        return 0;
-    }
-
-    const float left = std::fabs(x - panel.x);
-    const float right = std::fabs(x - (panel.x + panel.width));
-    const float top = std::fabs(y - panel.y);
-    const float bottom = std::fabs(y - (panel.y + panel.height));
-    const float nearX = left <= kFloatCorner || right <= kFloatCorner ? kFloatCorner : kFloatGrip;
-    const float nearY = bottom <= kFloatCorner ? kFloatCorner : kFloatGrip;
-
-    unsigned grips = 0;
-    if (left <= nearX) grips |= kGripLeft;
-    if (right <= nearX) grips |= kGripRight;
-    if (bottom <= nearY) grips |= kGripBottom;
-    // The top edge is the title bar, so it moves the panel - except in the two
-    // corner boxes, where it takes the side edge with it. A drag handle that a
-    // resize grip steals from is not a drag handle.
-    if (top <= kFloatCorner && (left <= kFloatCorner || right <= kFloatCorner))
-        grips |= kGripTop;
-    return grips;
+    return gripsAt(workspace(), index, x, y);
 }
 
 // A floating panel follows the pointer from the rectangle it had when the grip was
@@ -375,26 +276,20 @@ void Editor::handlePanelDrag(PhysicsWorld& world) {
         // edge of the column it shares with the hierarchy. Taking the zone for
         // the answer made both of them change the height, and dragging the
         // column's edge moved a panel that was not in the way of it.
-        if ((resizeEdges_ & kGripTop) && zoneIsBottom(zone)) {
-            // Each panel of the bottom row resizes itself: the console's grip
-            // does not make the favourites panel taller, and the other way
-            // round. A row of three panels that share one height is a row of
-            // one panel with two holes in it.
-            const float limit = (float)fbHeight_ * 0.7f;
-            const float height = clampf(resizeStartSize_ - (py - resizeStartPointer_),
-                                        kConsoleMinHeight, limit);
-            if (zone == PanelZone::BottomLeft)
-                bottomLeftHeight_ = height;
-            else if (zone == PanelZone::BottomRight)
-                bottomRightHeight_ = height;
-            else
-                bottomHeight_ = height;
-        } else if ((resizeEdges_ & kGripRight) && zoneIsLeft(zone))
-            leftWidth_ = clampf(resizeStartSize_ + (px - resizeStartPointer_), kDockMinWidth,
-                                std::fmin(kDockMaxWidth, (float)fbWidth_ * 0.5f));
-        else if ((resizeEdges_ & kGripLeft) && zoneIsRight(zone))
-            rightWidth_ = clampf(resizeStartSize_ - (px - resizeStartPointer_), kDockMinWidth,
-                                 std::fmin(kDockMaxWidth, (float)fbWidth_ * 0.5f));
+        //
+        // The arithmetic is in PanelLayout.hpp, where a test can ask the same
+        // question: a grip that moved the wrong size was found by looking at
+        // the screen, which is how the bugs of this kind used to be found.
+        const float dx = px - resizeStartPointerX_;
+        const float dy = py - resizeStartPointerY_;
+        const WorkspaceSizes sizes =
+            applyResize(workspace(), resizePanel_, resizeEdges_, resizeStartSize_, dx, dy);
+        leftWidth_ = sizes.leftWidth;
+        rightWidth_ = sizes.rightWidth;
+        bottomHeight_ = sizes.bottomHeight;
+        bottomLeftHeight_ = sizes.bottomLeftHeight;
+        bottomRightHeight_ = sizes.bottomRightHeight;
+        (void)zone;
         return;
     }
 
@@ -417,12 +312,10 @@ void Editor::handlePanelDrag(PhysicsWorld& world) {
             // height of a panel in the bottom row, or the width of the column
             // it shares with the panel above it.
             if (resizeEdges_ & kGripTop) {
-                resizeStartPointer_ = py;
                 resizeStartSize_ = zone == PanelZone::BottomLeft ? bottomLeftHeight_
                                    : zone == PanelZone::BottomRight ? bottomRightHeight_
                                                                    : bottomHeight_;
             } else {
-                resizeStartPointer_ = px;
                 resizeStartSize_ = zoneIsLeft(zone) ? leftWidth_ : rightWidth_;
             }
             return;
@@ -605,43 +498,13 @@ void Editor::drawPanelDragFeedback(UiRenderer& ui) {
 void Editor::recomputeLayout(int fbWidth, int fbHeight) {
     fbWidth_ = fbWidth;
     fbHeight_ = fbHeight;
-    const float width = (float)fbWidth;
-    const float height = (float)fbHeight;
 
-    layout_.menuBar = Rect{0.0f, 0.0f, width, theme::menuBarHeight};
-
-    // Which columns and rows are occupied decides the scene: a floating inspector
-    // gives its space back to the viewport, and an empty left column moves the
-    // scene to x=0. Corner zones occupy the column they are in, which is what
-    // keeps the bottom-left corner from becoming a hole in the layout.
-    bool leftTaken = false, rightTaken = false, consoleTaken = false;
-    for (int i = 0; i < kPanelCount; ++i) {
-        if (!panels_[i].open) continue;
-        const PanelZone zone = panels_[i].zone;
-        leftTaken = leftTaken || zoneIsLeft(zone);
-        rightTaken = rightTaken || zoneIsRight(zone);
-        consoleTaken = consoleTaken || zone == PanelZone::Bottom;
-    }
-
-    const float sceneLeft = leftTaken ? leftWidth_ : 0.0f;
-    const float sceneRight = rightTaken ? rightWidth_ : 0.0f;
-    const float columnTop = theme::menuBarHeight;
-
-    // The scene reaches down to the console, and to the bottom of the window
-    // when there is no console. The corners stand below the columns, not in the
-    // middle, so they do not decide how much of the scene is left - the console
-    // alone does, and the two corner panels can be as tall as they like.
-    const float sceneBottom = consoleTaken ? height - bottomHeight_ : height;
-
-    const float headerH = kSceneHeaderHeight;
-    const float viewX = sceneLeft;
-    const float viewW = std::fmax(kMinViewportSize, width - sceneLeft - sceneRight);
-    layout_.sceneHeader = Rect{viewX, columnTop, viewW, headerH};
-    layout_.viewport = Rect{viewX, columnTop + headerH, viewW,
-                            std::fmax(kMinViewportSize, sceneBottom - columnTop - headerH)};
-    layout_.viewportTools = Rect{layout_.viewport.x + 4.0f, layout_.viewport.y + 4.0f,
-                                 kToolStripWidth, 0.0f};
-    layout_.viewportTools.height = std::max(0.0f, layout_.viewport.height - 8.0f);
+    // The geometry is in PanelLayout.hpp, and this is the editor's copy of the
+    // state it is computed from.
+    Workspace ws = workspace();
+    ws.fbWidth = fbWidth;
+    ws.fbHeight = fbHeight;
+    layout_ = computeLayout(ws);
 }
 
 void Editor::pruneSelection(const PhysicsWorld& world) {
@@ -682,11 +545,7 @@ void Editor::updateViewRay(const Camera& camera) {
     // aspect: the same two numbers the projection matrix is built from, so the
     // pointer and the picture cannot disagree about where a thing is.
     const Rect view = layout_.viewport;
-    const float height = view.height > 1.0f ? view.height : 1.0f;
-    const float width = view.width > 1.0f ? view.width : 1.0f;
-    const float tanHalf = std::tan(camera.fovDeg * kPi / 360.0f);
-    viewRay_.tanY = tanHalf;
-    viewRay_.tanX = tanHalf * (width / height);
+    picking::viewRayTangents(camera, view.width, view.height, viewRay_.tanX, viewRay_.tanY);
     viewRay_.valid = true;
 }
 
@@ -1355,5 +1214,3 @@ void Editor::drawPanelById(UiRenderer& ui, PhysicsWorld& world, Window& window, 
 }
 
 } // namespace s3d
-
-

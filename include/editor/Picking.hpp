@@ -39,5 +39,11 @@ bool projectToViewport(const Vec3& worldPoint, const Vec3& cameraPos, const Vec3
 Vec3 rayFromViewport(float pixelX, float pixelY, const Rect& viewport, const Vec3& forward,
                      const Vec3& right, const Vec3& up, float tanX, float tanY);
 
+// The tangents of the camera's field of view over a viewport of this size: the
+// vertical one over the height, the horizontal one from the aspect. The same
+// numbers the renderer projects with, so the pointer and the picture cannot
+// disagree about where a thing is.
+void viewRayTangents(const Camera& camera, float width, float height, float& tanX, float& tanY);
+
 } // namespace picking
 } // namespace s3d
