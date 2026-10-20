@@ -43,7 +43,7 @@ third_party/         glfw, freetype, angelscript, miniaudio,
                     models_lib/ (cgltf, rapidobj, miniply, ufbx),
                     stb/ (stb_image, stb_vorbis), json/
 assets/              lang/*.lang, image/{icons,textures}/*, models/*.{glb,obj,ply,fbx},
-                     sky.jpg, sounds/*.wav
+                     sky.jpg, sounds/*.wav, fonts/JetBrainsMono-Regular.ttf
 tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp, skygen.cpp,
                      soundgen.cpp - standalone
                      utilities for reading assets, checking the scripting
@@ -917,9 +917,12 @@ during that same tick.
   the horizon instead of stopping at a boundary.
 - **UI vertex batching**: every quad/circle/glyph of a frame is reduced to two
   buffers and drawn with two `glDrawArrays`.
-- **Text**: FreeType -> a texture atlas of ASCII + Cyrillic from the system TTF
-  (Consolas/Arial/Segoe UI/Tahoma on Windows, DejaVu/Liberation on Linux), alpha
-  blending, width estimation as a fallback.
+- **Text**: FreeType -> a texture atlas of ASCII + Cyrillic from **JetBrains Mono**,
+  which the engine ships in `assets/fonts/` (SIL Open Font License, the licence
+  travels with it). The system fonts are only the fallback for a build whose
+  assets folder was not copied along: a system font is a different font on every
+  system, and a machine with none of them has no letters at all. Alpha blending,
+  width estimation as the last resort.
 
 ## Controls
 
@@ -1114,6 +1117,12 @@ header-only JSON parser.
 | miniaudio | 0.11.25 | public domain **or** MIT-0 | `third_party/miniaudio/miniaudio.h` |
 | stb_image | - | public domain **or** MIT | `third_party/stb/LICENSE` (one file for the whole family) |
 | stb_vorbis | 1.22 | public domain **or** MIT | `third_party/stb/LICENSE` (same) |
+| JetBrains Mono | 2.304 | SIL OFL 1.1 | `assets/fonts/OFL.txt`, `assets/fonts/AUTHORS.txt` |
+
+JetBrains Mono is the font the interface is drawn with, and it is the one the
+engine ships: it lives in `assets/fonts/` next to the sky and the sounds, and
+its licence travels with it. The OFL asks for the font to be credited, so:
+
 
 Every stb library is released under the identical public-domain **or** MIT-0 terms,
 so `third_party/stb/LICENSE` is the single text covering `stb/` as a whole - it is
@@ -1131,4 +1140,11 @@ the product documentation, so:
 
 ```
 Portions of this software are copyright © 2026 The FreeType Project (https://freetype.org). All rights reserved.
+```
+
+JetBrains Mono is licensed under the SIL Open Font License 1.1, which asks for
+the font to be credited, so:
+
+```
+The interface is drawn with JetBrains Mono by JetBrains (https://www.jetbrains.com/lp/mono/).
 ```

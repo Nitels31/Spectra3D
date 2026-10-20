@@ -4,6 +4,7 @@
 #include "core/Str.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <string_view>
@@ -28,6 +29,9 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 namespace s3d {
@@ -77,17 +81,26 @@ std::string absolute(const std::string& path) {
 
 void discoverAssetRoot() {
     // Candidate roots, most specific first. Covers launching from the build
-    // directory, from the project root, and from an arbitrary working dir.
+    // directory, from an installed program, from the project root, and from an
+    // arbitrary working dir.
+    //
+    // The installed layout is <prefix>/bin/spectra3d with the assets in
+    // <prefix>/share/spectra3d, so that one is a candidate too: a program
+    // installed with `make install` has no assets folder next to it, and one
+    // that cannot find its assets has no font, no sky and no sounds.
     std::vector<std::string> candidates;
     if (!g_exeDir.empty()) {
         candidates.push_back(str::join(g_exeDir, "assets"));
-        candidates.push_back(str::join(parentOf(g_exeDir), "assets"));
+        const std::string prefix = parentOf(g_exeDir);
+        candidates.push_back(str::join(prefix, "share/spectra3d"));
+        candidates.push_back(str::join(prefix, "assets"));
     }
 #if defined(SPECTRA_ASSET_DIR)
     candidates.emplace_back(SPECTRA_ASSET_DIR);
 #endif
     candidates.emplace_back("assets");
     candidates.emplace_back("../assets");
+    candidates.emplace_back("../share/spectra3d");
 
     for (const std::string& c : candidates) {
         if (!isDirectory(str::join(c, "lang"))) continue;
@@ -117,7 +130,23 @@ void adoptAssetWorkingDir() {
         if (slash != std::string::npos) g_exeDir = g_exeDir.substr(0, slash);
     }
 #else
-    // /proc/self/exe is the portable-enough answer on Linux/macOS.
+#if defined(__APPLE__)
+    // macOS has no /proc: the dynamic linker is asked where the program is.
+    // The path it gives can be longer than the buffer, so it is asked twice -
+    // once for the size, once for the path.
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    if (size > 0) {
+        std::vector<char> buf(size + 1, '\0');
+        if (_NSGetExecutablePath(buf.data(), &size) == 0) {
+            g_exePath = buf.data();
+            g_exeDir = g_exePath;
+            const size_t slash = g_exeDir.find_last_of('/');
+            if (slash != std::string::npos) g_exeDir = g_exeDir.substr(0, slash);
+        }
+    }
+#else
+    // /proc/self/exe is the answer on Linux.
     char buf[4096];
     const ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (len > 0) {
@@ -127,6 +156,7 @@ void adoptAssetWorkingDir() {
         const size_t slash = g_exeDir.find_last_of('/');
         if (slash != std::string::npos) g_exeDir = g_exeDir.substr(0, slash);
     }
+#endif
 #endif
 
     discoverAssetRoot();

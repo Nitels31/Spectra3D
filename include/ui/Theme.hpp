@@ -2,6 +2,7 @@
 #include <cstddef>
 
 #include "render/SceneRenderer.hpp"
+#include "render/TextAtlas.hpp"
 
 namespace s3d {
 namespace theme {
@@ -50,7 +51,10 @@ inline constexpr float fieldHeight = 20.0f;
 inline constexpr float menuBarHeight = 26.0f;
 inline constexpr float leftDockWidth = 260.0f;
 inline constexpr float rightDockWidth = 280.0f;
-inline constexpr float textLineHeight = 15.0f;
+// The height of one line of text. It is the font's number and not the theme's:
+// the atlas places the baseline inside a line of exactly this height, and the
+// two cannot be told apart without a number that is written down twice.
+inline constexpr float textLineHeight = (float)TextAtlas::kLineHeight;
 
 } // namespace theme
 } // namespace s3d

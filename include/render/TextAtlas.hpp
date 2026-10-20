@@ -14,6 +14,13 @@ class TextAtlas {
 public:
     static constexpr int kGlyphCount = 240;
     static constexpr int kPixelSize = 18;
+    // The height of one line of text, in pixels. The interface lays its text out
+    // in lines of this height, and the font is baked bigger than that - the
+    // letters are the size they should be, and the line is tight.
+    //
+    // The baseline is placed by the font's own metrics, not by this number: see
+    // `baseline()`.
+    static constexpr int kLineHeight = 15;
 
     struct Glyph {
         float u0 = 0, v0 = 0, u1 = 0, v1 = 0;
@@ -35,7 +42,12 @@ public:
 
     bool ready() const { return ready_; }
     unsigned texture() const { return texture_; }
-    float ascender() const { return ascender_; }
+    // The distance from the top of a line to the baseline, in pixels. It is the
+    // font's own metrics and not the ascent: the ascent is how far the font
+    // reaches above the baseline, and a font whose ascent is taller than its
+    // own em - JetBrains Mono's is - would push the whole line down and out of
+    // the box it is drawn in.
+    float baseline() const { return baseline_; }
 
     const Glyph& glyph(int index) const { return glyphs_[index]; }
 
@@ -56,7 +68,7 @@ private:
     std::array<Glyph, kGlyphCount> glyphs_{};
     unsigned texture_ = 0;
     bool ready_ = false;
-    float ascender_ = 15.0f;
+    float baseline_ = (float)kLineHeight * 0.5f;
 };
 
 } // namespace s3d

@@ -2,6 +2,7 @@
 
 #include "core/Log.hpp"
 #include "core/Str.hpp"
+#include "platform/Filesystem.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -20,16 +21,44 @@ namespace {
 
 constexpr int kAtlasSize = 1024;
 
-// System fonts tried in order; the first readable one wins.
-const char* const kFontPaths[] = {
+// The font the engine ships with, in the assets next to the program. It is
+// looked for first and it is the reason the editor looks the same on every
+// machine: a system font is a different font on every system, and on a machine
+// with none of them the editor has no letters at all.
+//
+// The name is the one the file has in the assets; the second is what a build
+// with an older assets folder may have.
+const char* const kBundledFonts[] = {
+    "fonts/JetBrainsMono-Regular.ttf",
+    "fonts/JetBrainsMono.ttf",
+};
+
+// System fonts tried after the bundled one, which is the fallback for a build
+// whose assets folder was not copied along. Windows first, then Linux, then
+// macOS - the same order on every platform, so a machine with more than one of
+// them still ends up with the same letters.
+const char* const kSystemFontPaths[] = {
     "C:\\Windows\\Fonts\\consola.ttf",
-    "C:\\Windows\\Fonts\\arial.ttf",
+    "C:\\Windows\\Fonts\\CascadiaMono.ttf",
+    "C:\\Windows\\Fonts\\CascadiaCode.ttf",
     "C:\\Windows\\Fonts\\segoeui.ttf",
     "C:\\Windows\\Fonts\\tahoma.ttf",
+    "C:\\Windows\\Fonts\\arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
+    "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/TTF/NotoSansMono-Regular.ttf",
+    "/Library/Fonts/Arial.ttf",
+    "/System/Library/Fonts/Menlo.ttc",
+    "/System/Library/Fonts/SFNSMono.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/System/Library/Fonts/Supplemental/Courier New.ttf",
 };
 
 // Cyrillic extras beyond the contiguous U+0410..U+044F block.
@@ -94,12 +123,33 @@ bool TextAtlas::build() {
     if (FT_Init_FreeType(&library)) return false;
 
     FT_Face face = nullptr;
-    for (const char* path : kFontPaths) {
-        if (FT_New_Face(library, path, 0, &face) == 0) break;
+    std::string used;
+
+    // The bundled font first, then the system ones. Every candidate is tried
+    // before the next one is: a font that cannot be read is not a font.
+    const std::string& assets = fs::assetRoot();
+    if (!assets.empty()) {
+        for (const char* name : kBundledFonts) {
+            const std::string path = str::join(assets, name);
+            if (FT_New_Face(library, path.c_str(), 0, &face) == 0) {
+                used = path;
+                break;
+            }
+        }
+    }
+    if (!face) {
+        for (const char* path : kSystemFontPaths) {
+            if (FT_New_Face(library, path, 0, &face) == 0) {
+                used = path;
+                break;
+            }
+        }
     }
     if (!face) {
         FT_Done_FreeType(library);
-        Log::warn("Text: no usable system font, falling back to metrics estimate");
+        Log::warn("Text: no usable font (none in '%s/fonts' and none on this system), "
+                  "falling back to metrics estimate",
+                  assets.c_str());
         return false;
     }
     FT_Set_Pixel_Sizes(face, 0, kPixelSize);
@@ -146,8 +196,31 @@ bool TextAtlas::build() {
         rowHeight = std::max(rowHeight, (int)g.height);
     }
 
-    ascender_ = (float)face->size->metrics.ascender / 64.0f;
-    Log::info("Text: atlas %d/%d glyphs from '%s'", fitted, kGlyphCount, face->family_name);
+    // Where the baseline sits in a line, measured from the font itself.
+    //
+    // The ascent - how far the font reaches above the baseline - is not the
+    // answer: JetBrains Mono's ascent is taller than its own em, so a line
+    // placed by the ascent hangs below the box it is drawn in, and the
+    // descenders go off the bottom of the panel they are in.
+    //
+    // What the interface wants is the VISUAL box of the text centred in the
+    // line: the capitals above the baseline, the descenders below it. The cap
+    // height comes from the 'H' and the descender from the deepest glyph in the
+    // atlas, and the baseline is what puts the two in the middle of the line.
+    float capHeight = 0.0f;
+    float descender = 0.0f;
+    const int capIndex = glyphIndex('H');
+    if (capIndex >= 0) capHeight = glyphs_[capIndex].offsetY;
+    for (int i = 0; i < kGlyphCount; ++i) {
+        const float below = glyphs_[i].height - glyphs_[i].offsetY;
+        if (below > descender) descender = below;
+    }
+    baseline_ = ((float)kLineHeight - (capHeight + descender)) * 0.5f + capHeight;
+
+    Log::info("Text: atlas %d/%d glyphs from '%s' (%s)", fitted, kGlyphCount, face->family_name,
+              used.c_str());
+    Log::info("Text: line %dpx, baseline %.1f, capitals %.1f, descender %.1f", kLineHeight,
+              baseline_, capHeight, descender);
 
     glGenTextures(1, &texture_);
     glBindTexture(GL_TEXTURE_2D, texture_);
@@ -190,7 +263,7 @@ void TextAtlas::appendQuads(std::vector<float>& batch, float x, float topY,
     // is what keeps a scaled string the same width as textWidth() * scale.
     const float s = scale > 0.0f ? scale : 1.0f;
     float penX = x;
-    const float baselineY = topY + ascender_ * s;
+    const float baselineY = topY + baseline_ * s;
     for (const char* p = utf8; *p;) {
         int index = glyphIndex(str::nextCodepoint(p));
         if (index < 0) index = glyphIndex('?');

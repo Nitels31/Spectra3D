@@ -168,6 +168,15 @@ listing, the executable path, finding the asset root, `adoptAssetWorkingDir()`, 
 the shell folder dialog. There is no separate GL loader — the engine targets the
 fixed-function pipeline and includes `<GL/gl.h>` directly.
 
+**The asset root is found in the places a program is run from.** Next to the
+binary, then `../share/spectra3d` (where `make install` puts it), then the source
+tree the build knows about, then the working directory. A program that cannot
+find its assets has no font, no sky, no sounds and no language, and the engine
+that draws no letters is an engine that cannot be used — so the places are
+listed rather than guessed at. The executable path is asked of the OS the way
+each OS knows it: the module path on Windows, `/proc/self/exe` on Linux, and
+`_NSGetExecutablePath` on macOS, which has no `/proc` at all.
+
 ### `physics`
 
 `RigidBody` (mass, inertia, bounds, warm-start cache, `Material`) and
@@ -257,6 +266,14 @@ Latin-1 arrived with German, French, Italian and Spanish: without it `ä ö ü �
 `é è ê ë à ç ù`, `á í ó ñ ü` and `¿` drew as empty boxes while the language files
 carried two hundred keys that went nowhere. Everything fits: one 1024×1024 page,
 18-pixel rows.
+
+**The font is shipped, not borrowed.** It is JetBrains Mono, in
+`assets/fonts/`, with its licence beside it, and the atlas is baked from it
+first. The system fonts are the fallback and nothing more: a system font is a
+different font on every system - Consolas on one, DejaVu on another, nothing at
+all on a third - and the engine that draws no letters is an engine that cannot
+be used. One font in the assets is the same letters on every machine the engine
+runs on, and it is the same letters for the interface and for the code.
 
 ### `ui`
 
@@ -518,10 +535,31 @@ columns and rows are occupied** — a floating panel gives its space back.
 inspector the right one, the console the bottom strip, the favorites the
 bottom-left corner and the sounds the bottom-right one. That is Unity's
 arrangement, and the reason for it is not decoration: a panel that has no
-place is a panel nobody opens, and a panel that is closed is a panel that is
-one click away from being looked at and never is. The corners are where the
-console stops covering the side columns, and a corner with a panel in it is
-space that earns its place; a corner with nothing in it is a hole.
+place is a panel nobody opens, and a panel that is closed is one click away from
+being looked at and never is. The corners are where the console stops covering
+the side columns, and a corner with a panel in it is space that earns its
+place; a corner with nothing in it is a hole.
+
+**The bottom row is three panels and not one row split in three.** The console
+and the two corners have heights of their own, and they stand on the bottom of
+the window. A row of three panels that share one height is a row of one panel
+with two holes in it: dragging the console's edge makes the favorites panel
+taller as well, and there is no way to give a corner a height of its own.
+
+**Each column ends where the panel in its own corner begins.** The hierarchy is
+above the favorites panel, the inspector is above the sounds one, and the scene
+is above the console. The columns are not tied to the tallest panel of the row:
+a row that had one height for all three made the favorites panel reach up and
+shorten the inspector on the other side of the window, and made the sounds panel
+do the same to the hierarchy. A grip moves the thing it is on and nothing else.
+
+**A closed panel reserves nothing.** Closing the console hands its space to the
+scene, and closing a corner panel lets the column above it grow into the corner.
+
+**The scene is drawn in the viewport, and the viewport is the scene's own
+column.** The picture and the pointer are the same view of the world: the
+projection is the camera's own field of view over the viewport, so the horizon
+sits where the camera looks and not somewhere under a panel.
 
 **Why the corners are their own zones.** The bottom-left and bottom-right corners
 are where the console stops covering the side columns. With one bottom strip, a
@@ -539,15 +577,23 @@ the whole layout is a grid of two columns and two rows:
   column          strip          column
 ```
 
+Each of the three at the bottom stands on the bottom of the window with a height
+of its own, and each of the two columns ends where the panel in its corner
+begins - so the three of them tile the window without a hole between them.
+
 - **Drag by the title bar** (six dots — `drawPanelChrome`, shared by all five). Drop
   it on another zone and whoever was there swaps into the zone it came from
   (**a swap, not an eviction**); drop it over the scene and it becomes a floating
   window with a border and a shadow, drawn over the docked ones and not drawn twice.
 - **A docked panel's inner edge is its resize grip** (`handlePanelDrag`, holding
-  `leftWidth_`/`rightWidth_`/`bottomHeight_`). A floating panel is resized from any
+  `leftWidth_`/`rightWidth_`/`bottomHeight_` and the two corner heights). A
+  floating panel is resized from any
   of its four edges and any of its corners (`panelGripsAt` → a
   `kGripLeft|kGripRight|kGripTop|kGripBottom` mask), and its rectangle is clamped
   into the window so a floating window cannot get lost off screen.
+- **What a grip moves is decided by the grip, not by the zone.** A panel in the
+  bottom-left corner has two: its top edge makes it taller, and its right edge
+  is the edge of the column it shares with the panel above it.
 - **Dock sizes live in `Editor`, not in `theme`.** A theme is a palette; what the
   user dragged for themselves is not the theme's to overwrite.
 - **`zoneAt()` and `zoneRect()` must agree.** The drop preview is drawn from
@@ -561,12 +607,24 @@ Three things about the size to know before touching `handlePanelDrag`:
 - **The grip is tested before the title bar, not after.** The bottom row's only grip
   *is* the first pixels of its title bar. Tested the other way round, a press on the
   console's border picked the panel up and dragged it away instead of making it
-  taller — the console was immovable in principle while the other two edges worked,
-  and the breakage looked random.
+  taller - the console was immovable in principle while the other two edges worked,
+  and the breakage looked random. The title of a bottom-row panel is therefore
+  drawn a few pixels lower than in the other panels: the grip is the top of the
+  panel, and a title under the grip is a title that cannot be grabbed.
 - **The grip is taken on the press, not on hover.** Otherwise a drag that started in
   the body of a panel would cross its divider and jump its size on the last frame.
   The start rectangle is captured at the press (`resizeStartRect_`) and every frame
   after it is a delta from there.
+- **A grip belongs to one edge of one panel.** The hit test asks for the other
+  direction too: the console's top edge is its grip only where the console is, and
+  not anywhere along that line of the screen. Without the other direction the
+  console lit up its whole top edge while the pointer was over the inspector, and
+  the line came and went in pieces as the pointer crossed the panels.
+- **The line that shows where a panel can be resized is a line.** One rectangle
+  along the whole edge, at a whole number of pixels - and the same for the marks
+  that are lines too: the X that closes a panel and the corner of a floating one
+  are strokes of squares that touch, not a scatter of dots that only look like
+  the shape when you know what it is.
 - **A floating panel's top edge is its title bar.** It is taken only in the corner
   boxes and is a drag handle everywhere else, because a grip that ate half the title
   bar would make it not one.
@@ -795,6 +853,7 @@ their own literals.
 | `<projectsRoot>/<Project>/scripts/` | `*.as`, run when Play begins |
 | `<projectsRoot>/<Project>/models/` | the project's own model folder |
 | `<exeDir>/assets/sounds/*.wav` | the sounds the engine ships: the name of each is its file's stem, so a file dropped in the folder is a sound the scripts can play and a body can carry |
+| `<exeDir>/assets/fonts/JetBrainsMono-Regular.ttf` | the font the interface is drawn with, with its licence beside it. It is shipped rather than borrowed so the engine has the same letters on every machine it runs on |
 | `<exeDir>/assets/image/icons/*.ico` | the application icons the settings screen offers |
 | `<exeDir>/settings.ini` | machine-level settings: `projectRoot`, `language`, `theme`, `frameRateCap`, `appIcon`, up to 8 `recent` |
 
