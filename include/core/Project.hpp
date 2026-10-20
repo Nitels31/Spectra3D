@@ -125,9 +125,24 @@ struct ProjectInfo {
     //
     // The quality is the number the shadow's modes are numbered by: 0 off,
     // 1 one tap, 2 the filtered one, 3 the soft one.
-    int shadowQuality = 1;
+    //
+    // The default is the filtered one: a stair-stepped edge is the first
+    // thing the eye picks out of a picture, and the sixteen reads it costs
+    // are cheap.
+    int shadowQuality = 2;
     int shadowResolution = 2048;
     int shadowCascades = 4;
+    // The sun, and the two numbers that decide how a shadow is compared with
+    // the map. The sun is the direction the light comes from; the bias is how
+    // far the surface is pushed towards the light before it is compared, in
+    // metres; the normal offset is the same push along the surface's own
+    // normal, in texels of the map.
+    float shadowSunAzimuth = 41.2f;
+    float shadowSunElevation = 58.6f;
+    float shadowBias = 0.015f;
+    float shadowNormalOffset = 2.0f;
+    // The widest the penumbra of the soft mode may get, in texels.
+    float shadowRadius = 12.0f;
     bool valid = false;
 };
 

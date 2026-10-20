@@ -154,12 +154,28 @@ void ShaderProgram::setMat4(const char* name, const float* matrix) {
 
 void ShaderProgram::setFloatArray(const char* name, const float* values, int count) {
     const int location = uniformLocation(name);
+    // The count is the number of numbers: a float array has one number to an
+    // element, and the driver is told how many numbers there are.
     if (location >= 0) gl::Uniform1fv(location, count, values);
 }
 
+void ShaderProgram::setVec4Array(const char* name, const float* values, int count) {
+    const int location = uniformLocation(name);
+    // The count is the number of *vectors*: a vec4 array has four numbers to
+    // an element, and the driver counts the elements and not the numbers. A
+    // count of numbers here writes four vectors' worth into the first vector
+    // and leaves the rest of the array as it was.
+    if (location >= 0) gl::Uniform4fv(location, count, values);
+}
+
+
 void ShaderProgram::setMat4Array(const char* name, const float* values, int count) {
     const int location = uniformLocation(name);
+    // The count is the number of matrices, and it has to be the number the
+    // caller means: one matrix leaves the rest of the array as it was, and an
+    // array of matrices with three of them missing is a picture of nothing.
     if (location >= 0) gl::UniformMatrix4fv(location, count, GL_FALSE, values);
 }
+
 
 } // namespace s3d

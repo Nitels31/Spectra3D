@@ -16,6 +16,7 @@
 #include "editor/Editor.hpp"
 
 #include "core/Math.hpp"
+#include "core/Project.hpp"
 #include "core/Str.hpp"
 #include "platform/Filesystem.hpp"
 #include "platform/Window.hpp"
@@ -712,6 +713,68 @@ void testFont() {
     FT_Done_FreeType(library);
 }
 
+// THE SHADOWS ARE THE PROJECT'S, AND THE SUN IS WHERE THE SETTINGS SAY
+void testShadowSettings() {
+    heading("the sun is where the settings say it is");
+
+    // The sun is a point in the sky, and the direction of the light is the
+    // direction from the world to that point - not the direction the light
+    // travels. A sun at the north and straight up lights the ground from
+    // above.
+    ShadowSettings settings;
+    settings.sunAzimuth = 0.0f;
+    settings.sunElevation = 90.0f;
+    Vec3 up = sunDirection(settings);
+    check(nearly(up.x, 0.0f, 0.001f) && nearly(up.y, 1.0f, 0.001f) && nearly(up.z, 0.0f, 0.001f),
+          "a sun straight up points up");
+
+    // And it is a direction: the same sun at the east and half way up.
+    settings.sunAzimuth = 90.0f;
+    settings.sunElevation = 30.0f;
+    Vec3 east = sunDirection(settings);
+    check(nearly(east.x, 0.866f, 0.01f) && nearly(east.y, 0.5f, 0.01f) &&
+              nearly(east.z, 0.0f, 0.01f),
+          "a sun in the east and half way up points east and up");
+
+    heading("the project keeps the shadows");
+    // The manifest is the only place the shadow settings are written down, so
+    // a number that does not survive the round trip is a number the project
+    // forgets.
+    ProjectLibrary library;
+    library.setRoot(fs::executableDir());
+    // Whatever a previous run left behind is taken away first: a folder that
+    // is already there is a project that cannot be made again.
+    fs::removeTree(str::join(fs::executableDir(), "shadowtest"));
+    ProjectInfo info = library.create("shadowtest", LanguageTag::English);
+    check(info.valid, "the test project is made");
+    info.shadowQuality = 3;
+    info.shadowResolution = 4096;
+    info.shadowCascades = 2;
+    info.shadowSunAzimuth = 123.5f;
+    info.shadowSunElevation = 41.25f;
+    info.shadowBias = 0.037f;
+    info.shadowNormalOffset = 3.5f;
+    info.shadowRadius = 7.5f;
+
+    check(library.writeManifest(info), "the manifest is written");
+
+    ProjectInfo read;
+    check(library.readManifest(info.path, read), "the manifest is read");
+    check(read.shadowQuality == 3, "the quality survives the round trip");
+    check(read.shadowResolution == 4096, "the size of the map survives the round trip");
+    check(read.shadowCascades == 2, "the number of the stretches survives the round trip");
+    check(nearly(read.shadowSunAzimuth, 123.5f, 0.05f), "the sun's azimuth survives");
+    check(nearly(read.shadowSunElevation, 41.25f, 0.05f), "the sun's height survives");
+    check(nearly(read.shadowBias, 0.037f, 0.001f), "the bias survives");
+    check(nearly(read.shadowNormalOffset, 3.5f, 0.05f), "the normal offset survives");
+    check(nearly(read.shadowRadius, 7.5f, 0.05f), "the penumbra survives");
+
+    // And the project the test made is taken away again: a check that leaves
+    // a folder behind is a check that makes the next run find something it
+    // did not make.
+    fs::removeTree(info.path);
+}
+
 } // namespace
 
 int main() {
@@ -733,6 +796,7 @@ int main() {
     testTextCodepoints();
     testWidgetIds();
     testShaders();
+    testShadowSettings();
     testFont();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);

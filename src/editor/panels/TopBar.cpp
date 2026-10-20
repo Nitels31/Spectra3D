@@ -208,6 +208,11 @@ void Editor::buildMenuRows() {
                           text("settings.shadowCascades"), i);
             add(Action::ShadowCascades, i, labels[i - 1], shadowSettings_->cascades == i);
         }
+        // The sun and the two numbers that decide how a shadow is compared
+        // with the map. A menu row cannot be dragged, so they are in a
+        // dialog of their own.
+        add(Action::None, 0, nullptr, false, true);
+        add(Action::ShadowSettings, 0, text("view.shadowSettings"));
     }
     add(Action::None, 0, nullptr, false, true);
     // Which panels are on screen. Closed with the X in a panel's header, reopened
@@ -348,6 +353,7 @@ void Editor::openModal(Modal dialog) {
         modalField_.set(str::join(projectDir(), "build").c_str());
         break;
     case Modal::SaveFirst:
+    case Modal::ShadowSettings:
     case Modal::None:
         break;
     }
@@ -531,6 +537,11 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         break;
     case Action::ShadowCascades:
         if (shadowSettings_) shadowSettings_->cascades = std::clamp(param, 1, 4);
+        break;
+    case Action::ShadowSettings:
+        // The sun and the bias are in a dialog of their own: a menu row
+        // cannot be dragged, and these are three numbers that want to be.
+        openModal(Modal::ShadowSettings);
         break;
     case Action::FrameSelection:
         frameSelection(world, camera);

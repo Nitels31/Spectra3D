@@ -533,7 +533,17 @@ if(SPECTRA_BUILD_TOOLS)
     # The generator for the test sounds: three short WAV files, two seconds
     # each, made to be told apart by ear.
     add_executable(soundgen tools/soundgen.cpp)
+    target_link_libraries(soundgen PRIVATE spectra_stb)
     spectra_warnings(soundgen)
+
+    # A picture of the shadows, without an editor: a ground, three boxes and
+    # the settings the shadows are made with, written out as a PNG. The
+    # shadows are the one part of the picture that cannot be checked by
+    # reading the code.
+    add_executable(shadowtest tools/shadowtest.cpp)
+    target_link_libraries(shadowtest PRIVATE spectra_runtime spectra_stb)
+    spectra_warnings(shadowtest)
+
 
     if(SPECTRA_SCRIPTING)
         # Headless check of the script host: the entry-point rule, the hooks and
@@ -568,7 +578,7 @@ endif()
 
 install(TARGETS spectra3d RUNTIME DESTINATION bin)
 if(SPECTRA_BUILD_TOOLS)
-    install(TARGETS glbinfo fbxtest skygen soundgen RUNTIME DESTINATION bin)
+    install(TARGETS glbinfo fbxtest skygen soundgen shadowtest RUNTIME DESTINATION bin)
     if(SPECTRA_SCRIPTING)
         install(TARGETS scripttest editortest RUNTIME DESTINATION bin)
     endif()

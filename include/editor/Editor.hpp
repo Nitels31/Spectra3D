@@ -137,6 +137,17 @@ public:
 
         // 1500 - 1599: the strip above the scene.
         kSceneHeader = 1500,
+
+        // 1600 - 1699: the shadow settings dialog.
+        //
+        // The sun and the two numbers that decide how a shadow is compared
+        // with the map. They are the project's and not the machine's, and
+        // they are set where the shadows can be seen.
+        kShadowAzimuth = 1600,
+        kShadowElevation = 1601,
+        kShadowBias = 1602,
+        kShadowNormal = 1603,
+        kShadowRadius = 1604,
     };
 
     // Who is drawing, for the overlay guard. The surfaces a pass puts down do
@@ -250,7 +261,7 @@ private:
     // --- the dialogs Unity's File menu hangs off ---------------------------
     // One modal at a time, drawn centred over the scene like the help pages. Each
     // is a real command with a real result, not a message box that only says "ok".
-    enum class Modal { None, NewScene, OpenScene, BuildSettings, SaveFirst };
+    enum class Modal { None, NewScene, OpenScene, BuildSettings, SaveFirst, ShadowSettings };
     Modal modal_ = Modal::None;
     // What a pending "save first?" is about to do once the answer is known.
     enum class Pending { NewScene, OpenScene, LeaveProject };
@@ -460,6 +471,10 @@ private:
         ShadowQuality,
         ShadowSize,
         ShadowCascades,
+        // The sun and the two numbers that decide how a shadow is compared
+        // with the map. They live in a dialog of their own, because a menu
+        // row cannot be dragged.
+        ShadowSettings,
         // Create: a piece of ground, made of noise. It opens the panel that
         // says how the ground is made.
         Landform,
@@ -516,7 +531,11 @@ private:
     // Points the camera at the selection, far enough back that it fits.
     void frameSelection(PhysicsWorld& world, Camera& camera);
 
-    static constexpr int kMaxMenuRows = 72;
+    // The capacity is the fixed menus plus room for the Create list, which is one
+    // row per model in assets/models and is the only menu whose length changes.
+    // It is generous on purpose: a Create menu that silently hides the last
+    // models on disk is worse than a menu that is a little too big.
+    static constexpr int kMaxMenuRows = 128;
     MenuRow menuRows_[kMaxMenuRows];
     int menuFirst_[kMenuCount + 1] = {};
     // Where the search field and the layers button ended up this frame, so the

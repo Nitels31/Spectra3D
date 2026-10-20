@@ -427,6 +427,11 @@ void Application::loadProjectWorld(const ProjectInfo& project) {
                                                           : ShadowQuality::Hard;
     shadowSettings_.resolution = project_.shadowResolution;
     shadowSettings_.cascades = project_.shadowCascades;
+    shadowSettings_.sunAzimuth = project_.shadowSunAzimuth;
+    shadowSettings_.sunElevation = project_.shadowSunElevation;
+    shadowSettings_.bias = project_.shadowBias;
+    shadowSettings_.normalOffset = project_.shadowNormalOffset;
+    shadowSettings_.radius = project_.shadowRadius;
     sceneRenderer_.setShadowSettings(shadowSettings_);
 
     const std::string scenePath = ProjectLibrary::scenePath(project_);
@@ -573,6 +578,11 @@ void Application::runEditorFrame(float dt) {
                                                                                    : 1;
         project_.shadowResolution = shadowSettings_.resolution;
         project_.shadowCascades = shadowSettings_.cascades;
+        project_.shadowSunAzimuth = shadowSettings_.sunAzimuth;
+        project_.shadowSunElevation = shadowSettings_.sunElevation;
+        project_.shadowBias = shadowSettings_.bias;
+        project_.shadowNormalOffset = shadowSettings_.normalOffset;
+        project_.shadowRadius = shadowSettings_.radius;
         if (!launcher_.projects().writeManifest(project_))
             Log::error("Project: cannot write the manifest");
         else

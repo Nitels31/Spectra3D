@@ -370,6 +370,16 @@ bool ProjectLibrary::readManifest(const std::string& projectPath, ProjectInfo& o
             if (parseInt(value, integer)) info.shadowResolution = std::clamp(integer, 256, 8192);
         } else if (key == "shadowCascades") {
             if (parseInt(value, integer)) info.shadowCascades = std::clamp(integer, 1, 4);
+        } else if (key == "shadowSunAzimuth") {
+            if (parseFloat(value, number)) info.shadowSunAzimuth = clampf(number, 0.0f, 360.0f);
+        } else if (key == "shadowSunElevation") {
+            if (parseFloat(value, number)) info.shadowSunElevation = clampf(number, 1.0f, 89.0f);
+        } else if (key == "shadowBias") {
+            if (parseFloat(value, number)) info.shadowBias = clampf(number, 0.0f, 0.5f);
+        } else if (key == "shadowNormalOffset") {
+            if (parseFloat(value, number)) info.shadowNormalOffset = clampf(number, 0.0f, 8.0f);
+        } else if (key == "shadowRadius") {
+            if (parseFloat(value, number)) info.shadowRadius = clampf(number, 0.5f, 32.0f);
         } else if (key == "scene") {
             // The name of the scene file inside the project. A project that
             // keeps its scene in JSON says so here, and a project that says
@@ -428,6 +438,14 @@ text += "cameraFov=" + formatFloat(info.cameraFov) + "\n";
     text += "shadowResolution=" +
             std::to_string(std::clamp(info.shadowResolution, 256, 8192)) + "\n";
     text += "shadowCascades=" + std::to_string(std::clamp(info.shadowCascades, 1, 4)) + "\n";
+    // The sun and the two numbers that decide how a shadow is compared with
+    // the map. The sun is where the light comes from; the bias and the
+    // normal offset are how far a surface is pushed before it is compared.
+    text += "shadowSunAzimuth=" + formatFloat(info.shadowSunAzimuth) + "\n";
+    text += "shadowSunElevation=" + formatFloat(info.shadowSunElevation) + "\n";
+    text += "shadowBias=" + formatFloat(info.shadowBias) + "\n";
+    text += "shadowNormalOffset=" + formatFloat(info.shadowNormalOffset) + "\n";
+    text += "shadowRadius=" + formatFloat(info.shadowRadius) + "\n";
     // The scene file the project keeps its scene in. A name, not a path: the
     // scene lives inside the project folder and nowhere else. The resolved name,
     // so a project that has not migrated yet keeps saying what it is using.

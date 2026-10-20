@@ -3,10 +3,11 @@
 
 // The scene's vertex stage.
 //
-// It does three things and nothing else: it puts the vertex in the world, it
-// turns the normal with it, and it works out where the vertex is in the light's
-// shadow map. Everything the fragment stage needs comes out of here, so the
-// fragment stage never touches a matrix.
+// It does two things and nothing else: it puts the vertex in the world and it
+// turns the normal with it. Everything the fragment stage needs comes out of
+// here, so the fragment stage never touches a matrix of its own - except the
+// one matrix of the light, which is picked per fragment and is therefore not
+// picked here.
 
 layout(location = 0) in vec3 aPosition;
 layout(location = 1) in vec3 aNormal;
@@ -20,31 +21,10 @@ uniform mat4 uModel;
 uniform mat4 uView;
 uniform mat4 uProjection;
 
-// One matrix per cascade: the light's view and projection, fitted to the
-// stretch of the scene that the cascade covers.
-uniform mat4 uLightViewProjection[4];
-// The radius of each stretch of the scene, and the middle of the scene itself.
-//
-// The stretches are the halves of the scene, and not the reaches of the
-// camera: the map is a picture of the world as the sun sees it, and the sun
-// does not care where the eye is. A map that moved with the eye would have to
-// be drawn again every time the eye moved, and the whole point of the map is
-// to stop that.
-uniform float uCascadeRadii[4];
-uniform vec3 uSceneCentre;
-uniform int uCascadeCount;
-
 out vec3 vWorldPosition;
 out vec3 vNormal;
 out vec2 vTexCoord;
 out vec3 vColor;
-// The place of the fragment in the light's map, in the light's own clip space.
-// The fragment stage divides it by w and compares the result with the map.
-out vec4 vShadowCoord;
-// Which stretch of the scene the fragment is in. Flat: every fragment of a
-// triangle is in the same one, and the fragment stage would rather know that
-// than interpolate it.
-flat out int vCascade;
 
 void main() {
     vec4 world = uModel * vec4(aPosition, 1.0);
@@ -62,23 +42,6 @@ void main() {
 
     vTexCoord = aTexCoord;
     vColor = aColor;
-
-    // The cascade: the stretch of the scene the fragment is in, measured from
-    // the middle of the scene. The loop is over three and not over
-    // uCascadeCount: a loop with a dynamic bound is the one thing a shader
-    // cannot unroll, and the number of cascades is the same for every vertex
-    // of the frame.
-    float fromCentre = distance(world.xyz, uSceneCentre);
-    int cascade = 0;
-    for (int i = 0; i < 3; ++i) {
-        if (i < uCascadeCount && fromCentre <= uCascadeRadii[i]) {
-            cascade = i;
-            break;
-        }
-    }
-    vCascade = cascade;
-
-    vShadowCoord = uLightViewProjection[cascade] * world;
 
     gl_Position = uProjection * uView * world;
 }

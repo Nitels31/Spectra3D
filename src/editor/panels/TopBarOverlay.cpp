@@ -33,6 +33,9 @@ constexpr int kMaxSearchRows = 8;
 // frame and the same button positions.
 constexpr float kModalWidth = 460.0f;
 constexpr float kModalRowHeight = 22.0f;
+// The height of one row of the shadow settings: a number that can be dragged
+// and typed, the same widget the inspector uses.
+constexpr float kShadowRowHeight = 26.0f;
 constexpr int kModalButton = 1700;
 
 // A dialog's explanation has to fit its dialog. One line that runs off the edge is
@@ -562,6 +565,13 @@ void Editor::drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int 
         title = text("modal.saveFirst");
         height += hintHeight("modal.saveFirstHint");
         break;
+    case Modal::ShadowSettings:
+        // Five numbers and a line of explanation. The height is measured, not
+        // declared: the hint is wrapped and the words differ between the
+        // languages, and a dialog sized for the shorter one clips the other.
+        title = text("modal.shadowSettings");
+        height += hintHeight("modal.shadowSettingsHint") + 5.0f * kShadowRowHeight;
+        break;
     case Modal::None:
         return;
     }
@@ -579,6 +589,10 @@ void Editor::drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int 
 
     float y = panel.y + kModalTop;
     bool accept = false, cancel = false, discard = false;
+    // A dialog with one button: the shadow settings change the picture while
+    // they are open, so there is nothing to cancel - only something to stop
+    // looking at.
+    bool oneButtonOnly = false;
 
     // Label over an editable box: the same field the inspector uses, so typing,
     // paste and caret behaviour are identical everywhere.
@@ -638,6 +652,45 @@ void Editor::drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int 
         primary = text("btn.save");
         secondary = text("btn.dontSave");
         break;
+    case Modal::ShadowSettings: {
+        // The sun and the numbers that decide how a shadow is compared with
+        // the map.
+        //
+        // They are changed while the dialog is open, and the picture behind
+        // it changes with them: the sun moves and the shadows move with it,
+        // and the map is drawn again because the sun moved. A dialog that
+        // only changed the numbers when it was closed would make the sun
+        // something to be set and not to be looked at, and the whole point of
+        // the sun is where the shadows fall.
+        y += drawWrapped(ui, panel.x + 14.0f, y, textWidth, text("modal.shadowSettingsHint"),
+                         theme::textDim);
+        y += 6.0f;
+        if (shadowSettings_) {
+            ui_.propertyFloat(ui, kShadowAzimuth, panel.x + 14.0f, y, panel.width - 28.0f,
+                              text("settings.shadowAzimuth"), shadowSettings_->sunAzimuth,
+                              0.25f, 0.0f, 360.0f);
+            y += kShadowRowHeight;
+            ui_.propertyFloat(ui, kShadowElevation, panel.x + 14.0f, y, panel.width - 28.0f,
+                              text("settings.shadowElevation"), shadowSettings_->sunElevation,
+                              0.1f, 1.0f, 89.0f);
+            y += kShadowRowHeight;
+            ui_.propertyFloat(ui, kShadowBias, panel.x + 14.0f, y, panel.width - 28.0f,
+                              text("settings.shadowBias"), shadowSettings_->bias, 0.002f, 0.0f,
+                              0.5f);
+            y += kShadowRowHeight;
+            ui_.propertyFloat(ui, kShadowNormal, panel.x + 14.0f, y, panel.width - 28.0f,
+                              text("settings.shadowNormal"), shadowSettings_->normalOffset,
+                              0.1f, 0.0f, 8.0f);
+            y += kShadowRowHeight;
+            ui_.propertyFloat(ui, kShadowRadius, panel.x + 14.0f, y, panel.width - 28.0f,
+                              text("settings.shadowRadius"), shadowSettings_->radius, 0.25f, 0.5f,
+                              32.0f);
+            y += kShadowRowHeight;
+        }
+        primary = text("btn.close");
+        oneButtonOnly = true;
+        break;
+    }
     case Modal::None:
         return;
     }
@@ -650,7 +703,8 @@ void Editor::drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int 
         const Rect no{panel.x + panel.width - 226.0f, buttonY, 100.0f, 24.0f};
         if (ui_.button(ui, kModalButton + 2, no.x, no.y, no.width, no.height, secondary.c_str()))
             discard = true;
-    } else if (ui_.button(ui, kModalButton, panel.x + 14.0f, buttonY, 96.0f, 24.0f,
+    } else if (!oneButtonOnly &&
+               ui_.button(ui, kModalButton, panel.x + 14.0f, buttonY, 96.0f, 24.0f,
                           text("btn.cancel"))) {
         cancel = true;
     }
@@ -684,6 +738,10 @@ void Editor::drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int 
         // Remembered, so the shell can stage the build wherever this dialog said.
         buildFolder_ = modalField_.text();
         shellRequest_ = ShellRequest::Build;
+        break;
+    case Modal::ShadowSettings:
+        // Nothing to do: the numbers were changed while the dialog was open,
+        // and the picture behind it changed with them.
         break;
 case Modal::SaveFirst: {
         // Save and "Don't save" both mean "go ahead with what you asked"; they

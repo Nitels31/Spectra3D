@@ -53,7 +53,12 @@ public:
     // An array of them: the shadow's matrices and the stretches of the scene
     // are arrays, and the name of an array's first element is the name the
     // program knows it by.
+    //
+    // The count is the number of *elements*: four for a float[4], four for a
+    // mat4[4], and four for a vec4[4] - which is sixteen numbers, because
+    // the driver is told how many vectors there are and not how many numbers.
     void setFloatArray(const char* name, const float* values, int count);
+    void setVec4Array(const char* name, const float* values, int count);
     void setMat4Array(const char* name, const float* values, int count);
 
     // Where an attribute lives, or -1 when the program does not have it.

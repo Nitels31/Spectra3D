@@ -69,6 +69,15 @@ void cameraFrustum(const RigidBody& body, float length, Vec3 out[4]) {
 constexpr float kCameraFrustumLength = 1.2f;
 constexpr float kCameraLensOffset = 0.12f;
 
+// How far outside a stretch of the scene a thing may stand and still cast
+// into it.
+//
+// The sun is not straight up: the shadow of a thing reaches further than the
+// thing itself, and a thing that stands just outside the box of the near
+// stretch can still put its shadow on the ground inside it. Without this the
+// shadow of the first metre of a model would be missing in the near stretch.
+constexpr float kCasterReach = 6.0f;
+
 // 1 at the near end of the range, 0 at the far end, smooth in between.
 float fadeOut(float distance, float start, float end) {
     if (distance <= start) return 1.0f;
@@ -235,12 +244,12 @@ void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& m
     // drawn before the map is full.
     //
     // And only when the map has gone stale: while the editor sits still, the
-    // world and the eye are the same, and the map would be the same picture
+    // world and the sun are the same, and the map would be the same picture
     // again and again.
-    if (shadowsEnabled() && shadowProgram_.ready()) {
-        if (shadowMapIsStale(world, camera)) {
-            renderShadowMap(world, meshes, textures, camera, alpha, hiddenBody);
-            rememberShadowState(world, camera);
+    if (shadowsEnabled() && shadowProgram_.ready() && shadowMap_.ready()) {
+        if (shadowMapIsStale(world)) {
+            renderShadowMap(world, meshes, alpha, hiddenBody);
+            rememberShadowState(world);
         }
     }
 
@@ -248,8 +257,16 @@ void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& m
     // everything else is drawn over it.
     sky_.draw(camera);
 
+    // The uniforms of the scene pass, before anything is drawn with them: the
+    // sheet the shadow falls on is drawn with the same program as the bodies.
+    beginScenePass(camera);
+
+    // The sheet the shadow falls on, and then the grid over it: the grid is
+    // the ground the eye reads, and the sheet is what the shadow is drawn on.
+    if (shadowsEnabled() && shadowProgram_.ready() && shadowMap_.ready())
+        drawShadowCatcher();
     if (showGrid) drawArena(camera);
-    drawBodies(world, meshes, textures, alpha, hiddenBody);
+    drawBodies(world, meshes, textures, camera, alpha, hiddenBody);
 
     if (showVectors) drawDebugVectors(world);
     glEnable(GL_LIGHTING);
@@ -285,14 +302,17 @@ void SceneRenderer::renderShadowDebug(const Camera& camera, const Viewport& view
     shadowDebugProgram_.setInt("uShadowMap", 4);
     // The layer of the stretch the eye is in: the map of a stretch nobody is
     // looking at is a map of nothing.
+    //
+    // The stretches are cut from the middle of the scene and the shader picks
+    // the one by the distance from that middle, so this is the same question
+    // the shader asks - and not the distance from the eye, which is a
+    // different question and answered nothing before.
     int layer = 0;
     {
-        Vec3 forward, right, up;
-        camera.basis(forward, right, up);
-        const float depth = dot(camera.position - camera.position, forward);
+        const float fromCentre = (camera.position - shadowMap_.sceneCentre()).length();
         const std::vector<float>& ends = shadowMap_.cascadeSplits();
         for (size_t i = 0; i < ends.size(); ++i)
-            if (depth <= ends[i]) {
+            if (fromCentre <= ends[i]) {
                 layer = (int)i;
                 break;
             }
@@ -321,63 +341,67 @@ void SceneRenderer::renderShadowDebug(const Camera& camera, const Viewport& view
     glDisable(GL_SCISSOR_TEST);
 }
 
-// The shadow map is drawn again only when the world or the eye has moved.
+// The shadow map is drawn again only when the world or the sun has moved.
 //
 // The map is a picture of the world as the sun sees it, and the sun does not
-// move and the world does not move while the editor sits still: the map would
-// be the same picture a thousand times a second. So the state the map depends
-// on is remembered, and the pass is skipped when it has not changed.
+// move and the world does not move while the editor sits still: the map
+// would be the same picture a thousand times a second. So the state the map
+// depends on is remembered, and the pass is skipped when it has not changed.
 //
 // The cost of the test is a walk over the bodies that cast, and the cost of
 // the pass is a walk over the bodies that cast plus four draws of the scene.
 // The test is the cheaper of the two by a long way.
-bool SceneRenderer::shadowMapIsStale(const PhysicsWorld& world, const Camera& camera) const {
+bool SceneRenderer::shadowMapIsStale(const PhysicsWorld& world) {
     const ShadowState& state = shadowState_;
     if (!state.ready) return true;
     if (state.resolution != shadowMap_.resolution() || state.cascades != shadowMap_.layers())
         return true;
-    // The eye is NOT part of this. The map is a picture of the world as the
-    // sun sees it, and the sun does not care where the eye is: a map that
-    // moved with the eye would be a different picture every time the eye
-    // moved, and then it would have to be drawn again every time the eye
-    // moved - which is every frame of a flight, and the whole point of the
-    // map was to stop that.
-    (void)camera;
+    // The map was made again: the one the renderer remembers is not the one
+    // that is there, and a map that was made again holds nothing.
+    if (state.generation != shadowMap_.generation()) return true;
 
-    // The bodies that cast: where they are and how big they are.
-    std::vector<std::array<float, 7>> casters;
-    casters.reserve(world.bodies.size());
-    for (size_t i = 0; i < world.bodies.size(); ++i) {
-        const RigidBody& body = world.bodies[i];
-        if (!body.visible || !body.castsShadow) continue;
-        casters.push_back({body.position.x, body.position.y, body.position.z,
-                           body.boundRadius, body.meshScale, (float)body.mesh,
-                           body.shape == Shape::Mesh ? 1.0f : 0.0f});
-    }
-    if (casters.size() != state.casters.size()) return true;
-    for (size_t i = 0; i < casters.size(); ++i)
-        for (size_t k = 0; k < casters[i].size(); ++k)
-            if (casters[i][k] != state.casters[i][k]) return true;
+    // The sun. The map is a picture of the world as the sun sees it, and the
+    // sun is a setting: move it and the picture is a different one, and the
+    // boxes of the stretches have to be fitted to it again as well. Without
+    // this the shadows stay where they were while the sun walks away from
+    // them, and the setting that moves them looks like a setting that does
+    // nothing.
+    const Vec3 sun = sunDirection(shadowMap_.settings());
+    if (sun.x != state.sun.x || sun.y != state.sun.y || sun.z != state.sun.z) return true;
+
+    // The bodies that cast: where they are, how big they are and how they
+    // are turned. A thing that spins in place stands in the same place and
+    // casts a different shadow, so the turn is part of the state.
+    collectCasters(world, casterScratch_);
+    if (casterScratch_.size() != state.casters.size()) return true;
+    for (size_t i = 0; i < casterScratch_.size(); ++i)
+        for (size_t k = 0; k < casterScratch_[i].size(); ++k)
+            if (casterScratch_[i][k] != state.casters[i][k]) return true;
     return false;
 }
 
-void SceneRenderer::rememberShadowState(const PhysicsWorld& world, const Camera& camera) {
-    ShadowState& state = shadowState_;
-    state.casters.clear();
-    state.casters.reserve(world.bodies.size());
+// The state of every body that casts, in the form the map remembers it in.
+void SceneRenderer::collectCasters(const PhysicsWorld& world,
+                                   std::vector<std::array<float, 11>>& out) const {
+    out.clear();
+    out.reserve(world.bodies.size());
     for (size_t i = 0; i < world.bodies.size(); ++i) {
         const RigidBody& body = world.bodies[i];
         if (!body.visible || !body.castsShadow) continue;
-        state.casters.push_back({body.position.x, body.position.y, body.position.z,
-                                 body.boundRadius, body.meshScale, (float)body.mesh,
-                                 body.shape == Shape::Mesh ? 1.0f : 0.0f});
+        out.push_back({body.position.x, body.position.y, body.position.z, body.boundRadius,
+                       body.meshScale, (float)body.mesh,
+                       body.shape == Shape::Mesh ? 1.0f : 0.0f, body.orientation.x,
+                       body.orientation.y, body.orientation.z, body.orientation.w});
     }
-    state.eye = camera.position;
-    state.yaw = camera.yaw;
-    state.pitch = camera.pitch;
-    state.fov = camera.fovDeg;
+}
+
+void SceneRenderer::rememberShadowState(const PhysicsWorld& world) {
+    ShadowState& state = shadowState_;
+    collectCasters(world, state.casters);
+    state.sun = sunDirection(shadowMap_.settings());
     state.resolution = shadowMap_.resolution();
     state.cascades = shadowMap_.layers();
+    state.generation = shadowMap_.generation();
     state.ready = true;
 }
 
@@ -386,7 +410,6 @@ void SceneRenderer::rememberShadowState(const PhysicsWorld& world, const Camera&
 // The bodies are drawn twice - once into the map and once into the scene -
 // and the map is the cheaper of the two: a position and nothing else.
 void SceneRenderer::renderShadowMap(const PhysicsWorld& world, const MeshRegistry& meshes,
-                                    const TextureRegistry& textures, const Camera& camera,
                                     float alpha, int hiddenBody) {
     // Where the map is fitted: the middle of the scene and how far it reaches.
     // The eye is not part of it, and that is the whole optimisation: the map
@@ -422,7 +445,14 @@ void SceneRenderer::renderShadowMap(const PhysicsWorld& world, const MeshRegistr
     glDisable(GL_SCISSOR_TEST);
 
     shadowProgram_.use();
+
+    // The stretches of the scene, and how far a thing may stand outside one
+    // of them and still cast into it.
+    const Vec3 sceneCentre = shadowMap_.sceneCentre();
+    const std::vector<float>& radii = shadowMap_.cascadeRadii();
+
     for (int cascade = 0; cascade < shadowMap_.layers(); ++cascade) {
+        const float reach = radii[(size_t)cascade] + kCasterReach;
         shadowMap_.beginPass(cascade);
         const Mat4& light = shadowMap_.lightMatrices()[(size_t)cascade];
         shadowProgram_.setMat4("uLightViewProjection", light.m);
@@ -433,10 +463,21 @@ void SceneRenderer::renderShadowMap(const PhysicsWorld& world, const MeshRegistr
             if (!body.visible || index == hiddenBody) continue;
             if (!body.castsShadow) continue;
 
+            // The thing is not in this stretch of the scene, so its shadow
+            // cannot reach it.
+            //
+            // This is the whole reason a model is not pushed through the
+            // shadow map four times: the near stretches are boxes in the
+            // middle of the scene, and a model that stands at the edge of it
+            // has no shadow in them at all. The reach is what the sun's angle
+            // adds: the shadow of a thing reaches further than the thing.
+            if ((body.position - sceneCentre).length() - body.boundRadius > reach) continue;
+
             const Vec3 drawPosition{lerpf(body.prevPosition.x, body.position.x, alpha),
                                     lerpf(body.prevPosition.y, body.position.y, alpha),
                                     lerpf(body.prevPosition.z, body.position.z, alpha)};
             const Quat drawOrientation = nlerp(body.prevOrientation, body.orientation, alpha);
+
 
             if (body.hasMesh()) {
                 const MeshAsset* mesh = meshes.at(body.mesh);
@@ -640,8 +681,82 @@ void SceneRenderer::buildArenaGrid() {
     arenaColors_.assign(arenaVertexColors_.size(), 0.0f);
 }
 
+// The sheet the shadow falls on.
+//
+// The ground of the editor is a grid of lines, and a shadow on a line is a
+// shadow nobody can see: the model stands on nothing and looks like it is
+// flying. So there is a plain sheet under the grid that takes the shadow and
+// is not drawn - what the eye sees is the shadow on it, and the grid over it.
+void SceneRenderer::drawShadowCatcher() {
+    if (!sceneProgram_.ready()) return;
+
+    if (!shadowCatcherReady_) {
+        // Four corners and the normal they face, in the layout the scene's
+        // program reads: position, then normal.
+        //
+        // It is big. The sheet has to reach past the model wherever it is, and
+        // the part of it that is out of the shadow's reach draws nothing at
+        // all, so the size costs nothing.
+        //
+        // Six vertices and not four: two triangles, written out. A quad of
+        // four vertices is two triangles as well, but the seam between them
+        // is a place where the two halves can disagree, and a sheet with a
+        // seam across it is a sheet with half of it missing.
+        constexpr float kReach = 400.0f;
+        const float corners[6][6] = {
+            {-kReach, 0.0f, -kReach, 0.0f, 1.0f, 0.0f},  {kReach, 0.0f, -kReach, 0.0f, 1.0f, 0.0f},
+            {kReach, 0.0f, kReach, 0.0f, 1.0f, 0.0f},     {-kReach, 0.0f, -kReach, 0.0f, 1.0f, 0.0f},
+            {kReach, 0.0f, kReach, 0.0f, 1.0f, 0.0f},     {-kReach, 0.0f, kReach, 0.0f, 1.0f, 0.0f},
+        };
+        shadowCatcher_.assign(36, 0.0f);
+        for (int i = 0; i < 6; ++i)
+            for (int k = 0; k < 6; ++k) shadowCatcher_[(size_t)i * 6 + (size_t)k] = corners[i][k];
+        shadowCatcherReady_ = true;
+    }
+
+    sceneProgram_.use();
+    sceneProgram_.setInt("uSurfaceMode", 1);
+    sceneProgram_.setFloat("uShadowStrength", 0.55f);
+    sceneProgram_.setMat4("uModel", Mat4::identity().m);
+    sceneProgram_.setInt("uUseVertexColour", 0);
+
+    // The depth test is off and the depth is not written: the sheet is on the
+    // ground, it is drawn before the bodies, and the bodies stand on it and
+    // have to be in front of it. A sheet that wrote depth would put a floor
+    // in front of everything that is further away than it.
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_NORMAL_ARRAY);
+    glVertexPointer(3, GL_FLOAT, 24, shadowCatcher_.data());
+    glNormalPointer(GL_FLOAT, 24, shadowCatcher_.data() + 3);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glDisableClientState(GL_NORMAL_ARRAY);
+    glDisableClientState(GL_VERTEX_ARRAY);
+
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+
+    // The bodies are drawn with the ordinary program again.
+    sceneProgram_.setInt("uSurfaceMode", 0);
+}
+
 void SceneRenderer::drawArena(const Camera& camera) {
     if (!arenaGridReady_) buildArenaGrid();
+
+    // The grid is drawn by the fixed pipeline, and a program that is still
+    // bound takes the fixed pipeline's drawing with it: in a compatibility
+    // context the same shaders run over the grid's lines, and the scene's
+    // shader wants a normal the grid does not have. The grid came out black.
+    //
+    // So the program is let go of before the grid and taken up again after
+    // it. The grid is the one thing in the scene that is not drawn by a
+    // program, and it has to say so.
+    gl::UseProgram(0);
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -732,8 +847,12 @@ void SceneRenderer::drawDebugVectors(const PhysicsWorld& world) {
 
 
 void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& meshes,
-                               const TextureRegistry& textures, float alpha, int hiddenBody) {
-    beginScenePass();
+                               const TextureRegistry& textures, const Camera& camera, float alpha,
+                               int hiddenBody) {
+    // The program again: the grid let it go of, because the grid is drawn by
+    // the fixed pipeline. The uniforms are still the ones the scene pass set.
+    sceneProgram_.use();
+    (void)camera;
 
     int paletteIndex = 0;
     for (int index = 0; index < (int)world.bodies.size(); ++index) {
@@ -870,7 +989,7 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
 }
 
 // The uniforms the scene pass shares: the sun, the sky and the shadow map.
-void SceneRenderer::beginScenePass() {
+void SceneRenderer::beginScenePass(const Camera& camera) {
     if (!sceneProgram_.ready()) return;
     sceneProgram_.use();
 
@@ -889,27 +1008,41 @@ void SceneRenderer::beginScenePass() {
     sceneProgram_.setVec3("uFogColour", settings.fogColour.x, settings.fogColour.y,
                           settings.fogColour.z);
     sceneProgram_.setFloat("uFogDensity", settings.fogDensity);
+    // Where the eye is. The shine and the haze are both measured from it, and
+    // a shader that is not told where the eye is measures both from the
+    // middle of the world.
+    sceneProgram_.setVec3("uCameraPosition", camera.position.x, camera.position.y,
+                          camera.position.z);
     sceneProgram_.setMat4("uView", viewMatrix_.m);
     sceneProgram_.setMat4("uProjection", projectionMatrix_.m);
 
     // The shadow map: the same picture read two ways. The filter belongs to
-    // the sampler and not to the texture, so the one map is both.
+    // the sampler and not to the texture, so the two readings are two sampler
+    // objects over one map: one spreads the texels out, the other reads them
+    // where they are.
     const int quality = settings.quality == ShadowQuality::Off     ? 0
                         : settings.quality == ShadowQuality::Hard   ? 1
                         : settings.quality == ShadowQuality::Filtered ? 2
                                                                      : 3;
     sceneProgram_.setInt("uShadowMode", quality);
+    sceneProgram_.setInt("uShadowDebug", shadowDebugMode_);
     sceneProgram_.setFloat("uShadowTexelSize", 1.0f / (float)std::max(1, shadowMap_.resolution()));
     sceneProgram_.setFloat("uShadowBias", settings.bias);
+    sceneProgram_.setFloat("uShadowNormalTexels", settings.normalOffset);
     sceneProgram_.setFloat("uShadowRadius", settings.radius);
-    sceneProgram_.setInt("uCascadeCount", shadowMap_.layers());
+    sceneProgram_.setInt("uCascadeCount", std::max(1, shadowMap_.layers()));
 
     gl::ActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D_ARRAY, shadowMap_.texture());
     sceneProgram_.setInt("uShadowMap", 2);
     gl::ActiveTexture(GL_TEXTURE3);
     glBindTexture(GL_TEXTURE_2D_ARRAY, shadowMap_.texture());
-    sceneProgram_.setInt("uShadowMapFiltered", 3);
+    sceneProgram_.setInt("uShadowMapPoint", 3);
+    // And the two samplers. A sampler of zero means "the texture's own
+    // filter", which is the plain one - and is what a map that is not there
+    // wants.
+    gl::BindSampler(2, shadowMap_.linearSampler());
+    gl::BindSampler(3, shadowMap_.pointSampler());
     // And the white texel on the first unit: the primitives have no picture
     // of their own, and a sampler with nothing bound to it reads black - a
     // whole object drawn in the colour of nothing.
@@ -917,8 +1050,8 @@ void SceneRenderer::beginScenePass() {
     glBindTexture(GL_TEXTURE_2D, whiteTexture_);
     sceneProgram_.setInt("uAlbedoMap", 0);
 
-    // The matrices of the cascades, the middle of the scene and the radius of
-    // each stretch of it.
+    // The matrices of the cascades, the middle of the scene and what is known
+    // about every stretch of it.
     float matrices[16 * 4] = {};
     const std::vector<Mat4>& lights = shadowMap_.lightMatrices();
     for (int i = 0; i < 4; ++i) {
@@ -927,16 +1060,31 @@ void SceneRenderer::beginScenePass() {
     }
     sceneProgram_.setMat4Array("uLightViewProjection[0]", matrices, 4);
 
+    // What is known about every stretch: how far it reaches from the middle
+    // of the scene, how deep it is in metres, and how big one of its texels
+    // is.
+    //
+    // The bias is a distance in metres and the map holds a distance as a
+    // fraction of one, so the second and the third are what turn the bias
+    // into the number the map is read with.
     const std::vector<float>& radii = shadowMap_.cascadeRadii();
-    float radiusValues[4] = {};
-    for (int i = 0; i < 4; ++i)
-        radiusValues[i] = i < (int)radii.size() ? radii[(size_t)i] : 0.0f;
-    sceneProgram_.setFloatArray("uCascadeRadii[0]", radiusValues, 4);
+    const std::vector<float>& ranges = shadowMap_.cascadeDepthRanges();
+    const std::vector<float>& texels = shadowMap_.cascadeTexelSizes();
+    float params[4 * 4] = {};
+    for (int i = 0; i < 4; ++i) {
+        params[i * 4 + 0] = i < (int)radii.size() ? radii[(size_t)i] : 0.0f;
+        params[i * 4 + 1] = i < (int)ranges.size() ? ranges[(size_t)i] : 1.0f;
+        params[i * 4 + 2] = i < (int)texels.size() ? texels[(size_t)i] : 1.0f;
+        params[i * 4 + 3] = 0.0f;
+    }
+    sceneProgram_.setVec4Array("uCascadeParams[0]", params, 4);
+
     const Vec3 centre = shadowMap_.sceneCentre();
     sceneProgram_.setVec3("uSceneCentre", centre.x, centre.y, centre.z);
 }
 
 // One mesh, with the scene's program.
+
 bool SceneRenderer::drawMeshWithShader(const MeshAsset& mesh, const TextureRegistry& textures,
                                        const Mat4& model) {
     if (!sceneProgram_.ready()) return false;

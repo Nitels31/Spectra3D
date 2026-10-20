@@ -92,6 +92,12 @@ public:
     void setShowShadowDebug(bool show) { showShadowDebug_ = show; }
     bool showShadowDebug() const { return showShadowDebug_; }
 
+    // A picture of the shadow instead of the picture: 1 the shadow itself, 2
+    // whether the fragment is inside the box of the map, 3 where it is in
+    // the map, 4 which stretch of the scene it is in, 5 how far it is from
+    // the light.
+    void setShadowDebugMode(int mode) { shadowDebugMode_ = mode; }
+
     // Which handles the gizmo draws. One enum instead of a bool because the tool
     // now has three shapes, and a bool that encodes two of them is how the rotate
     // tool ends up drawn as an arrow.
@@ -141,8 +147,13 @@ private:
     void setViewMatrix(const Camera& camera);
     void buildArenaGrid();
     void drawArena(const Camera& camera);
+    // The sheet the shadow falls on. The ground of the editor is a grid of
+    // lines, and a shadow on a line is a shadow nobody can see - so there is
+    // a plain sheet under the grid that takes the shadow and is not drawn.
+    void drawShadowCatcher();
     void drawBodies(const PhysicsWorld& world, const MeshRegistry& meshes,
-                     const TextureRegistry& textures, float alpha, int hiddenBody);
+                     const TextureRegistry& textures, const Camera& camera, float alpha,
+                     int hiddenBody);
     void drawDebugVectors(const PhysicsWorld& world);
 
     // The shadow pass: the map of what the sun hit first.
@@ -151,12 +162,11 @@ private:
     // happens before it: the shadow of a thing is in the picture of the
     // ground it falls on, and the ground cannot be drawn before the map is
     // full.
-    void renderShadowMap(const PhysicsWorld& world, const MeshRegistry& meshes,
-                         const TextureRegistry& textures, const Camera& camera, float alpha,
+    void renderShadowMap(const PhysicsWorld& world, const MeshRegistry& meshes, float alpha,
                          int hiddenBody);
 
     // The uniforms the scene pass shares: the sun, the sky, the shadow map.
-    void beginScenePass();
+    void beginScenePass(const Camera& camera);
     // Draws one mesh with the scene's program.
     bool drawMeshWithShader(const MeshAsset& mesh, const TextureRegistry& textures,
                             const Mat4& model);
@@ -165,7 +175,7 @@ private:
     bool sphereVisible(const Vec3& center, float radius) const;
     void drawCameraEntity(const RigidBody& body, const Mat4& model);
 
-    // The shadow map is drawn again only when the world or the eye has moved.
+    // The shadow map is drawn again only when the world or the sun has moved.
     //
     // The map is a picture of the world as the sun sees it, and the sun does
     // not move and the world does not move while the editor sits still: the
@@ -173,18 +183,26 @@ private:
     // the map depends on is remembered, and the pass is skipped when it has
     // not changed.
     struct ShadowState {
-        // Every body that casts: where it is and how big it is.
-        std::vector<std::array<float, 7>> casters;
-        // The eye, and the way it looks.
-        Vec3 eye;
-        float yaw = 0.0f, pitch = 0.0f, fov = 70.0f;
+        // Every body that casts: where it is, how big it is and how it is
+        // turned. The turn is in there because a thing that spins in place
+        // casts a different shadow while standing in the same place.
+        std::vector<std::array<float, 11>> casters;
+        // The direction the light comes from. The sun is a setting, and a
+        // setting that moves turns the map into a different picture.
+        Vec3 sun{0.0f, 1.0f, 0.0f};
         // The settings, for the map's own size.
         int resolution = 0, cascades = 0;
+        // Which map the picture is in. A map that was made again is a new
+        // picture, and a new picture holds nothing.
+        unsigned int generation = 0;
         bool ready = false;
     };
+    // The state of every body that casts, in the form the map remembers it in.
+    void collectCasters(const PhysicsWorld& world,
+                        std::vector<std::array<float, 11>>& out) const;
     // True when the map has to be drawn again.
-    bool shadowMapIsStale(const PhysicsWorld& world, const Camera& camera) const;
-    void rememberShadowState(const PhysicsWorld& world, const Camera& camera);
+    bool shadowMapIsStale(const PhysicsWorld& world);
+    void rememberShadowState(const PhysicsWorld& world);
 
     PrimitiveCache primitives_;
     Skybox sky_;
@@ -215,10 +233,18 @@ private:
 
     // Whether the map of the shadows is drawn over the scene.
     bool showShadowDebug_ = false;
+    // Which picture the scene is drawn with when the shadows are being looked
+    // at. Zero is the picture itself.
+    int shadowDebugMode_ = 0;
 
     // The state the shadow map depends on, so that the pass is skipped when
     // nothing has moved.
     ShadowState shadowState_;
+    // The same list, built while the map is asked whether it is stale. A
+    // member and not a local: the question is asked every frame, and a vector
+    // that is built and thrown away every frame is a heap allocation every
+    // frame.
+    std::vector<std::array<float, 11>> casterScratch_;
 
     // Static grid positions plus the per-frame colour stream. Built once, then
     // drawn with a single glDrawArrays instead of ~1000 immediate-mode calls.
@@ -235,6 +261,11 @@ private:
     // fade is applied. The minor lines, the major lines and the axes each have
     // their own.
     std::vector<float> arenaVertexAlpha_;
+
+    // The sheet the shadow falls on: four corners and the normal they face,
+    // in the layout the scene's program reads.
+    std::vector<float> shadowCatcher_;
+    bool shadowCatcherReady_ = false;
 };
 
 } // namespace s3d

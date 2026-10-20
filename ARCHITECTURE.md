@@ -249,13 +249,72 @@ the texture coordinates written out by hand are the same picture on every
 driver, and the coordinates are the cube map rules spelled out, so a face looks
 the same whether it came from a file or from a panorama.
 
+**THE SHADOWS ARE A PASS OF THEIR OWN.** `ShadowMap` is the picture of how far
+away the sun hit something first: one texture, one layer per *cascade* - a
+cascade is a stretch of the scene with a map of its own, so that the near
+ground gets the texels and the far ground does not steal them. The map holds a
+**distance in the world** and not a depth of the window, because the sun is a
+directional light and its projection is orthographic: the distance in the map
+is the distance in the world, and a shadow is one comparison of two numbers
+that mean the same thing.
+
+The map is fitted to the **scene and not to the view**. The map is a picture of
+the world as the sun sees it, and the sun does not care where the eye is: a
+map fitted to the view is a different picture every time the eye moves, and
+then it has to be drawn again every time the eye moves - which is every frame
+of a flight, and the whole point of the map was to stop that. So the map is
+drawn again only when the world or the sun has changed, and the state it
+depends on is remembered and compared: where every body that casts is, how
+big it is, **how it is turned** (a thing that spins in place stands in the
+same place and casts a different shadow), and where the sun is. The sun is a
+setting, and a setting that moves turns the map into a different picture.
+
+**THE STRETCH IS CHOSEN PER FRAGMENT.** A cascade is a sphere around the
+middle of the scene, and the cascade a fragment belongs to is the smallest one
+that reaches it - a question about the distance to the middle, and the distance
+to a point is not a straight line and cannot be interpolated across a
+triangle. A ground is two triangles forty metres across and the distance to
+the middle is the same at all four of its corners, so a vertex stage that
+chose the cascade would put the whole ground in the outermost one, and the
+shadow of a box in the middle of the scene would fall on a cascade the box
+was never drawn into. It is chosen in the fragment stage, where the distance
+is the distance.
+
+**THE BIAS IS IN METRES.** The bias is how far the surface is pushed towards
+the light before it is compared with the map, and it is a distance in the
+world and not a number in the map's own units: the map holds a distance as a
+fraction of how deep the box of its cascade is, and that depth is different in
+every cascade. Half of the bias pushes the surface along its own normal, which
+keeps the shadow touching the thing that casts it, and the other half pushes
+it along the light and grows with the slope of the surface, which is what the
+stripes a surface draws on itself are.
+
+**A MODEL IS NOT PUSHED THROUGH THE MAP FOUR TIMES.** The near cascades are
+boxes in the middle of the scene, and a model that stands at the edge of it
+has no shadow in them at all, so a body is only drawn into the cascades it
+reaches. The map is also not kept at all when the shadows are off: a 4096
+map with four cascades is a hundred and thirty megabytes of picture, and the
+machine that cannot afford it is exactly the machine that wanted the shadows
+off.
+
+**THE GROUND OF THE EDITOR IS A SHEET, NOT A GRID.** The grid is a window on
+the world grid: a hundred and twenty minor lines a unit apart, fading out
+between twenty-eight and sixty metres. A shadow on a line is a shadow nobody
+can see, so the model would stand on nothing and look like it is flying.
+There is a plain sheet under the grid that is **not drawn** and only takes
+the shadow - what the eye sees is the shadow on it, and the grid over it. The
+sheet is drawn with the same program as the bodies, in a mode of its own
+(`uSurfaceMode`), and it is six vertices rather than four: a quad of four
+vertices is two triangles as well, and the seam between them is a place
+where the two halves can disagree.
+
 The sky is drawn first, with the depth test off and the depth write off, so it
 is behind everything and hides nothing. The cube is put where the camera is and
 scaled up, and it is **not turned**: the model matrix is a translation and a
 scale and nothing else, so the cube's own frame is the world's frame, and the
 direction a texel is looked up in is a world direction.
 
-**The grid follows the camera.** The arena grid is a *window on the world
+**The grid follows the camera.** The grid is a *window on the world
 grid*: the patch is snapped to the major step and moved with the camera, so
 every line lands back on the world position it was on before and there is no
 edge of the grid to walk to. It is drawn in two parts, because one part cannot
@@ -911,7 +970,7 @@ their own literals.
 
 | Path | What it is |
 |---|---|
-| `<projectsRoot>/<Project>/project.spectra` | the manifest: `name`, `version`, `engine`, `created`, `modified`, `language`, `gravity`, `favorite`, `cameraX/Y/Z`, `cameraYaw`, `cameraPitch`, `cameraFov` |
+| `<projectsRoot>/<Project>/project.spectra` | the manifest: `name`, `version`, `engine`, `created`, `modified`, `language`, `gravity`, `favorite`, `cameraX/Y/Z`, `cameraYaw`, `cameraPitch`, `cameraFov`, `shadowQuality`, `shadowResolution`, `shadowCascades`, `shadowSunAzimuth`, `shadowSunElevation`, `shadowBias`, `shadowNormalOffset`, `shadowRadius` |
 | `<projectsRoot>/<Project>/scene.txt` | the scene document (an empty file is created with the project) |
 | `<projectsRoot>/<Project>/editorlayout.txt` | the saved editor workspace (written by `EditorLayout.cpp`) |
 | `<projectsRoot>/<Project>/scripts/` | `*.as`, run when Play begins |

@@ -37,6 +37,7 @@ extern PFNGLUNIFORM1IPROC Uniform1i;
 extern PFNGLUNIFORM1FPROC Uniform1f;
 extern PFNGLUNIFORM3FPROC Uniform3f;
 extern PFNGLUNIFORM1FVPROC Uniform1fv;
+extern PFNGLUNIFORM4FVPROC Uniform4fv;
 extern PFNGLUNIFORMMATRIX4FVPROC UniformMatrix4fv;
 
 extern PFNGLGENFRAMEBUFFERSPROC GenFramebuffers;
@@ -52,6 +53,17 @@ extern PFNGLRENDERBUFFERSTORAGEPROC RenderbufferStorage;
 
 extern PFNGLACTIVETEXTUREPROC ActiveTexture;
 extern PFNGLTEXIMAGE3DPROC TexImage3D;
+
+// The sampler objects: the filter of a texture, kept apart from the texture.
+//
+// The filter belongs to the texture and not to the place it is read from, so
+// one picture read two ways - the texels where they are and the texels spread
+// out - needs two samplers and not one texture bound to two units. The shadow
+// map is read both ways in the same frame.
+extern PFNGLGENSAMPLERSPROC GenSamplers;
+extern PFNGLDELETESAMPLERSPROC DeleteSamplers;
+extern PFNGLBINDSAMPLERPROC BindSampler;
+extern PFNGLSAMPLERPARAMETERIPROC SamplerParameteri;
 
 } // namespace gl
 
