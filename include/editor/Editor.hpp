@@ -275,6 +275,17 @@ private:
     bool layoutLoaded_ = false;
     bool layoutDirty_ = false;
 
+    // A press the editor acts on: one that follows a release, and nothing else.
+    //
+    // The button can already be down when the editor appears - the click that
+    // opened the project is the launcher's, and the mouse is still held - and a
+    // press there is the second half of somebody else's click. It used to pick a
+    // panel up and drag it to the end of its track, and then write the
+    // workspace out with the panel at its smallest: the user's own layout,
+    // changed by the editor, with nothing to have done with it.
+    bool pointerArmed_ = false;
+    bool pressAccepted() const { return pointerArmed_ && ui_.pointerPressed(); }
+
     // Projection basis for the current pointer position inside the viewport.
     // `camera.basis()` costs four transcendentals and the field of view one
     // more, and both the picking ray and the gizmo projection want the same

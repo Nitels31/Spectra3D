@@ -615,6 +615,18 @@ Three things about the size to know before touching `handlePanelDrag`:
   the body of a panel would cross its divider and jump its size on the last frame.
   The start rectangle is captured at the press (`resizeStartRect_`) and every frame
   after it is a delta from there.
+- **A press is a press that follows a release.** The button can already be down
+  when the editor appears - the click that opened the project is the launcher's,
+  and the mouse is still held - and a press there is the second half of somebody
+  else's click. It used to pick a panel up and drag it to the end of its track,
+  and then write the workspace out with the panel at its smallest: the user's own
+  layout, changed by the editor, with nothing to have done with it. The editor
+  arms itself only once it has seen the pointer up (`pointerArmed_`), and every
+  press it acts on goes through `pressAccepted()`.
+- **A window that changes size cancels the drag.** The pointer's position in the
+  framebuffer moves with the window, and a drag that went on would take that
+  movement for the user's own and move a panel by it. The hand did not do it, so
+  the hand is not asked to finish it.
 - **A grip belongs to one edge of one panel.** The hit test asks for the other
   direction too: the console's top edge is its grip only where the console is, and
   not anywhere along that line of the screen. Without the other direction the
@@ -659,6 +671,10 @@ the binary.
   ignored, and two panels in one zone (only possible in a hand-edited file) send the
   later one floating. A zero-sized rectangle means "this panel has never floated"
   and keeps the size the editor started with.
+- **The workspace is the user's, and the editor does not touch it on its own.** It
+  is written when the user changed something and not otherwise, and the log says
+  both times it was read and both times it was written: a layout that changed
+  without anybody asking is a bug with a witness, and the witness is in the log.
 - **The file's version says what it was written by.** Version 2 is the layout
   where the favorites and the sounds have corners of their own; a file from
   before that has them floating and closed, because there was nowhere else for

@@ -157,6 +157,11 @@ void Editor::loadLayout() {
     // them replaces what the editor is already using.
     float left = leftWidth_, right = rightWidth_, bottom = bottomHeight_;
     float bottomLeft = bottomLeftHeight_, bottomRight = bottomRightHeight_;
+    // What the file said, before the sizes were clamped. A file that says
+    // something the editor cannot use is rewritten with what it does use, and
+    // these are the numbers that tell the two apart.
+    float saidLeft = left, saidRight = right, saidBottom = bottom;
+    float saidBottomLeft = bottomLeft, saidBottomRight = bottomRight;
     bool favoritesOnly = favoritesOnly_;
     Panel loaded[kPanelCount];
     bool seen[kPanelCount] = {};
@@ -166,23 +171,35 @@ void Editor::loadLayout() {
         if (key == "version") {
             (void)parseInt(value, version);
         } else if (key == "leftWidth") {
-            if (parseFloat(value, left)) left = clampf(left, kDockMinWidth, kDockMaxWidth);
+            if (parseFloat(value, left)) {
+                saidLeft = left;
+                left = clampf(left, kDockMinWidth, kDockMaxWidth);
+            }
         } else if (key == "rightWidth") {
-            if (parseFloat(value, right)) right = clampf(right, kDockMinWidth, kDockMaxWidth);
+            if (parseFloat(value, right)) {
+                saidRight = right;
+                right = clampf(right, kDockMinWidth, kDockMaxWidth);
+            }
         } else if (key == "bottomHeight") {
             // Bounded by the window as well as by a floor: the same ceiling a
             // drag stops at, so a hand-edited number cannot swallow the scene.
-            if (parseFloat(value, bottom))
+            if (parseFloat(value, bottom)) {
+                saidBottom = bottom;
                 bottom = clampf(bottom, kConsoleMinHeight,
                                 std::fmax(kConsoleMinHeight, (float)fbHeight_ * 0.7f));
+            }
         } else if (key == "bottomLeftHeight") {
-            if (parseFloat(value, bottomLeft))
+            if (parseFloat(value, bottomLeft)) {
+                saidBottomLeft = bottomLeft;
                 bottomLeft = clampf(bottomLeft, kConsoleMinHeight,
-                                   std::fmax(kConsoleMinHeight, (float)fbHeight_ * 0.7f));
+                                    std::fmax(kConsoleMinHeight, (float)fbHeight_ * 0.7f));
+            }
         } else if (key == "bottomRightHeight") {
-            if (parseFloat(value, bottomRight))
+            if (parseFloat(value, bottomRight)) {
+                saidBottomRight = bottomRight;
                 bottomRight = clampf(bottomRight, kConsoleMinHeight,
                                     std::fmax(kConsoleMinHeight, (float)fbHeight_ * 0.7f));
+            }
         } else if (key == "favoritesOnly") {
             int flag = 0;
             if (parseInt(value, flag)) favoritesOnly = flag != 0;
@@ -230,6 +247,8 @@ void Editor::loadLayout() {
 
     if (version > kLayoutVersion)
         Log::info("Editor: layout '%s' was written by a newer build (v%d)", path.c_str(), version);
+    Log::info("Editor: layout '%s' loaded (v%d): left %.0f, right %.0f, bottom %.0f/%.0f/%.0f",
+              path.c_str(), version, left, right, bottom, bottomLeft, bottomRight);
 
     // One panel per zone. The file cannot produce two (a swap always keeps the
     // count), but a hand-edited one can, and two panels in one zone would have
@@ -287,6 +306,18 @@ void Editor::loadLayout() {
     bottomLeftHeight_ = bottomLeft;
     bottomRightHeight_ = bottomRight;
     favoritesOnly_ = favoritesOnly;
+
+    // A file that says something the editor cannot use is rewritten with what it
+    // does use. The sizes are clamped - a hand-edited width of 999 is not a width
+    // there is - and a file that keeps the impossible number is a file that will
+    // be read wrong again, and that says one thing and does another.
+    if (saidLeft != left || saidRight != right || saidBottom != bottom ||
+        saidBottomLeft != bottomLeft || saidBottomRight != bottomRight) {
+        Log::info("Editor: layout '%s' has sizes the editor cannot use, writing back what it "
+                  "does use",
+                  path.c_str());
+        markLayoutDirty();
+    }
 }
 
 void Editor::saveLayout() {
@@ -328,6 +359,7 @@ void Editor::saveLayout() {
     }
 
     if (!fs::writeFile(path, text)) Log::warn("Editor: cannot write the layout '%s'", path.c_str());
+    else Log::info("Editor: layout '%s' saved", path.c_str());
 }
 
 } // namespace s3d
