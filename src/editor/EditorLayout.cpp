@@ -23,7 +23,10 @@ namespace {
 // 2: the favorites and the sounds moved into the bottom corners. A file
 // written before that has them floating and closed, and the two keep the
 // places they have now.
-constexpr int kLayoutVersion = 2;
+// 3: the three panels of the bottom row got heights of their own. A file
+// written before that has one height for the whole row, and the three share
+// it - which is what made the corners impossible to size on their own.
+constexpr int kLayoutVersion = 3;
 
 // `key=value` lines, `#` comments, blank lines skipped: the same shape as the
 // manifest, so one reader's rules apply to every text file the engine writes.
@@ -153,6 +156,7 @@ void Editor::loadLayout() {
     // workspace on screen, and the values below are all validated before any of
     // them replaces what the editor is already using.
     float left = leftWidth_, right = rightWidth_, bottom = bottomHeight_;
+    float bottomLeft = bottomLeftHeight_, bottomRight = bottomRightHeight_;
     bool favoritesOnly = favoritesOnly_;
     Panel loaded[kPanelCount];
     bool seen[kPanelCount] = {};
@@ -171,6 +175,14 @@ void Editor::loadLayout() {
             if (parseFloat(value, bottom))
                 bottom = clampf(bottom, kConsoleMinHeight,
                                 std::fmax(kConsoleMinHeight, (float)fbHeight_ * 0.7f));
+        } else if (key == "bottomLeftHeight") {
+            if (parseFloat(value, bottomLeft))
+                bottomLeft = clampf(bottomLeft, kConsoleMinHeight,
+                                   std::fmax(kConsoleMinHeight, (float)fbHeight_ * 0.7f));
+        } else if (key == "bottomRightHeight") {
+            if (parseFloat(value, bottomRight))
+                bottomRight = clampf(bottomRight, kConsoleMinHeight,
+                                    std::fmax(kConsoleMinHeight, (float)fbHeight_ * 0.7f));
         } else if (key == "favoritesOnly") {
             int flag = 0;
             if (parseInt(value, flag)) favoritesOnly = flag != 0;
@@ -235,6 +247,14 @@ void Editor::loadLayout() {
                   "the favorites and the sounds keep their new places",
                   path.c_str());
 
+    // A file from before the bottom row had three heights of its own has one
+    // height for the whole row, and the three share it. The corners keep the
+    // height they have now, and the console keeps the one the file says.
+    if (version < 3) {
+        bottomLeft = bottomLeftHeight_;
+        bottomRight = bottomRightHeight_;
+    }
+
     bool edgeTaken[(int)PanelZone::Float] = {};
     for (int i = 0; i < kPanelCount; ++i) {
         if (!seen[i]) continue;
@@ -264,6 +284,8 @@ void Editor::loadLayout() {
     leftWidth_ = left;
     rightWidth_ = right;
     bottomHeight_ = bottom;
+    bottomLeftHeight_ = bottomLeft;
+    bottomRightHeight_ = bottomRight;
     favoritesOnly_ = favoritesOnly;
 }
 
@@ -279,6 +301,8 @@ void Editor::saveLayout() {
     text += "leftWidth=" + formatFloat(leftWidth_) + "\n";
     text += "rightWidth=" + formatFloat(rightWidth_) + "\n";
     text += "bottomHeight=" + formatFloat(bottomHeight_) + "\n";
+    text += "bottomLeftHeight=" + formatFloat(bottomLeftHeight_) + "\n";
+    text += "bottomRightHeight=" + formatFloat(bottomRightHeight_) + "\n";
     text += "favoritesOnly=";
     text += favoritesOnly_ ? "1" : "0";
     text += "\n";

@@ -433,9 +433,36 @@ void Window::mouseDelta(double& dx, double& dy) {
     dy = y - lastY_;
     lastX_ = x;
     lastY_ = y;
+    // The same scaling the cursor position gets, so that a drag across the
+    // window moves the camera as far as the pointer went and not a quarter
+    // less.
+    const double scale = cursorScale();
+    dx *= scale;
+    dy *= scale;
 }
 
-void Window::cursorPos(double& x, double& y) const { glfwGetCursorPos(window_, &x, &y); }
+void Window::cursorPos(double& x, double& y) const {
+    glfwGetCursorPos(window_, &x, &y);
+    // The cursor is in the window's pixels and the engine draws in the
+    // framebuffer's, and on a scaled display those are not the same pixels:
+    // the window is 960 wide there and the framebuffer 1280, so every hit test
+    // would be a quarter of the way off - a panel that cannot be grabbed by
+    // its own title, a button that is not where it is drawn.
+    //
+    // The pointer is moved into the framebuffer's pixels, because that is the
+    // space everything else in the engine lives in.
+    const double scale = cursorScale();
+    x *= scale;
+    y *= scale;
+}
+
+double Window::cursorScale() const {
+    if (!window_) return 1.0;
+    int width = 0, height = 0;
+    glfwGetWindowSize(window_, &width, &height);
+    if (width <= 0 || height <= 0) return 1.0;
+    return (double)fbW_ / (double)width;
+}
 
 bool Window::mouseDown(int button) const {
     return button >= 0 && button < 8 && mouseDown_[button];

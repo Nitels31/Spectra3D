@@ -118,35 +118,49 @@ Rect Editor::zoneRect(PanelZone zone) const {
     // exactly what the frame it is previewed in shows.
     bool leftTaken = dragPanel_ >= 0 && zoneIsLeft(dropZone_);
     bool rightTaken = dragPanel_ >= 0 && zoneIsRight(dropZone_);
-    bool bottomTaken = dragPanel_ >= 0 && zoneIsBottom(dropZone_);
+    bool bottomLeftTaken = dragPanel_ >= 0 && dropZone_ == PanelZone::BottomLeft;
+    bool bottomRightTaken = dragPanel_ >= 0 && dropZone_ == PanelZone::BottomRight;
     for (int i = 0; i < kPanelCount; ++i) {
         if (!panels_[i].open) continue;
         const PanelZone other = panels_[i].zone;
         leftTaken = leftTaken || zoneIsLeft(other);
         rightTaken = rightTaken || zoneIsRight(other);
-        bottomTaken = bottomTaken || zoneIsBottom(other);
+        bottomLeftTaken = bottomLeftTaken || other == PanelZone::BottomLeft;
+        bottomRightTaken = bottomRightTaken || other == PanelZone::BottomRight;
     }
 
-    // Two columns and one row. The left column stops where the bottom row starts,
-    // which is the whole point of having corner zones: the bottom-left corner is
-    // either the hierarchy's or the favourites panel's, never an uncovered hole.
+    // Two columns and three panels along the bottom, and every one of them has a
+    // height of its own.
+    //
+    // Each column ends where the panel in its own corner begins: the hierarchy
+    // is above the favourites panel, the inspector is above the sounds one, and
+    // the scene is above the console. That is the whole rule, and it is what
+    // keeps the panels from moving each other around - the bottom is not one
+    // strip split in three, so dragging one panel's edge changes that panel and
+    // nothing else. A row that shared one height made the favourites panel
+    // reach up and shorten the inspector on the other side of the window.
     const float leftW = leftTaken ? leftWidth_ : 0.0f;
     const float rightW = rightTaken ? rightWidth_ : 0.0f;
-    const float bottomH = bottomTaken ? bottomHeight_ : 0.0f;
-    const float bottomY = height - bottomH;
+
+    // The bottom of each column: the top of the panel standing in its corner, or
+    // the bottom of the window when the corner is empty. A closed panel reserves
+    // nothing - that is the whole point of closing it.
+    const float leftBottom = bottomLeftTaken ? height - bottomLeftHeight_ : height;
+    const float rightBottom = bottomRightTaken ? height - bottomRightHeight_ : height;
+    // The width of the middle column, where the scene and the console are.
     const float middleW = std::fmax(0.0f, width - leftW - rightW);
 
     switch (zone) {
     case PanelZone::Left:
-        return Rect{0.0f, top, leftW, std::fmax(0.0f, bottomY - top)};
+        return Rect{0.0f, top, leftW, std::fmax(0.0f, leftBottom - top)};
     case PanelZone::Right:
-        return Rect{width - rightW, top, rightW, std::fmax(0.0f, bottomY - top)};
+        return Rect{width - rightW, top, rightW, std::fmax(0.0f, rightBottom - top)};
     case PanelZone::BottomLeft:
-        return Rect{0.0f, bottomY, leftW, bottomH};
+        return Rect{0.0f, height - bottomLeftHeight_, leftW, bottomLeftHeight_};
     case PanelZone::BottomRight:
-        return Rect{width - rightW, bottomY, rightW, bottomH};
+        return Rect{width - rightW, height - bottomRightHeight_, rightW, bottomRightHeight_};
     case PanelZone::Bottom:
-        return Rect{leftW, bottomY, middleW, bottomH};
+        return Rect{leftW, height - bottomHeight_, middleW, bottomHeight_};
     case PanelZone::Float:
         break;
     }
@@ -260,12 +274,22 @@ unsigned Editor::panelGripsAt(int index, float x, float y) const {
         // stopped where the title bar starts would leave the console with nowhere
         // to resize from. Every bottom zone - the strip and both corners - resizes
         // the same row, so they all take the same edge.
-        if (zoneIsLeft(panels_[index].zone) &&
+        //
+        // The grip belongs to the edge and to nothing else: a panel in the
+        // bottom strip has one grip - its top edge - and the pointer has to be
+        // over THAT edge of THAT panel. Without the other direction the console
+        // lit up its whole top edge while the pointer was anywhere along that
+        // line, even over the inspector on the other side of the window, and the
+        // line came and went in pieces as the pointer crossed the panels.
+        const bool overX = x >= panel.x - kDockGrip && x <= panel.x + panel.width + kDockGrip;
+        const bool overY = y >= panel.y - kDockGrip && y <= panel.y + panel.height + kDockGrip;
+        if (zoneIsLeft(panels_[index].zone) && overY &&
             std::fabs(x - (panel.x + panel.width)) <= kDockGrip)
             return kGripRight;
-        if (zoneIsRight(panels_[index].zone) && std::fabs(x - panel.x) <= kDockGrip)
+        if (zoneIsRight(panels_[index].zone) && overY && std::fabs(x - panel.x) <= kDockGrip)
             return kGripLeft;
-        if (zoneIsBottom(panels_[index].zone) && std::fabs(y - panel.y) <= kDockGrip)
+        if (zoneIsBottom(panels_[index].zone) && overX &&
+            std::fabs(y - panel.y) <= kDockGrip)
             return kGripTop;
         return 0;
     }
@@ -345,13 +369,30 @@ void Editor::handlePanelDrag(PhysicsWorld& world) {
             return;
         }
         const PanelZone zone = panels_[resizePanel_].zone;
-        if (zoneIsBottom(zone))
-            bottomHeight_ = clampf(resizeStartSize_ - (py - resizeStartPointer_),
-                                   kConsoleMinHeight, (float)fbHeight_ * 0.7f);
-        else if (zoneIsLeft(zone))
+        // What the drag changes is decided by the GRIP, not by the zone the
+        // panel is in: the panel in the bottom-left corner has two grips - its
+        // top edge, which makes it taller, and its right edge, which is the
+        // edge of the column it shares with the hierarchy. Taking the zone for
+        // the answer made both of them change the height, and dragging the
+        // column's edge moved a panel that was not in the way of it.
+        if ((resizeEdges_ & kGripTop) && zoneIsBottom(zone)) {
+            // Each panel of the bottom row resizes itself: the console's grip
+            // does not make the favourites panel taller, and the other way
+            // round. A row of three panels that share one height is a row of
+            // one panel with two holes in it.
+            const float limit = (float)fbHeight_ * 0.7f;
+            const float height = clampf(resizeStartSize_ - (py - resizeStartPointer_),
+                                        kConsoleMinHeight, limit);
+            if (zone == PanelZone::BottomLeft)
+                bottomLeftHeight_ = height;
+            else if (zone == PanelZone::BottomRight)
+                bottomRightHeight_ = height;
+            else
+                bottomHeight_ = height;
+        } else if ((resizeEdges_ & kGripRight) && zoneIsLeft(zone))
             leftWidth_ = clampf(resizeStartSize_ + (px - resizeStartPointer_), kDockMinWidth,
                                 std::fmin(kDockMaxWidth, (float)fbWidth_ * 0.5f));
-        else if (zoneIsRight(zone))
+        else if ((resizeEdges_ & kGripLeft) && zoneIsRight(zone))
             rightWidth_ = clampf(resizeStartSize_ - (px - resizeStartPointer_), kDockMinWidth,
                                  std::fmin(kDockMaxWidth, (float)fbWidth_ * 0.5f));
         return;
@@ -372,11 +413,18 @@ void Editor::handlePanelDrag(PhysicsWorld& world) {
             resizeStartPointerX_ = px;
             resizeStartPointerY_ = py;
             const PanelZone zone = panels_[i].zone;
-            resizeStartPointer_ = zoneIsBottom(zone) ? py : px;
-            resizeStartSize_ =
-                zoneIsLeft(zone) ? leftWidth_
-                : zoneIsRight(zone) ? rightWidth_
-                                    : bottomHeight_;
+            // The number the drag starts from is the one the grip moves: the
+            // height of a panel in the bottom row, or the width of the column
+            // it shares with the panel above it.
+            if (resizeEdges_ & kGripTop) {
+                resizeStartPointer_ = py;
+                resizeStartSize_ = zone == PanelZone::BottomLeft ? bottomLeftHeight_
+                                   : zone == PanelZone::BottomRight ? bottomRightHeight_
+                                                                   : bottomHeight_;
+            } else {
+                resizeStartPointer_ = px;
+                resizeStartSize_ = zoneIsLeft(zone) ? leftWidth_ : rightWidth_;
+            }
             return;
         }
         for (int i = 0; i < kPanelCount; ++i) {
@@ -426,13 +474,19 @@ void Editor::drawPanelChrome(UiRenderer& ui, PanelId id) {
 
     // The X that closes the panel. Closing it is one click, and the View menu
     // brings it back, so "this panel is in the way" is not a layout problem.
+    //
+    // The X is two strokes, and a stroke is a line of squares that touch: the
+    // step between the squares is their own size, so the diagonals come out as
+    // two lines and not as a scatter of dots that only look like an X when you
+    // know what it is.
     const Rect close = panelCloseRect(id);
     const bool closeHovered = ui_.hovered(close);
     const Color tint = closeHovered ? theme::error : theme::textDim;
+    constexpr float kStroke = 2.4f;
     for (int i = 0; i < 5; ++i) {
-        const float o = 3.0f + (float)i * 2.6f;
-        ui.fillRect(close.x + o, close.y + o, 1.8f, 1.8f, tint);
-        ui.fillRect(close.x + 12.0f - o + 2.0f, close.y + o, 1.8f, 1.8f, tint);
+        const float o = 3.0f + (float)i * kStroke;
+        ui.fillRect(close.x + o, close.y + o, kStroke, kStroke, tint);
+        ui.fillRect(close.x + 12.0f - o + 2.0f, close.y + o, kStroke, kStroke, tint);
     }
     if (closeHovered && ui_.pointerPressed()) {
         panels_[(int)id].open = false;
@@ -453,13 +507,15 @@ void Editor::drawPanelChrome(UiRenderer& ui, PanelId id) {
                     Color{0.0f, 0.0f, 0.0f, 0.35f});
         ui.fillRect(rect.x + rect.width, rect.y + 2.0f, 2.0f, rect.height,
                     Color{0.0f, 0.0f, 0.0f, 0.35f});
-        // The resize corner: three dots up the diagonal, the mark every
+        // The resize corner: a line of squares up the diagonal, the mark every
         // resizable window carries. A floating panel that can be resized but
-        // shows no sign of it is a panel nobody resizes.
+        // shows no sign of it is a panel nobody resizes - and a mark made of
+        // squares that do not touch is not a line but a scatter of dots.
         const Color corner = ui_.hovered(rect) ? theme::textDim : theme::textDim.scaled(0.55f);
-        for (int i = 0; i < 3; ++i)
-            ui.fillRect(rect.x + rect.width - 6.0f - (float)i * 4.0f,
-                        rect.y + rect.height - 6.0f - (float)i * 4.0f, 2.0f, 2.0f, corner);
+        constexpr float kStep = 2.2f;
+        for (int i = 0; i < 4; ++i)
+            ui.fillRect(rect.x + rect.width - 5.0f - (float)i * kStep,
+                        rect.y + rect.height - 5.0f - (float)i * kStep, kStep, kStep, corner);
         return;
     }
 
@@ -514,16 +570,20 @@ void Editor::drawPanelDragFeedback(UiRenderer& ui) {
         // is a divider nobody finds, and the whole point of this handle is that it
         // is found without reading anything.
         const Color tint = theme::accent;
-        const float thickness = active ? 3.0f : 2.0f;
+        // The handle is a line, and a line has no gaps in it: one rectangle along
+        // the whole edge, at a whole number of pixels, so the edge of the panel
+        // is lit from end to end and not in pieces.
+        const float thickness = active ? 4.0f : 3.0f;
+        const float offset = (thickness - 1.0f) * 0.5f;
         if (grips & kGripLeft)
-            ui.fillRect(rect.x - (active ? 1.0f : 0.0f), rect.y, thickness, rect.height, tint);
+            ui.fillRect(rect.x - offset, rect.y, thickness, rect.height, tint);
         if (grips & kGripRight)
-            ui.fillRect(rect.x + rect.width - thickness + 1.0f, rect.y, thickness, rect.height,
+            ui.fillRect(rect.x + rect.width - thickness + offset, rect.y, thickness, rect.height,
                         tint);
         if (grips & kGripTop)
-            ui.fillRect(rect.x, rect.y - (active ? 1.0f : 0.0f), rect.width, thickness, tint);
+            ui.fillRect(rect.x, rect.y - offset, rect.width, thickness, tint);
         if (grips & kGripBottom)
-            ui.fillRect(rect.x, rect.y + rect.height - thickness + 1.0f, rect.width, thickness,
+            ui.fillRect(rect.x, rect.y + rect.height - thickness + offset, rect.width, thickness,
                         tint);
         // A corner the pointer is really on gets a block, so grabbing two edges
         // at once is visible before the drag and not only after it.
@@ -552,22 +612,26 @@ void Editor::recomputeLayout(int fbWidth, int fbHeight) {
 
     // Which columns and rows are occupied decides the scene: a floating inspector
     // gives its space back to the viewport, and an empty left column moves the
-    // scene to x=0. Corner zones occupy the column they are in and the row they
-    // are in, which is what keeps the bottom-left corner from becoming a hole in
-    // the layout that the scene shows through.
-    bool leftTaken = false, rightTaken = false, bottomTaken = false;
+    // scene to x=0. Corner zones occupy the column they are in, which is what
+    // keeps the bottom-left corner from becoming a hole in the layout.
+    bool leftTaken = false, rightTaken = false, consoleTaken = false;
     for (int i = 0; i < kPanelCount; ++i) {
         if (!panels_[i].open) continue;
         const PanelZone zone = panels_[i].zone;
         leftTaken = leftTaken || zoneIsLeft(zone);
         rightTaken = rightTaken || zoneIsRight(zone);
-        bottomTaken = bottomTaken || zoneIsBottom(zone);
+        consoleTaken = consoleTaken || zone == PanelZone::Bottom;
     }
 
     const float sceneLeft = leftTaken ? leftWidth_ : 0.0f;
     const float sceneRight = rightTaken ? rightWidth_ : 0.0f;
     const float columnTop = theme::menuBarHeight;
-    const float sceneBottom = bottomTaken ? height - bottomHeight_ : height;
+
+    // The scene reaches down to the console, and to the bottom of the window
+    // when there is no console. The corners stand below the columns, not in the
+    // middle, so they do not decide how much of the scene is left - the console
+    // alone does, and the two corner panels can be as tall as they like.
+    const float sceneBottom = consoleTaken ? height - bottomHeight_ : height;
 
     const float headerH = kSceneHeaderHeight;
     const float viewX = sceneLeft;
@@ -611,9 +675,18 @@ Log::info("Deleted body %d", index);
 void Editor::updateViewRay(const Camera& camera) {
     if (viewRay_.valid) return;
     camera.basis(viewRay_.forward, viewRay_.right, viewRay_.up);
-    const float tanY = std::tan(camera.fovDeg * kPi / 360.0f);
-    viewRay_.tanY = tanY;
-    viewRay_.tanX = tanY * layout_.viewport.width / layout_.viewport.height;
+
+    // The ray is built for the viewport, because that is the space the scene is
+    // drawn in and the space the projection works in. The camera's field of view
+    // is over the viewport's height, and the horizontal one follows from its
+    // aspect: the same two numbers the projection matrix is built from, so the
+    // pointer and the picture cannot disagree about where a thing is.
+    const Rect view = layout_.viewport;
+    const float height = view.height > 1.0f ? view.height : 1.0f;
+    const float width = view.width > 1.0f ? view.width : 1.0f;
+    const float tanHalf = std::tan(camera.fovDeg * kPi / 360.0f);
+    viewRay_.tanY = tanHalf;
+    viewRay_.tanX = tanHalf * (width / height);
     viewRay_.valid = true;
 }
 
@@ -675,6 +748,35 @@ void Editor::formatPrefixed(char* out, size_t size, const char* prefix, const ch
     std::memcpy(out, prefix, prefixLength);
     std::memcpy(out + prefixLength, value, valueLength);
     out[prefixLength + valueLength] = '\0';
+}
+
+void Editor::wrapText(const UiRenderer& ui, float maxWidth, const char* utf8,
+                      std::vector<std::string>& out) {
+    out.clear();
+    if (!utf8 || !*utf8 || maxWidth <= 0.0f) return;
+
+    // Word by word: a line that does not fit starts a new one. A word longer
+    // than the box is left whole - the caller draws it smaller, and a word cut
+    // in half is a word nobody can read.
+    std::string line;
+    size_t at = 0;
+    const std::string_view all(utf8);
+    while (at <= all.size()) {
+        const size_t space = all.find(' ', at);
+        const std::string_view word =
+            all.substr(at, space == std::string_view::npos ? std::string_view::npos : space - at);
+        const std::string candidate =
+            line.empty() ? std::string(word) : line + " " + std::string(word);
+        if (!line.empty() && ui.textWidth(candidate.c_str()) > maxWidth) {
+            out.push_back(line);
+            line = std::string(word);
+        } else {
+            line = candidate;
+        }
+        if (space == std::string_view::npos) break;
+        at = space + 1;
+    }
+    if (!line.empty()) out.push_back(line);
 }
 
 void Editor::handleInput(PhysicsWorld& world, Camera& camera, Window& window, int fbWidth,
@@ -756,19 +858,22 @@ bool Editor::tryGizmoGrip(PhysicsWorld& world, Camera& camera) {
     // cannot be argued with by dragging.
     if (body->locked) return false;
 
-    const Rect viewport = layout_.viewport;
+    // The handles are picked in the viewport, because that is the space the
+    // scene is drawn in and the space the projection works in: the handles have
+    // to be where the things they belong to are drawn.
+    const Rect area = layout_.viewport;
     const Vec3 rayOrigin = camera.position;
     const Vec3 rayDir = viewportRay(camera);
-    const float pointerX = ui_.pointerX() - viewport.x;
-    const float pointerY = ui_.pointerY() - viewport.y;
+    const float pointerX = ui_.pointerX() - area.x;
+    const float pointerY = ui_.pointerY() - area.y;
 
     dragAxis_ = mode == gizmo::Mode::Rotate
                     ? gizmo::pickRing(pointerX, pointerY, rayOrigin, rayDir, camera.position,
                                       viewRay_.forward, viewRay_.right, viewRay_.up,
-                                      viewRay_.tanX, viewRay_.tanY, viewport, *body)
+                                      viewRay_.tanX, viewRay_.tanY, area, *body)
                     : gizmo::pickAxis(pointerX, pointerY, rayOrigin, rayDir, camera.position,
                                       viewRay_.forward, viewRay_.right, viewRay_.up,
-                                      viewRay_.tanX, viewRay_.tanY, viewport, *body, mode);
+                                      viewRay_.tanX, viewRay_.tanY, area, *body, mode);
     if (dragAxis_ < 0) return false;
 
     dragOrigin_ = body->position;
@@ -812,15 +917,17 @@ bool Editor::tryGizmoGrip(PhysicsWorld& world, Camera& camera) {
 // What is left - a ring seen exactly edge-on - is a line instead of a circle, and
 // that is what every editor does with it.
 bool Editor::ringScreenAngle(const Vec3& centre, const Camera& camera, float& angleOut) const {
-    const Rect viewport = layout_.viewport;
+    // The viewport, for the same reason the handles are picked there: it is the
+    // space the projection works in.
+    const Rect area = layout_.viewport;
     float cx = 0.0f, cy = 0.0f;
     if (!picking::projectToViewport(centre, camera.position, viewRay_.forward, viewRay_.right,
-                                    viewRay_.up, viewRay_.tanX, viewRay_.tanY, viewport.width,
-                                    viewport.height, cx, cy))
+                                    viewRay_.up, viewRay_.tanX, viewRay_.tanY, area.width,
+                                    area.height, cx, cy))
         return false;
 
-    const float px = ui_.pointerX() - viewport.x;
-    const float py = ui_.pointerY() - viewport.y;
+    const float px = ui_.pointerX() - area.x;
+    const float py = ui_.pointerY() - area.y;
     // Standing on the centre: the angle there is noise, and noise reads as a body
     // that twitches while the hand is perfectly still.
     if (std::fabs(px - cx) < 4.0f && std::fabs(py - cy) < 4.0f) return false;

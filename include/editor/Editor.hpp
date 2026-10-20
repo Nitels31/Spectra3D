@@ -168,6 +168,12 @@ kHelpClose = 1400,
     void saveScene(const PhysicsWorld& world);
     void loadScene(PhysicsWorld& world);
 
+    // Splits a text into lines that are no wider than `maxWidth`, on word
+    // boundaries. Used by the panels whose text has to fit a narrow column: a
+    // sentence that runs out of its box is a sentence nobody reads to the end.
+    static void wrapText(const UiRenderer& ui, float maxWidth, const char* utf8,
+                         std::vector<std::string>& out);
+
 private:
     // Bounds for every panel size, wherever the size came from: a drag, a layout
     // file, a hand-edited one. Shared rather than repeated, because "too small to
@@ -226,9 +232,17 @@ private:
     // Dock sizes. Seeded from the theme metrics, then the user's: dragging an edge
     // is the only way to change them, and the value survives everything else -
     // and the next launch, because they are part of the saved workspace.
+    //
+    // The bottom row is three panels and not one row split in three, so it has
+    // three heights: the console, the favorites in the left corner and the
+    // sounds in the right one are three panels that happen to stand next to
+    // each other, and one of them must not be dragged taller because another one
+    // was.
     float leftWidth_ = 260.0f;
     float rightWidth_ = 280.0f;
     float bottomHeight_ = 156.0f;
+    float bottomLeftHeight_ = 156.0f;
+    float bottomRightHeight_ = 156.0f;
 
     // Which edges of a panel a resize grip the pointer took: one bit per edge, so
     // a corner is two bits and the drag itself is four independent ifs. A docked

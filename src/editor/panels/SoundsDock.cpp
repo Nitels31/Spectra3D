@@ -32,7 +32,10 @@ void Editor::drawSoundsDock(UiRenderer& ui, PhysicsWorld& world, const Rect& doc
     const char* title = text("tab.sounds");
     ui.fillRect(dock.x, dock.y, dock.width, kHeaderHeight, theme::panelDark);
     ui.fillRect(dock.x, dock.y + kHeaderHeight - 1.0f, dock.width, 1.0f, theme::separator);
-    ui.text(dock.x + 18.0f, dock.y + 5.0f, title, theme::text);
+    // Lower than in the other panels: the bottom row's panels are resized by
+    // their top edge, and the title has to be clear of that edge or the panel
+    // cannot be picked up by its own name.
+    ui.text(dock.x + 18.0f, dock.y + 9.0f, title, theme::text);
 
     const std::vector<std::string>& names = sound_.names();
 
@@ -47,16 +50,25 @@ void Editor::drawSoundsDock(UiRenderer& ui, PhysicsWorld& world, const Rect& doc
     const size_t bracket = device.find('(');
     if (bracket != std::string::npos) device = device.substr(0, bracket);
     while (!device.empty() && device.back() == ' ') device.pop_back();
-    ui.textFit(dock.x + 26.0f + ui.textWidth(title), dock.y + 5.0f, dock.width - 110.0f,
-               device.c_str(), sound_.running() ? theme::textDim : theme::warning);
+    const float deviceX = dock.x + 26.0f + ui.textWidth(title);
+    ui.textFit(deviceX, dock.y + 9.0f, dock.width - 110.0f, device.c_str(),
+               sound_.running() ? theme::textDim : theme::warning);
 
     if (names.empty()) {
+        // The same shape as the other panels' empty state: the answer, and the
+        // hint that says what to do about it - wrapped, because the panel is
+        // narrow and the hint is a sentence.
         const char* empty = text("sounds.empty");
         const char* hint = text("sounds.hint");
         const float y = dock.y + kHeaderHeight + 12.0f;
         ui.textFit(dock.x + 10.0f, y, dock.width - 20.0f, empty, theme::textDim);
-        ui.textFit(dock.x + 10.0f, y + theme::textLineHeight + 6.0f, dock.width - 20.0f, hint,
-                   theme::textDim.scaled(0.85f));
+
+        std::vector<std::string> lines;
+        wrapText(ui, dock.width - 20.0f, hint, lines);
+        const float step = theme::textLineHeight + 4.0f;
+        for (size_t i = 0; i < lines.size(); ++i)
+            ui.textFit(dock.x + 10.0f, y + step * (float)(i + 1) + 2.0f, dock.width - 20.0f,
+                       lines[i].c_str(), theme::textDim.scaled(0.85f));
         return;
     }
 

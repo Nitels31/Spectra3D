@@ -408,6 +408,12 @@ void Application::openProject(const ProjectInfo& project) {
     editor_->setHomeCamera(camera_);
     inEditor_ = true;
 
+    // The click that opened the project is not a click in the editor. Its press
+    // was the launcher's, and its release arrives here - and a release with no
+    // press in the editor is what made the first frame of the editor pick a
+    // panel up and drag it. The edges die with the mode they belonged to.
+    window_.dropUnreadInput();
+
     updateTitle();
     Log::info("Project '%s' opened: %s", project_.name.c_str(), scenePath.c_str());
     Log::info("Scene: %d bodies", (int)world_.bodies.size());
@@ -720,15 +726,19 @@ void Application::updateSimulation(float dt, bool stepping) {
 }
 
 void Application::renderScene() {
-    const Rect viewport = editor_->layout().viewport;
-    Viewport glViewport;
-    glViewport.glX = (int)viewport.x;
-    glViewport.glY = window_.framebufferHeight() - (int)viewport.y - (int)viewport.height;
-    glViewport.width = (int)viewport.width;
-    glViewport.height = (int)viewport.height;
+    // The scene is drawn in the viewport: the column between the two docks and
+    // above the console. It is the same rectangle the editor picks with, so the
+    // picture and the pointer are the same view of the world.
+    const Rect rect = editor_->layout().viewport;
+    const int fbHeight = window_.framebufferHeight();
+    Viewport viewport;
+    viewport.glX = (int)rect.x;
+    viewport.glY = fbHeight - (int)rect.y - (int)rect.height;
+    viewport.width = (int)rect.width;
+    viewport.height = (int)rect.height;
 
     sceneRenderer_.beginFrame(window_.framebufferWidth(), window_.framebufferHeight());
-    sceneRenderer_.renderWorld(world_, meshes_, textures_, camera_, glViewport,
+    sceneRenderer_.renderWorld(world_, meshes_, textures_, camera_, viewport,
                                editor_->showGrid(), editor_->showVectors(), clockAlpha_,
                                sceneCamera_);
     editor_->renderOverlay(sceneRenderer_, world_, sceneCamera_);

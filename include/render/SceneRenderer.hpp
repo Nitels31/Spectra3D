@@ -42,6 +42,11 @@ public:
     // `hiddenBody` is a body index the caller does not want drawn - the camera
     // the viewport is looking through, which sits at the eye and would fill the
     // screen with its own icon. -1 for none.
+    //
+    // `viewport` is the area the scene is drawn in: the scene column of the
+    // editor, between the two docks and above the console. The projection is the
+    // camera's own field of view over it, so what is on screen and what the
+    // pointer points at are the same picture.
     void renderWorld(const PhysicsWorld& world, const MeshRegistry& meshes,
                      const TextureRegistry& textures, const Camera& camera,
                      const Viewport& viewport, bool showGrid, bool showVectors,

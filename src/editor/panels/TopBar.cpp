@@ -19,7 +19,10 @@ namespace {
 // layers panel, the search results - has its own metrics in TopBarOverlay.cpp.
 constexpr float kBarButtonHeight = 20.0f;
 constexpr float kBarGap = 4.0f;
-constexpr float kSearchWidth = 172.0f;
+// Wide enough for the placeholder in every language the editor has, and a little
+// more: a field whose text runs out of it does not look like a field, it looks
+// like two words that happen to be next to each other.
+constexpr float kSearchWidth = 210.0f;
 
 // Shape names, in `Shape` order. A menu row carries the shape as its parameter,
 // so these two have to stay in step - hence the count check.
@@ -672,10 +675,17 @@ void Editor::drawTopBar(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Win
     drawGlyph(ui, searchGlyph, Glyph::Search, theme::textDim);
     const char* searchText =
         toolbarSearch_.empty() ? text("toolbar.search") : toolbarSearch_.text();
-    ui.text(search.x + kBarButtonHeight, search.y + (search.height - theme::textLineHeight) * 0.5f,
-            searchText, toolbarSearch_.empty() ? theme::textDim : theme::text);
+    // Fitted to the field, never wider than it: a placeholder that runs out of
+    // the box it is in lands on the button next to it, and the two of them are
+    // then unreadable together.
+    const float searchTextX = search.x + kBarButtonHeight;
+    const float searchTextW = search.width - kBarButtonHeight - 6.0f;
+    const float searchScale = ui.textFit(searchTextX,
+                                         search.y + (search.height - theme::textLineHeight) * 0.5f,
+                                         searchTextW, searchText,
+                                         toolbarSearch_.empty() ? theme::textDim : theme::text);
     if (toolbarSearch_.editing)
-        ui.fillRect(search.x + kBarButtonHeight + ui.textWidth(toolbarSearch_.text()) + 1.0f,
+        ui.fillRect(searchTextX + ui.textWidthScaled(toolbarSearch_.text(), searchScale) + 1.0f,
                     search.y + 3.0f, 1.5f, search.height - 6.0f, theme::accent);
     x = search.x - kBarGap;
 

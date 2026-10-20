@@ -126,8 +126,17 @@ void SceneRenderer::initialize(const Vec3& arenaMin, const Vec3& arenaMax) {
 }
 
 void SceneRenderer::setProjection(const Camera& camera, const Viewport& viewport) {
-    const double halfHeight = std::tan(camera.fovDeg * kPi / 360.0) * kNearPlane;
-    const double halfWidth = halfHeight * (double)viewport.width / (double)viewport.height;
+    // The frustum is the camera's field of view, and it is the same frustum the
+    // editor picks with: the vertical one over the viewport's height, and the
+    // horizontal one following from its aspect. A frustum that is wider than
+    // the camera's own would make the pointer and the picture disagree about
+    // where a thing is, and the horizon would sit at the wrong height.
+    const double tanHalf = std::tan(camera.fovDeg * kPi / 360.0);
+    const double height = (double)std::max(1, viewport.height);
+    const double width = (double)std::max(1, viewport.width);
+
+    const double halfHeight = tanHalf * kNearPlane;
+    const double halfWidth = tanHalf * kNearPlane * (width / height);
 
     projection_[0] = (float)(2.0 * kNearPlane / (2.0 * halfWidth));
     projection_[5] = (float)(2.0 * kNearPlane / (2.0 * halfHeight));
@@ -171,8 +180,8 @@ void SceneRenderer::beginFrame(int framebufferWidth, int framebufferHeight) {
 
 void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& meshes,
                                  const TextureRegistry& textures, const Camera& camera,
-                                 const Viewport& viewport, bool showGrid,
-                                 bool showVectors, float alpha, int hiddenBody) {
+                                 const Viewport& viewport, bool showGrid, bool showVectors,
+                                 float alpha, int hiddenBody) {
     if (viewport.width < 1 || viewport.height < 1) return;
 
     glEnable(GL_SCISSOR_TEST);

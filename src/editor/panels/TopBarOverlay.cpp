@@ -41,28 +41,13 @@ constexpr int kModalButton = 1700;
 // Word wrapping, measured twice: once to learn how tall the text will be (the
 // dialog has to be sized before it can be drawn) and once to draw it. Both passes
 // walk the same words with the same widths, so they cannot disagree.
+//
+// The wrapping itself is the editor's, so the panels and the dialogs break their
+// lines the same way.
 const std::vector<std::string> wrapWords(const UiRenderer& ui, float maxWidth,
                                          const char* utf8) {
     std::vector<std::string> lines;
-    std::string line;
-    size_t at = 0;
-    const std::string_view all(utf8);
-    while (at <= all.size()) {
-        const size_t space = all.find(' ', at);
-        const std::string_view word = all.substr(
-            at, space == std::string_view::npos ? std::string_view::npos : space - at);
-        const std::string candidate =
-            line.empty() ? std::string(word) : line + " " + std::string(word);
-        if (!line.empty() && ui.textWidth(candidate.c_str()) > maxWidth) {
-            lines.push_back(line);
-            line = std::string(word);
-        } else {
-            line = candidate;
-        }
-        if (space == std::string_view::npos) break;
-        at = space + 1;
-    }
-    if (!line.empty()) lines.push_back(line);
+    Editor::wrapText(ui, maxWidth, utf8, lines);
     return lines;
 }
 

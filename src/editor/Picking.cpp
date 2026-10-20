@@ -61,7 +61,11 @@ int pickBody(const Vec3& origin, const Vec3& direction, const PhysicsWorld& worl
     float nearest = 1e30f;
     for (const RigidBody& body : world.bodies) {
         float distance = 0.0f;
-        if (intersectBody(origin, direction, body, distance) && distance < nearest) {
+        // A body the ray starts inside is not something that was clicked: the
+        // camera sits in its own body, and a click anywhere in the scene would
+        // pick the camera instead of what is under the pointer.
+        if (intersectBody(origin, direction, body, distance) && distance > 0.0f &&
+            distance < nearest) {
             nearest = distance;
             hit = (int)(&body - world.bodies.data());
         }
@@ -94,11 +98,14 @@ bool projectToViewport(const Vec3& worldPoint, const Vec3& cameraPos, const Vec3
     return true;
 }
 
-Vec3 rayFromViewport(float pixelX, float pixelY, const Rect& viewport,
-                     const Vec3& forward, const Vec3& right, const Vec3& up, float tanX,
-                     float tanY) {
+Vec3 rayFromViewport(float pixelX, float pixelY, const Rect& viewport, const Vec3& forward,
+                     const Vec3& right, const Vec3& up, float tanX, float tanY) {
     const float localX = pixelX - viewport.x;
     const float localY = pixelY - viewport.y;
+    // The viewport's own space: the middle of it is the camera's forward, and
+    // the edges are the camera's field of view. The same two numbers the
+    // projection matrix is built from, so the pointer and the picture agree
+    // about where a thing is.
     const float ndcX = 2.0f * localX / viewport.width - 1.0f;
     const float ndcY = 1.0f - 2.0f * localY / viewport.height;
     return (forward + right * (ndcX * tanX) + up * (ndcY * tanY)).normalized();

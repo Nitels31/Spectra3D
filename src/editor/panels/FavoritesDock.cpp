@@ -35,7 +35,10 @@ void Editor::drawFavoritesDock(UiRenderer& ui, PhysicsWorld& world, const Rect& 
     const char* title = text("tab.favorites");
     ui.fillRect(dock.x, dock.y, dock.width, kHeaderHeight, theme::panelDark);
     ui.fillRect(dock.x, dock.y + kHeaderHeight - 1.0f, dock.width, 1.0f, theme::separator);
-    ui.text(dock.x + 18.0f, dock.y + 5.0f, title, theme::text);
+    // Lower than in the other panels: the bottom row's panels are resized by
+    // their top edge, and the title has to be clear of that edge or the panel
+    // cannot be picked up by its own name.
+    ui.text(dock.x + 18.0f, dock.y + 9.0f, title, theme::text);
 
     // The starred bodies, collected once per frame into a member list that keeps
     // its capacity: the panel redraws on every frame and the body count is not
@@ -49,17 +52,25 @@ void Editor::drawFavoritesDock(UiRenderer& ui, PhysicsWorld& world, const Rect& 
     // answered by reading the list, and the list can be empty on purpose.
     char count[16];
     std::snprintf(count, sizeof(count), "%d", (int)favoriteRows_.size());
-    ui.text(dock.x + 26.0f + ui.textWidth(title), dock.y + 5.0f, count, theme::textDim);
+    ui.text(dock.x + 26.0f + ui.textWidth(title), dock.y + 9.0f, count, theme::textDim);
 
     if (favoriteRows_.empty()) {
         // Nothing here yet is a normal state, and it says what to do about it
-        // rather than sitting as an empty box.
+        // rather than sitting as an empty box. The hint is wrapped: a panel
+        // this narrow cannot hold the sentence in one line, and the sentence
+        // that runs out of the panel is the one nobody reads to the end.
         const char* empty = text("favorites.empty");
         const char* hint = text("favorites.hint");
         const float y = dock.y + kHeaderHeight + 12.0f;
         ui.textFit(dock.x + 10.0f, y, dock.width - 20.0f, empty, theme::textDim);
-        ui.textFit(dock.x + 10.0f, y + theme::textLineHeight + 6.0f, dock.width - 20.0f, hint,
-                   theme::textDim.scaled(0.85f));
+
+        std::vector<std::string> lines;
+        wrapText(ui, dock.width - 20.0f, hint, lines);
+        const float step = theme::textLineHeight + 4.0f;
+        for (size_t i = 0; i < lines.size(); ++i)
+            ui.textFit(dock.x + 10.0f, y + step * (float)(i + 1) + 2.0f, dock.width - 20.0f,
+                       lines[i].c_str(), theme::textDim.scaled(0.85f));
+
         favoritesScroll_ = 0.0f;
         return;
     }

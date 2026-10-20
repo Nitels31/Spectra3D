@@ -33,8 +33,6 @@ void Editor::drawConsolePanel(UiRenderer& ui, const Rect& panel) {
     ui.fillRect(panel.x, panel.y, panel.width, 1.0f, theme::separator);
     ui.fillRect(panel.x, panel.y, panel.width, kHeaderHeight, theme::panelDark);
     ui.fillRect(panel.x, panel.y + kHeaderHeight - 1.0f, panel.width, 1.0f, theme::separator);
-    ui.text(panel.x + 18.0f, panel.y + 5.0f, text("tab.console"), theme::text);
-
     const std::vector<Log::Entry>& lines = Log::entries();
     int warnings = 0, errors = 0, infos = 0;
     for (const Log::Entry& entry : lines) {
@@ -49,13 +47,45 @@ void Editor::drawConsolePanel(UiRenderer& ui, const Rect& panel) {
         {&consoleInfo_, infos, text("console.info"), theme::textDim},
     };
 
+    // The level filters, measured before they are drawn: the header has to know
+    // how much room they take before it can say whether the title fits beside
+    // them. A console in the narrow bottom-left corner has room for one or the
+    // other - two things drawn on top of each other are worse than one of them
+    // missing.
+    char labels[3][48];
+    float widths[3];
+    float filtersWidth = 0.0f;
+    for (int i = 0; i < 3; ++i) {
+        std::snprintf(labels[i], sizeof(labels[i]), "%s %d", filters[i].label, filters[i].count);
+        widths[i] = ui.textWidth(labels[i]) + 24.0f;
+        filtersWidth += widths[i] + 4.0f;
+    }
+    // A panel too narrow even for the filters gets the counts alone: the number
+    // is the part that is worth reading, and the word in front of it is not.
+    const bool compact = filtersWidth > panel.width - 24.0f;
+    if (compact) {
+        filtersWidth = 0.0f;
+        for (int i = 0; i < 3; ++i) {
+            std::snprintf(labels[i], sizeof(labels[i]), "%d", filters[i].count);
+            widths[i] = ui.textWidth(labels[i]) + 24.0f;
+            filtersWidth += widths[i] + 4.0f;
+        }
+    }
+
+    const char* title = text("tab.console");
+    const float filtersLeft = panel.x + panel.width - 8.0f - filtersWidth + 4.0f;
+    if (filtersLeft > panel.x + 18.0f + ui.textWidth(title) + 8.0f)
+        // The title sits a little lower than in the other panels: the bottom
+        // row's panels are resized by their top edge, and the title has to be
+        // clear of that edge or a panel cannot be picked up by its own name.
+        ui.text(panel.x + 18.0f, panel.y + 9.0f, title, theme::text);
+
     // Right to left, so the leftmost filter ends up next to the title.
     float x = panel.x + panel.width - 8.0f;
     for (int i = 2; i >= 0; --i) {
         const LevelFilter& filter = filters[i];
-        char label[48];
-        std::snprintf(label, sizeof(label), "%s %d", filter.label, filter.count);
-        const float width = ui.textWidth(label) + 24.0f;
+        const char* label = labels[i];
+        const float width = widths[i];
         const Rect hit{x - width, panel.y + 2.0f, width, kHeaderHeight - 4.0f};
         if (ui_.button(ui, kConsoleFilter + i, hit.x, hit.y, hit.width, hit.height, "",
                        *filter.flag))

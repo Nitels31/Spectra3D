@@ -64,6 +64,10 @@ public:
     bool mouseCaptured() const { return captured_; }
     void mouseDelta(double& dx, double& dy);
 
+    // The pointer's position, in the framebuffer's pixels - the same pixels the
+    // engine draws in. On a scaled display the window is smaller than its
+    // framebuffer, and the cursor comes in the window's pixels; the two are
+    // reconciled here so that nothing downstream has to know about it.
     void cursorPos(double& x, double& y) const;
     bool mouseDown(int button) const;
     bool mousePressed(int button);
@@ -95,6 +99,9 @@ public:
     int framebufferHeight() const { return fbH_; }
 
 private:
+    // How many framebuffer pixels there are in one window pixel. One on a
+    // display that is not scaled, more on one that is.
+    double cursorScale() const;
     static void onKey(GLFWwindow*, int, int, int, int);
     static void onMouseButton(GLFWwindow*, int, int, int);
     static void onScroll(GLFWwindow*, double, double);

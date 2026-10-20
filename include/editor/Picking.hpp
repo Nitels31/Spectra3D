@@ -33,10 +33,11 @@ bool projectToViewport(const Vec3& worldPoint, const Vec3& cameraPos, const Vec3
                        const Vec3& right, const Vec3& up, float tanX, float tanY,
                        float width, float height, float& outX, float& outY);
 
-// Builds a world-space ray from a pixel inside the viewport.
-Vec3 rayFromViewport(float pixelX, float pixelY, const Rect& viewport,
-                     const Vec3& forward, const Vec3& right, const Vec3& up, float tanX,
-                     float tanY);
+// Builds a world-space ray from a pixel inside the viewport. The middle of the
+// viewport is the camera's forward and its edges are the camera's field of
+// view, so the ray and the picture are the same thing seen two ways.
+Vec3 rayFromViewport(float pixelX, float pixelY, const Rect& viewport, const Vec3& forward,
+                     const Vec3& right, const Vec3& up, float tanX, float tanY);
 
 } // namespace picking
 } // namespace s3d

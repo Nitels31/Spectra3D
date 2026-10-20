@@ -128,11 +128,16 @@ void Editor::drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
     ui.fillRect(iconX + 2.5f, iconY + 2.5f, 3.5f, 1.5f, theme::textDim);
     const char* searchText =
         hierarchyFilter_.empty() ? text("hierarchy.search") : hierarchyFilter_.text();
-    ui.text(search.x + 18.0f, search.y + (search.height - theme::textLineHeight) * 0.5f,
-            searchText, hierarchyFilter_.empty() ? theme::textDim : theme::text);
+    // Fitted to the field: a placeholder longer than the box it is in runs out
+    // of it and lands on whatever is next to the panel.
+    const float searchTextX = search.x + 18.0f;
+    const float searchScale = ui.textFit(searchTextX,
+                                         search.y + (search.height - theme::textLineHeight) * 0.5f,
+                                         search.width - 24.0f, searchText,
+                                         hierarchyFilter_.empty() ? theme::textDim : theme::text);
     if (hierarchyFilter_.editing)
-        ui.fillRect(search.x + 18.0f + ui.textWidth(hierarchyFilter_.text()) + 1.0f, search.y + 3.0f,
-                    1.5f, search.height - 6.0f, theme::accent);
+        ui.fillRect(searchTextX + ui.textWidthScaled(hierarchyFilter_.text(), searchScale) + 1.0f,
+                    search.y + 3.0f, 1.5f, search.height - 6.0f, theme::accent);
 
     // --- tree ---
     const float rowsTop = search.y + search.height + 4.0f;

@@ -72,13 +72,16 @@ void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
     ui_.pumpTextField(window, filter_, ui_.hovered(filterRect));
     ui.fillRect(filterRect.x, filterRect.y, filterRect.width, filterRect.height,
                 filter_.editing ? theme::accent.scaled(0.35f) : theme::field);
-    ui.text(filterRect.x + 6.0f,
-            filterRect.y + (filterRect.height - theme::textLineHeight) * 0.5f,
-            filter_.empty() && !filter_.editing ? text("filter.placeholder") : filter_.text(),
-            filter_.empty() ? theme::textDim : theme::text);
+    // Fitted to the field: a placeholder or a typed name longer than the box
+    // runs out of it and lands on the panel next to it.
+    const float filterScale = ui.textFit(
+        filterRect.x + 6.0f, filterRect.y + (filterRect.height - theme::textLineHeight) * 0.5f,
+        filterRect.width - 12.0f,
+        filter_.empty() && !filter_.editing ? text("filter.placeholder") : filter_.text(),
+        filter_.empty() ? theme::textDim : theme::text);
     if (filter_.editing)
-        ui.fillRect(filterRect.x + 7.0f + ui.textWidth(filter_.text()), filterRect.y + 3.0f, 1.5f,
-                    filterRect.height - 6.0f, theme::accent);
+        ui.fillRect(filterRect.x + 7.0f + ui.textWidthScaled(filter_.text(), filterScale),
+                    filterRect.y + 3.0f, 1.5f, filterRect.height - 6.0f, theme::accent);
     y += filterRect.height + 6.0f;
 
     // --- body: clipped to the dock and scrollable -------------------------
