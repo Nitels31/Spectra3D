@@ -130,6 +130,10 @@ void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
     ui_.pushClip(bodyRect);
     float y2 = bodyTop - inspectorScroll_;
     RigidBody& body = world.bodies[(size_t)activeBody_];
+    // The body as it was before the fields below are drawn. The inspector
+    // edits the body in place, and this is where the state that a change goes
+    // back to comes from.
+    const RigidBody before = body;
     drawTransformSection(ui, body, innerDock, y2);
     // A camera has no volume and no material, so it gets its own section
     // instead of the shape and material ones - which would offer fields that
@@ -145,6 +149,8 @@ void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
     drawAnchorSection(ui, body, innerDock, y2);
     drawStateSection(ui, world, body, innerDock, y2);
     drawNodeSection(ui, innerDock, y2);
+    // A number that was changed is a change that can be taken back.
+    if (!sameBodyState(before, body)) noteBodyEdited(world, activeBody_);
     ui_.popClip();
     ui.popClip();
 

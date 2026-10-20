@@ -157,6 +157,7 @@ void Editor::buildMenuRows() {
     close(kMenuFile);
 
     open(kMenuEdit);
+    add(Action::Undo, 0, text("edit.undo"));
     add(Action::Duplicate, 0, text("edit.duplicate"));
     add(Action::Delete, 0, text("edit.delete"));
     add(Action::ToggleFavorite, 0, text("edit.favorite"));
@@ -407,6 +408,9 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         // Into a local first: push_back may reallocate the vector the source
         // points into, and copying a reference out of the vector it reallocates is
         // undefined even when it "usually" works.
+        // Whatever was being changed before is finished first: one change is
+        // one entry on the undo stack.
+        commitUndo();
         RigidBody copy = *source;
         copy.asleep = false;
         copy.sleepTime = 0.0f;
@@ -415,6 +419,9 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         world.bodies.push_back(copy);
         markSceneDirty();
         const int index = (int)world.bodies.size() - 1;
+        // Remembered, so that Ctrl+Z can take the copy away again.
+        rememberAddition(world, index);
+        commitUndo();
         activeBody_ = index;
         selectedBodies_.assign(1, index);
         world.bodies.back().wake();
@@ -422,6 +429,9 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
     }
     case Action::Delete:
         deleteSelection(world);
+        break;
+    case Action::Undo:
+        undo(world);
         break;
     case Action::ClearSelection:
         selectedBodies_.clear();
@@ -451,6 +461,10 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
                         break;
                     }
             }
+            // And a window that comes back floating does not come back on top
+            // of another one: it is put where it covers nothing.
+            if (panel.open && panel.zone == PanelZone::Float)
+                panel.floatRect = findFreeSpot(workspace(), param, panel.floatRect);
             // Which panels are on screen is part of the workspace, so the window
             // comes back the way it was left.
             markLayoutDirty();
@@ -470,6 +484,9 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         viewRay_.valid = false;
         break;
     case Action::Shape: {
+        // Whatever was being changed before is finished first: one change is
+        // one entry on the undo stack.
+        commitUndo();
         const int index = BodyFactory::spawnInFrontOf(world, (Shape)param, camera, 1.0f);
         // Selected on creation. Create and Import both put the new body where the
         // eye already is, and an object you just made and cannot immediately get
@@ -478,12 +495,18 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         if (index >= 0) {
             activeBody_ = index;
             selectedBodies_.assign(1, index);
+            // Remembered, so that Ctrl+Z can take it away again.
+            rememberAddition(world, index);
+            commitUndo();
         }
         break;
     }
     case Action::Camera: {
         // A camera is placed where the editor is looking, and it looks the same
         // way the editor does - so the new camera sees what the editor saw.
+        // Whatever was being changed before is finished first: one change is
+        // one entry on the undo stack.
+        commitUndo();
         RigidBody body;
         body.shape = Shape::Camera;
         body.cameraFov = camera.fovDeg;
@@ -494,6 +517,9 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
 
         world.bodies.push_back(body);
         const int index = (int)world.bodies.size() - 1;
+        // Remembered, so that Ctrl+Z can take the camera away again.
+        rememberAddition(world, index);
+        commitUndo();
         activeBody_ = index;
         selectedBodies_.assign(1, index);
         // The camera the game looks through. A camera that was just made is the
@@ -508,10 +534,17 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
     case Action::Model: {
         const std::vector<std::string>& models = assets_.files();
         if (param < 0 || param >= (int)models.size()) break;
+        // Whatever was being changed before is finished first: one change is
+        // one entry on the undo stack.
+        commitUndo();
+        const int before = (int)world.bodies.size();
         if (assets_.import(models[(size_t)param], world, camera, meshes_, activeBody_) < 0) {
             Log::error("Import failed: '%s'", models[(size_t)param].c_str());
             break;
         }
+        // Remembered, so that Ctrl+Z can take the model away again.
+        for (int i = before; i < (int)world.bodies.size(); ++i) rememberAddition(world, i);
+        commitUndo();
         selectedBodies_.assign(1, activeBody_);
         break;
     }

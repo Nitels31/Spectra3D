@@ -49,55 +49,110 @@ enum class PanelId {
 // same questions the editor asks - with no window and no editor.
 
 
+// Whether two bodies are the same body in the same state, as far as the
+// editor is concerned.
+//
+// The inspector edits a body in place, so the only way to know that a number
+// was changed is to compare the body before and after. The fields that the
+// simulation writes every frame - the velocity, the sleep timer - are not
+// among them: they change on their own, and a change the user did not make is
+// not a change that belongs on the undo stack.
+bool sameBodyState(const RigidBody& a, const RigidBody& b);
+
 // Godot-style editor shell. Owns selection, play mode and the UI context, and
 // delegates drawing to the panels in `panels/`.
 class Editor {
 public:
     // Widget id ranges, kept disjoint so panels can never collide.
+    //
+    // The number space is cut into stretches, and every stretch says what it
+    // is for: a shared id is two widgets in two corners of the window taking
+    // the press away from each other, and the press lands in the wrong place.
+    // A test asks the stretches whether they still fit.
     enum : int {
+        // 100 - 199: the top bar.
         kTopBar = 100,
         kTransportPlay = 101,
         kTransportPause = 102,
         kTransportStop = 103,
-        kHierarchyRow = 400,
-        kHierarchyStar = 420,
-        kHierarchyFavOnly = 421,
-        kHierarchySearch = 440,
-        kFavoriteRow = 460,
-        kSoundRow = 480,
-        kLandformMinHeight = 490,
-        kLandformMaxHeight = 491,
-        kLandformWidth = 492,
-        kLandformDepth = 493,
-        kLandformCells = 494,
-        kLandformGenerate = 495,
-        kInspectorDock = 500,
-        kInspectorProperty = 600,
-        kFilterField = 700,
-        kSceneHeader = 800,
-        kConsoleFilter = 950,
-        // Top bar, right-hand cluster. 1000+ so nothing else can collide with it.
-        kTopBarTool = 990,  // + tool index, the five tools in the bar itself
-        kToolbarHelp = 1000,
-        kToolbarLayers = 1001,
-        kToolbarReload = 1002,
-        kToolbarSearch = 1003,
-        kToolbarCounter = 1004,
-        kMenuRow = 1100,   // + row index
-        kLayerRow = 1200,  // + body index
-        kLayerToggle = 1300,
-kHelpClose = 1400,
-        kPanelGrip = 1500,
+        kTopBarTool = 120,  // + the tool index, the five tools in the bar itself
+
+        // 200 - 299: the dropdowns of the bar.
+        kMenuRow = 200,  // + row index
+
+        // 300 - 399: the toolbar, the overlays that hang off it, and the
+        // chrome of the panels.
+        kToolbarHelp = 300,
+        kToolbarLayers = 301,
+        kToolbarReload = 302,
+        kToolbarSearch = 303,
+        kToolbarCounter = 304,
+        kLayerRow = 320,  // + body index
+        kLayerToggle = 340,
+        kHelpClose = 350,
+        kPanelGrip = 360,
         // Not a widget: the id the popup capture is claimed under. Any non-zero
         // value does, this one only has to be unlikely.
-        kPopupCapture = 1600,
+        kPopupCapture = 380,
+
+        // 400 - 999: the hierarchy, one row per body. Six hundred bodies is
+        // more than a scene holds, and the stretch is that wide on purpose.
+        kHierarchyRow = 400,  // + body index
+        kHierarchyStar = 900,
+        kHierarchyFavOnly = 901,
+        kHierarchySearch = 902,
+
+        // 1000 - 1099: the favourites, one row per starred body.
+        kFavoriteRow = 1000,  // + index
+
+        // 1100 - 1199: the sounds, one row per sound.
+        kSoundRow = 1100,  // + index
+
+        // 1200 - 1299: the landform.
+        kLandformMinHeight = 1200,
+        kLandformMaxHeight = 1201,
+        kLandformWidth = 1202,
+        kLandformDepth = 1203,
+        kLandformCells = 1204,
+        kLandformGenerate = 1205,
+        kLandformColor = 1210,  // + the swatch
+        kLandformShape = 1220,  // + the shape
+        kLandformSeed = 1230,
+        kLandformOctaves = 1231,
+        kLandformFrequency = 1232,
+        kLandformWarp = 1233,
+        kLandformRidge = 1234,
+        kLandformErosion = 1235,
+        kLandformSmoothing = 1236,
+        kLandformBiomes = 1237,
+        kLandformRandom = 1238,
+
+        // 1300 - 1399: the inspector.
+        kInspectorDock = 1300,
+        kInspectorProperty = 1310,  // + the property
+
+        // 1400 - 1499: the fields that filter something.
+        kFilterField = 1400,
+        kConsoleFilter = 1401,
+
+        // 1500 - 1599: the strip above the scene.
+        kSceneHeader = 1500,
+    };
+
+    // Who is drawing, for the overlay guard. The surfaces a pass puts down do
+    // not take the press from the widgets of that same pass - otherwise a
+    // panel would take the press from its own Close button.
+    enum : int {
+        kOwnerTopBarOverlay = 1700,
+        kOwnerModal = 1701,
+        kOwnerFloatingPanel = 1710,  // + the panel
     };
 
     Editor(MeshRegistry& meshes, i18n::Localizer& localizer, SoundDevice& sound);
 
     // --- per frame ----------------------------------------------------------
     void handleInput(PhysicsWorld& world, Camera& camera, Window& window, int fbWidth,
-                     int fbHeight);
+                     int fbHeight, float dt);
     void renderOverlay(SceneRenderer& scene, PhysicsWorld& world, int hiddenBody = -1);
     void renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
                   int fbWidth, int fbHeight);
@@ -165,7 +220,7 @@ private:
 
 
     // --- input phases -------------------------------------------------------
-    void handleHotkeys(PhysicsWorld& world, Window& window);
+    void handleHotkeys(PhysicsWorld& world, Camera& camera, Window& window, float dt);
     void handleViewport(PhysicsWorld& world, Camera& camera, Window& window);
         bool tryGizmoGrip(PhysicsWorld& world, Camera& camera);
     // The pointer's angle around a ring, in screen space, measured about the ring's
@@ -289,10 +344,21 @@ private:
 
     // --- the landform --------------------------------------------------------
     // What the Landform panel says: how low and how high the ground goes, how
-    // big it is, and how finely it is cut. The cells are a whole number, so
-    // they are kept apart from the rest.
-    LandformSettings landform_;
-    float landformCells_ = 64.0f;
+    // big it is, how finely it is cut, and what the noise is made of. The
+    // cells are a whole number, so they are kept apart from the rest.
+    LandformSettings landformSettings_;
+    float landformCells_ = 96.0f;
+    // The seed of the noise, kept as a whole number because that is what a
+    // field can show and what a person can read out loud.
+    int landformSeed_ = 1;
+    // How far the landform panel is scrolled, and how tall its content turned
+    // out to be. The second number is measured, not predicted.
+    float landformScroll_ = 0.0f;
+    float landformContentHeight_ = 0.0f;
+    // The ground that was made last, and the heightfield it was made from.
+    // The editor asks it how high the ground is at a point, so a body dropped
+    // on it lands on it and not near it.
+    Landform landform_;
     // How many threads the making may use. The user picks the number in the
     // settings, and the panel uses it.
     int loaderThreads_ = 4;
@@ -352,6 +418,9 @@ private:
         Reload,
         Duplicate,
         Delete,
+        // Take the last change back. The same thing the Ctrl+Z key does, and
+        // it is in the menu because the menu is where everybody looks for it.
+        Undo,
         ClearSelection,
         Wake,
         Grid,
@@ -492,6 +561,13 @@ private:
     void drawPanelById(UiRenderer& ui, PhysicsWorld& world, Window& window, PanelId id);
     void drawDockedPanels(UiRenderer& ui, PhysicsWorld& world, Window& window);
     void drawFloatingPanels(UiRenderer& ui, PhysicsWorld& world, Window& window);
+    // The floating panels, in the order they are drawn. The one under the
+    // pointer is drawn last: it is the window the pointer is aiming at, and a
+    // window that is under another one cannot be reached.
+    int floatingPanelOrder(int* out) const;
+    // The floating panels, declared into the overlay guard so that a click on
+    // one of them belongs to it and not to the panels and the scene below.
+    void declareFloatingPanels();
     // Title bar of a panel: the handle it is dragged by, and the strip the drop
     // preview is anchored to.
     Rect panelHeader(PanelId id) const;
@@ -552,6 +628,70 @@ private:
     // --- selection ----------------------------------------------------------
     int activeBody_ = -1;
     std::vector<int> selectedBodies_;
+
+    // --- undo ----------------------------------------------------------------
+    // One change to one body, and how to take it back.
+    //
+    // The steps of one action are applied in order and taken back in the
+    // reverse order, and every step knows the index it was made at - so a
+    // body that was removed goes back to the place it came from, and a body
+    // that was added goes away from the place it was put.
+    struct UndoStep {
+        enum class Kind { Changed, Added, Removed };
+        Kind kind = Kind::Changed;
+        int index = -1;
+        RigidBody body;
+    };
+
+    // A change the user made, and everything it touched.
+    struct UndoAction {
+        std::vector<UndoStep> steps;
+    };
+
+    // How many changes are remembered. A hundred is more than anybody undoes
+    // and less than a hundred copies of a scene.
+    static constexpr int kMaxUndoActions = 100;
+
+    std::vector<UndoAction> undoStack_;
+    std::vector<UndoAction> redoStack_;
+    // The change being made right now. It becomes one entry on the undo stack
+    // when it is over.
+    UndoAction pending_;
+    // While the undo itself is running, what it does is not undone in turn.
+    bool undoing_ = false;
+
+    // The body as it was before the change that is being made now, and where
+    // it was. A drag of a number is one change and not one change per frame,
+    // so the state that is remembered is the one from before the first frame
+    // of the drag.
+    RigidBody bodyBefore_;
+    int bodyBeforeIndex_ = -1;
+    bool bodyBeforeValid_ = false;
+
+    // The body as it was at the end of the last frame. It is where a change
+    // made during this frame goes back to.
+    RigidBody bodySnapshot_;
+    int bodySnapshotIndex_ = -1;
+    bool bodySnapshotValid_ = false;
+
+    // Remembers a body as it is now, so that a change to it can be taken
+    // back.
+    void rememberBody(const PhysicsWorld& world, int index);
+    // Remembers a body that is about to be removed.
+    void rememberRemoval(const PhysicsWorld& world, int index);
+    // Remembers a body that has just been added.
+    void rememberAddition(const PhysicsWorld& world, int index);
+    // Puts the change that was being made onto the undo stack.
+    void commitUndo();
+    // A change to the body that is selected, made by the inspector. The state
+    // to go back to is the one from before the change began.
+    void noteBodyEdited(const PhysicsWorld& world, int index);
+    // Ends the change that was being made, if it is over.
+    void finishUndoIfDone(const PhysicsWorld& world);
+    // Takes the last change back, and puts it on the redo stack.
+    void undo(PhysicsWorld& world);
+    // Puts the last change back the other way.
+    void redo(PhysicsWorld& world);
 
     // --- play mode ----------------------------------------------------------
     bool playMode_ = false;

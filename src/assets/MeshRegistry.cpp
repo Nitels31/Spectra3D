@@ -3,6 +3,7 @@
 #include "assets/TextureRegistry.hpp"
 #include "core/Log.hpp"
 #include "core/Str.hpp"
+#include "platform/Filesystem.hpp"
 #include "assets/MeshImport.hpp"
 
 #include <algorithm>
@@ -77,6 +78,13 @@ int MeshRegistry::finishImport(MeshAsset asset, bool quiet) {
     }
 
     return importMesh(std::move(asset));
+}
+
+int MeshRegistry::loadTexture(const std::string& path, bool repeat) {
+    if (!textures_) return -1;
+    const std::string& root = fs::assetRoot();
+    if (root.empty()) return -1;
+    return textures_->loadFile(str::join(root, path), /*quiet=*/true, repeat);
 }
 
 const std::vector<std::string>& MeshRegistry::textureFilesOf(int index) const {

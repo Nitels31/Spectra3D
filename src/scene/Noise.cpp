@@ -6,47 +6,178 @@
 namespace s3d {
 namespace {
 
-// A number in 0..1 for a point in the plane. The sine is the old trick: it is
-// not a good hash, but it is a good enough one, and a picture does not need a
-// better one.
-float hash(float x, float y, unsigned seed) {
-    const float h = std::sin(x * 127.1f + y * 311.7f + (float)seed * 0.0137f) * 43758.5453f;
-    return h - std::floor(h);
-}
+// Eight directions: the diagonals and the sides. Perlin's own set has twelve,
+// and the extra four are worth the arithmetic only in three dimensions.
+constexpr float kSqrtHalf = 0.70710678f;
+constexpr float kGradX[8] = {1.0f, -1.0f, 0.0f, 0.0f, kSqrtHalf, -kSqrtHalf, kSqrtHalf, -kSqrtHalf};
+constexpr float kGradY[8] = {0.0f, 0.0f, 1.0f, -1.0f, kSqrtHalf, kSqrtHalf, -kSqrtHalf, -kSqrtHalf};
 
-// The smoothstep: the difference between a grid of squares and a cloud.
-float smooth(float t) { return t * t * (3.0f - 2.0f * t); }
+// The curve between two lattice points.
+//
+// The smoothstep (3t^2 - 2t^3) is continuous but its slope jumps at the
+// lattice points, and a jump in the slope is a crease in the ground - a line
+// you can see across a hill. The quintic has no jump in its slope either, so
+// the ground has no creases in it at all.
+float fade(float t) { return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f); }
+
+float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+
+// The seed of one octave. A stride that is not a small number: two octaves
+// with seeds next to each other would share their lattice and the noise would
+// come out with the same shape in both.
+constexpr unsigned int kOctaveStride = 1013u;
 
 } // namespace
 
-float valueNoise(float x, float y, unsigned seed) {
-    const float ix = std::floor(x);
-    const float iy = std::floor(y);
-    const float fx = smooth(x - ix);
-    const float fy = smooth(y - iy);
-
-    const float a = hash(ix, iy, seed);
-    const float b = hash(ix + 1.0f, iy, seed);
-    const float c = hash(ix, iy + 1.0f, seed);
-    const float d = hash(ix + 1.0f, iy + 1.0f, seed);
-
-    const float top = a + (b - a) * fx;
-    const float bottom = c + (d - c) * fx;
-    return top + (bottom - top) * fy;
+unsigned int hashLattice(int x, int y, unsigned int seed) {
+    // A 32 bit mix of three integers. The multiply-xor-shift chain at the end
+    // is what makes it avalanche: without it, neighbouring lattice points give
+    // neighbouring hashes, and neighbouring hashes give a noise that has a
+    // grain in it - stripes along one axis.
+    unsigned int h = (unsigned int)x * 0x8DA6B343u;
+    h ^= (unsigned int)y * 0xD8163841u;
+    h += seed * 0xCB1AB31Fu;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    h *= 0x297A2D39u;
+    h ^= h >> 15;
+    return h;
 }
 
-float fbm(float x, float y, unsigned seed, int octaves) {
+void latticeGradient(int x, int y, unsigned int seed, float& gx, float& gy) {
+    const unsigned int h = hashLattice(x, y, seed);
+    const int index = (int)(h & 7u);
+    gx = kGradX[index];
+    gy = kGradY[index];
+}
+
+float perlinNoise(float x, float y, unsigned int seed) {
+    const int xi = (int)std::floor(x);
+    const int yi = (int)std::floor(y);
+    const float xf = x - (float)xi;
+    const float yf = y - (float)yi;
+    const float u = fade(xf);
+    const float v = fade(yf);
+
+    float gx = 0.0f, gy = 0.0f;
+
+    latticeGradient(xi, yi, seed, gx, gy);
+    const float n00 = gx * xf + gy * yf;
+    latticeGradient(xi + 1, yi, seed, gx, gy);
+    const float n10 = gx * (xf - 1.0f) + gy * yf;
+    latticeGradient(xi, yi + 1, seed, gx, gy);
+    const float n01 = gx * xf + gy * (yf - 1.0f);
+    latticeGradient(xi + 1, yi + 1, seed, gx, gy);
+    const float n11 = gx * (xf - 1.0f) + gy * (yf - 1.0f);
+
+    const float a = n00 + u * (n10 - n00);
+    const float b = n01 + u * (n11 - n01);
+    // The factor puts the result back into -1..1: the raw sum of four dot
+    // products of unit vectors cannot reach the ends of the range, and a noise
+    // that never does is a noise with a flat spot in the middle of its range.
+    return (a + v * (b - a)) * 1.41421356f;
+}
+
+float fbm(float x, float y, unsigned int seed, int octaves, float lacunarity, float gain) {
+    if (octaves < 1) octaves = 1;
     float sum = 0.0f;
     float amplitude = 1.0f;
     float total = 0.0f;
+    float fx = x, fy = y;
     for (int i = 0; i < octaves; ++i) {
-        sum += valueNoise(x, y, seed + (unsigned)i * 17u) * amplitude;
+        sum += perlinNoise(fx, fy, seed + (unsigned int)i * kOctaveStride) * amplitude;
         total += amplitude;
-        x *= 2.0f;
-        y *= 2.0f;
-        amplitude *= 0.5f;
+        fx *= lacunarity;
+        fy *= lacunarity;
+        amplitude *= gain;
     }
-    return total > 0.0f ? sum / total : 0.0f;
+    if (total <= 0.0f) return 0.5f;
+    return clamp01((sum / total) * 0.5f + 0.5f);
+}
+
+float ridgedFbm(float x, float y, unsigned int seed, int octaves, float lacunarity, float gain) {
+    if (octaves < 1) octaves = 1;
+    float sum = 0.0f;
+    float amplitude = 1.0f;
+    float total = 0.0f;
+    float fx = x, fy = y;
+    // How much of the next octave is allowed through. A ridge that is not
+    // held back by the one below it is a ridge with the same size everywhere,
+    // and the mountain has one scale instead of several.
+    float weight = 1.0f;
+    for (int i = 0; i < octaves; ++i) {
+        float n = perlinNoise(fx, fy, seed + (unsigned int)i * kOctaveStride);
+        // The fold: the zero line of the noise becomes a crest.
+        n = 1.0f - std::fabs(n);
+        n *= n;
+        n *= weight;
+        weight = clamp01(n * 2.0f);
+        sum += n * amplitude;
+        total += amplitude;
+        fx *= lacunarity;
+        fy *= lacunarity;
+        amplitude *= gain;
+    }
+    if (total <= 0.0f) return 0.0f;
+    return clamp01(sum / total);
+}
+
+float billowFbm(float x, float y, unsigned int seed, int octaves, float lacunarity, float gain) {
+    if (octaves < 1) octaves = 1;
+    float sum = 0.0f;
+    float amplitude = 1.0f;
+    float total = 0.0f;
+    float fx = x, fy = y;
+    for (int i = 0; i < octaves; ++i) {
+        const float n = std::fabs(perlinNoise(fx, fy, seed + (unsigned int)i * kOctaveStride));
+        sum += (n * 2.0f - 1.0f) * amplitude;
+        total += amplitude;
+        fx *= lacunarity;
+        fy *= lacunarity;
+        amplitude *= gain;
+    }
+    if (total <= 0.0f) return 0.5f;
+    return clamp01((sum / total) * 0.5f + 0.5f);
+}
+
+float cellularNoise(float x, float y, unsigned int seed) {
+    const int xi = (int)std::floor(x);
+    const int yi = (int)std::floor(y);
+    float best = 1e9f;
+    // The nine cells around the point. A point in the corner of its cell is
+    // closest to one of the three cells across the border, so three by three is
+    // enough - the ones further away cannot be the nearest.
+    for (int j = -1; j <= 1; ++j) {
+        for (int i = -1; i <= 1; ++i) {
+            const int cx = xi + i;
+            const int cy = yi + j;
+            const unsigned int h = hashLattice(cx, cy, seed);
+            // The point's place inside its cell, from the high and the low
+            // halves of the hash.
+            const float px = (float)cx + (float)(h & 0xFFFFu) / 65535.0f;
+            const float py = (float)cy + (float)((h >> 16) & 0xFFFFu) / 65535.0f;
+            const float dx = px - x;
+            const float dy = py - y;
+            const float d = dx * dx + dy * dy;
+            if (d < best) best = d;
+        }
+    }
+    return clamp01(std::sqrt(best));
+}
+
+float warpedFbm(float x, float y, unsigned int seed, int octaves, float strength) {
+    if (strength <= 0.0f) return fbm(x, y, seed, octaves);
+
+    // Two noises, then two more noises that read the first two, and the
+    // coordinates are moved by the result. Every layer bends the shapes of
+    // the layers above it, and the edges that would have been straight are
+    // folded instead.
+    const float q1 = fbm(x, y, seed + 7919u, 3);
+    const float q2 = fbm(x + 5.2f, y + 1.3f, seed + 104729u, 3);
+    const float r1 = fbm(x + 4.0f * q1 + 1.7f, y + 4.0f * q2 + 9.2f, seed + 1299709u, 3);
+    const float r2 = fbm(x + 4.0f * q1 + 8.3f, y + 4.0f * q2 + 2.8f, seed + 15485863u, 3);
+    return fbm(x + strength * r1, y + strength * r2, seed, octaves);
 }
 
 } // namespace s3d

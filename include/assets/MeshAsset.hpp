@@ -27,6 +27,16 @@ struct MeshPart {
     // colour exactly as before, so adding textures never changes a model that
     // has none.
     int texture = -1;
+    // The colour of every vertex, three numbers each, in the same order as the
+    // vertices above. Empty for a part that is drawn in its flat colour - which
+    // is every imported model, because a file that carries no colours has none
+    // to carry.
+    //
+    // It is a separate array and not four more floats in the vertex, because
+    // the vertex is eight floats for every model in the engine and the models
+    // are big. The ground is the one thing that is coloured by its vertices,
+    // and it can afford an array of its own.
+    std::vector<float> colors;
 };
 
 // Imported model plus the derived data the renderer and the editor need.

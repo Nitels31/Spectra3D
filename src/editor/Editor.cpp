@@ -40,6 +40,40 @@ const NavBall kNavBalls[6] = {
 
 } // namespace
 
+// Whether two bodies are the same body in the same state, as far as the
+// editor is concerned.
+//
+// The inspector edits a body in place, so the only way to know that a number
+// was changed is to compare the body before and after. The fields that the
+// simulation writes every frame - the velocity, the sleep timer - are not
+// among them: they change on their own, and a change the user did not make is
+// not a change that belongs on the undo stack.
+bool sameBodyState(const RigidBody& a, const RigidBody& b) {
+    return a.position.x == b.position.x && a.position.y == b.position.y &&
+           a.position.z == b.position.z && a.orientation.w == b.orientation.w &&
+           a.orientation.x == b.orientation.x && a.orientation.y == b.orientation.y &&
+           a.orientation.z == b.orientation.z && a.halfExtents.x == b.halfExtents.x &&
+           a.halfExtents.y == b.halfExtents.y && a.halfExtents.z == b.halfExtents.z &&
+           a.cylinderRadius == b.cylinderRadius && a.capsuleRadius == b.capsuleRadius &&
+           a.capsuleHeight == b.capsuleHeight && a.coneRadius == b.coneRadius &&
+           a.coneHeight == b.coneHeight && a.pyramidBaseRadius == b.pyramidBaseRadius &&
+           a.pyramidHeight == b.pyramidHeight && a.prismRadius == b.prismRadius &&
+           a.prismHeight == b.prismHeight && a.prismSides == b.prismSides &&
+           a.cameraFov == b.cameraFov && a.mesh == b.mesh && a.meshScale == b.meshScale &&
+           a.mass == b.mass && a.visible == b.visible && a.locked == b.locked &&
+           a.favorite == b.favorite && a.activeCamera == b.activeCamera &&
+           a.sound == b.sound && a.soundVolume == b.soundVolume &&
+           a.anchorPosition == b.anchorPosition && a.anchorRotation == b.anchorRotation &&
+           a.anchorPoint.x == b.anchorPoint.x && a.anchorPoint.y == b.anchorPoint.y &&
+           a.anchorPoint.z == b.anchorPoint.z && a.anchorSpring == b.anchorSpring &&
+           a.material.density == b.material.density &&
+           a.material.friction == b.material.friction &&
+           a.material.restitution == b.material.restitution &&
+           a.material.isStatic == b.material.isStatic &&
+           a.material.color.x == b.material.color.x && a.material.color.y == b.material.color.y &&
+           a.material.color.z == b.material.color.z;
+}
+
 Editor::Editor(MeshRegistry& meshes, i18n::Localizer& localizer, SoundDevice& sound)
     : meshes_(meshes), loc_(localizer), sound_(sound) {
     filter_.id = kFilterField;
@@ -83,7 +117,7 @@ Editor::Editor(MeshRegistry& meshes, i18n::Localizer& localizer, SoundDevice& so
     Panel& landform = panels_[(int)PanelId::Landform];
     landform.zone = PanelZone::Float;
     landform.open = false;
-    landform.floatRect = Rect{700.0f, 90.0f, 280.0f, 320.0f};
+    landform.floatRect = Rect{600.0f, 60.0f, 360.0f, 430.0f};
 }
 
 bool Editor::consumeSingleStep() {
@@ -190,6 +224,11 @@ void Editor::commitPanelDrop() {
         rect.x = clampf(rect.x, 0.0f, std::fmax(0.0f, (float)fbWidth_ - rect.width));
         rect.y = clampf(rect.y, (float)theme::menuBarHeight,
                         std::fmax(0.0f, (float)fbHeight_ - rect.height));
+        // And not on top of another floating panel: a window that covers
+        // another one hides it, and the one underneath cannot be reached.
+        // The window is moved to the first place where it covers nothing -
+        // which is not always the place it was dropped, and that is the point.
+        rect = findFreeSpot(workspace(), dragPanel_, rect);
         moving.zone = PanelZone::Float;
         moving.floatRect = rect;
     } else {
@@ -303,6 +342,11 @@ void Editor::handlePanelDrag(PhysicsWorld& world) {
     }
 
     if (ui_.pointerPressed() && pointerArmed_) {
+        // A press on a window that is over this one is a press on that window.
+        // The floating panels and the dialog are in the guard, and a press that
+        // belongs to them is not a press on the panel underneath.
+        if (ui_.pressOnOverlay()) return;
+
         // Grips are tested BEFORE the title bar, and that order is the whole
         // reason the console can be resized at all: its only grip is its top
         // edge, which is also the first five pixels of its title bar. Tested the
@@ -390,7 +434,7 @@ void Editor::drawPanelChrome(UiRenderer& ui, PanelId id) {
         ui.fillRect(close.x + o, close.y + o, kStroke, kStroke, tint);
         ui.fillRect(close.x + 12.0f - o + 2.0f, close.y + o, kStroke, kStroke, tint);
     }
-    if (pressAccepted() && closeHovered) {
+    if (pressAccepted() && closeHovered && !ui_.pressOnOverlay()) {
         panels_[(int)id].open = false;
         markLayoutDirty();
         return;
@@ -526,6 +570,11 @@ void Editor::pruneSelection(const PhysicsWorld& world) {
 }
 
 void Editor::deleteSelection(PhysicsWorld& world) {
+    // Whatever was being changed before is finished first: one change is one
+    // entry on the undo stack, and the steps of one entry all talk about the
+    // same scene - a body that was removed and a body that was moved in the
+    // same entry would not know which is which.
+    commitUndo();
     std::sort(selectedBodies_.rbegin(), selectedBodies_.rend());
     for (int index : selectedBodies_) {
         if (index < 0 || index >= (int)world.bodies.size()) continue;
@@ -536,10 +585,13 @@ void Editor::deleteSelection(PhysicsWorld& world) {
             Log::info("Body %d is locked", index);
             continue;
         }
-Log::info("Deleted body %d", index);
+        Log::info("Deleted body %d", index);
+        // Remembered before it goes, so that Ctrl+Z can bring it back.
+        rememberRemoval(world, index);
         world.remove(index);
         markSceneDirty();
     }
+    commitUndo();
     selectedBodies_.clear();
     activeBody_ = -1;
 }
@@ -648,7 +700,7 @@ void Editor::wrapText(const UiRenderer& ui, float maxWidth, const char* utf8,
 }
 
 void Editor::handleInput(PhysicsWorld& world, Camera& camera, Window& window, int fbWidth,
-                         int fbHeight) {
+                         int fbHeight, float dt) {
     ui_.beginInput(window);
     // The dropdowns are drawn after the panels, so the panels' hit tests have already
     // run by the time anything can see that they are covered. Claiming the pointer
@@ -690,21 +742,252 @@ void Editor::handleInput(PhysicsWorld& world, Camera& camera, Window& window, in
         layoutDirty_ = false;
         saveLayout();
     }
-    handleHotkeys(world, window);
+    // The floating panels and the dialog are surfaces: they are over the scene
+    // and over the panels below them, and a press on one of them belongs to
+    // it. The guard is what says so, and it has to be filled before the
+    // viewport is picked - a click on a window that is over the scene must
+    // not also grab the body behind it.
+    declareFloatingPanels();
+    if (modal_ != Modal::None)
+        ui_.overlays().push(0.0f, 0.0f, (float)fbWidth, (float)fbHeight, kOwnerModal);
+    handleHotkeys(world, camera, window, dt);
     handlePanelDrag(world);
     handleViewport(world, camera, window);
 }
 
-void Editor::handleHotkeys(PhysicsWorld& world, Window& window) {
-    // Deliberately empty of state-changing shortcuts.
-    //
-    // Play / Pause / Stop and save / load used to be bound to keys. Every one of
-    // them mutates or discards the scene, and a stray keypress while typing or
-    // working silently threw work away - stopping play mode restores the snapshot
-    // taken when play began, so anything built during the run is gone.
-    // Mode changes now only happen through the buttons in the menu bar.
-    (void)world;
-    (void)window;
+void Editor::handleHotkeys(PhysicsWorld& world, Camera& camera, Window& window, float dt) {
+    // A field with the keyboard has it. The shortcuts belong to the editor
+    // and not to the person who is typing a name into the search box: a
+    // Delete that throws the selection away while somebody is typing is not
+    // a shortcut, it is a mistake - and the typed name goes with it.
+    if (ui_.textFocused()) return;
+    // A dialog is modal: it has the keyboard until it is answered.
+    if (modal_ != Modal::None) return;
+
+    // Ctrl+Z takes the last change back.
+    if (ui_.ctrlHeld() && window.takeKeyPress(GLFW_KEY_Z)) {
+        undo(world);
+        return;
+    }
+
+    // Delete throws the selection away. The menu has done this for as long as
+    // there has been a menu, and the key is the one everybody reaches for.
+    if (window.takeKeyPress(GLFW_KEY_DELETE)) {
+        if (!selectedBodies_.empty()) deleteSelection(world);
+        return;
+    }
+
+    // The arrows move the camera, in the plane of the screen: left and right
+    // along the camera's right, up and down along its up. The camera does not
+    // turn - the mouse does that - so the scene slides past instead, and what
+    // is being looked at stays in the middle of the screen.
+    Vec3 forward, right, up;
+    camera.basis(forward, right, up);
+    Vec3 move;
+    if (window.keyDown(GLFW_KEY_LEFT)) move -= right;
+    if (window.keyDown(GLFW_KEY_RIGHT)) move += right;
+    if (window.keyDown(GLFW_KEY_UP)) move += up;
+    if (window.keyDown(GLFW_KEY_DOWN)) move -= up;
+    if (move.lengthSq() <= 0.0f) return;
+
+    // How fast the ground slides past: a piece of it you can see. The same
+    // rule the pan tool uses - the speed follows how far away the ground is,
+    // so a key moves the same amount of the picture at any distance.
+    Vec3 reference{0.0f, 0.0f, 0.0f};
+    if (const RigidBody* body = world.find(activeBody_)) reference = body->position;
+    const float distance = std::fmax(1.0f, (camera.position - reference).length());
+    float speed = clampf(distance * 0.35f, 3.0f, 120.0f);
+    if (window.keyDown(GLFW_KEY_LEFT_SHIFT) || window.keyDown(GLFW_KEY_RIGHT_SHIFT)) speed *= 4.0f;
+    camera.position += move.normalized() * (speed * dt);
+    viewRay_.valid = false;
+}
+
+// --- the undo ----------------------------------------------------------------
+
+// Remembers a body as it is now, so that a change to it can be taken back.
+void Editor::rememberBody(const PhysicsWorld& world, int index) {
+    if (undoing_) return;
+    if (index < 0 || index >= (int)world.bodies.size()) return;
+    UndoStep step;
+    step.kind = UndoStep::Kind::Changed;
+    step.index = index;
+    step.body = world.bodies[(size_t)index];
+    pending_.steps.push_back(step);
+}
+
+// Remembers a body that is about to be removed.
+void Editor::rememberRemoval(const PhysicsWorld& world, int index) {
+    if (undoing_) return;
+    if (index < 0 || index >= (int)world.bodies.size()) return;
+    UndoStep step;
+    step.kind = UndoStep::Kind::Removed;
+    step.index = index;
+    step.body = world.bodies[(size_t)index];
+    pending_.steps.push_back(step);
+}
+
+// Remembers a body that has just been added.
+void Editor::rememberAddition(const PhysicsWorld& world, int index) {
+    if (undoing_) return;
+    if (index < 0 || index >= (int)world.bodies.size()) return;
+    UndoStep step;
+    step.kind = UndoStep::Kind::Added;
+    step.index = index;
+    step.body = world.bodies[(size_t)index];
+    pending_.steps.push_back(step);
+}
+
+// Puts the change that was being made onto the undo stack.
+void Editor::commitUndo() {
+    if (undoing_) return;
+    if (!pending_.steps.empty()) {
+        undoStack_.push_back(std::move(pending_));
+        // The stack is not endless: a hundred changes is more than anybody
+        // undoes, and every entry is a copy of a body.
+        if ((int)undoStack_.size() > kMaxUndoActions) undoStack_.erase(undoStack_.begin());
+        // A new change clears the way back: the redo stack belongs to a
+        // history that has just been broken.
+        redoStack_.clear();
+    }
+    pending_.steps.clear();
+    bodyBeforeValid_ = false;
+}
+
+// A change to the body that is selected, made by the inspector.
+//
+// The state to go back to is the one from before the change began, not the
+// one from the frame before: a slider that is dragged is one change and not
+// one change per pixel.
+void Editor::noteBodyEdited(const PhysicsWorld& world, int index) {
+    if (undoing_) return;
+    if (index < 0 || index >= (int)world.bodies.size()) return;
+    if (bodyBeforeValid_ && bodyBeforeIndex_ == index) return;
+
+    if (!bodySnapshotValid_ || bodySnapshotIndex_ != index) return;
+
+    bodyBefore_ = bodySnapshot_;
+    bodyBeforeIndex_ = index;
+    bodyBeforeValid_ = true;
+    pending_.steps.clear();
+    UndoStep step;
+    step.kind = UndoStep::Kind::Changed;
+    step.index = index;
+    step.body = bodyBefore_;
+    pending_.steps.push_back(step);
+}
+
+// Ends the change that was being made, if it is over.
+//
+// A change is over when the body stops changing: the mouse was let go of,
+// the number was typed and Enter was pressed. Until then it is one entry on
+// the undo stack and not one entry per frame.
+//
+// The comparison is with the body as it was at the end of the LAST frame -
+// not with the body as it was before the change began. A drag of a slider
+// leaves the body different from where it started, and it is the difference
+// between one frame and the next that says whether anything is still moving.
+void Editor::finishUndoIfDone(const PhysicsWorld& world) {
+    if (!bodyBeforeValid_) return;
+    if (bodyBeforeIndex_ < 0 || bodyBeforeIndex_ >= (int)world.bodies.size()) {
+        bodyBeforeValid_ = false;
+        return;
+    }
+    if (!bodySnapshotValid_ || bodySnapshotIndex_ != bodyBeforeIndex_) {
+        // There is nothing to compare with: the change is over.
+        commitUndo();
+        return;
+    }
+    const RigidBody& now = world.bodies[(size_t)bodyBeforeIndex_];
+    if (sameBodyState(now, bodySnapshot_)) commitUndo();
+}
+
+// Takes the last change back, and puts it on the redo stack.
+void Editor::undo(PhysicsWorld& world) {
+    if (undoStack_.empty()) return;
+    // A change that is still being made is finished first: the thing that is
+    // being changed right now is the newest thing, and the one before it is
+    // the one that is undone.
+    if (!pending_.steps.empty()) commitUndo();
+    if (undoStack_.empty()) return;
+
+    UndoAction action = std::move(undoStack_.back());
+    undoStack_.pop_back();
+
+    undoing_ = true;
+    // The steps are taken back in the reverse of the order they were made in,
+    // and every one of them knows the index it was made at - so a body that
+    // was removed goes back to the place it came from.
+    int restored = -1;
+    for (int i = (int)action.steps.size() - 1; i >= 0; --i) {
+        const UndoStep& step = action.steps[(size_t)i];
+        switch (step.kind) {
+        case UndoStep::Kind::Changed:
+            if (step.index < 0 || step.index >= (int)world.bodies.size()) break;
+            world.bodies[(size_t)step.index] = step.body;
+            world.bodies[(size_t)step.index].configure(world.bodies[(size_t)step.index].mass);
+            world.bodies[(size_t)step.index].syncPrevTransform();
+            break;
+        case UndoStep::Kind::Added:
+            if (step.index < 0 || step.index > (int)world.bodies.size()) break;
+            world.bodies.erase(world.bodies.begin() + step.index);
+            break;
+        case UndoStep::Kind::Removed:
+            if (step.index < 0 || step.index > (int)world.bodies.size()) break;
+            world.bodies.insert(world.bodies.begin() + step.index, step.body);
+            if (restored < 0) restored = step.index;
+            break;
+        }
+    }
+    undoing_ = false;
+
+    redoStack_.push_back(std::move(action));
+    // The selection follows the bodies: an index that no longer means the
+    // same body is not a selection.
+    pruneSelection(world);
+    // A body that was taken away and is back again is selected, the way it
+    // was before it went: the thing that was just undid is the thing you are
+    // looking at.
+    if (restored >= 0 && restored < (int)world.bodies.size()) {
+        activeBody_ = restored;
+        selectedBodies_.assign(1, restored);
+    }
+    world.wakeAll();
+    markSceneDirty();
+    Log::info("Undo: %d change(s) taken back", (int)redoStack_.back().steps.size());
+}
+
+// Puts the last change back the other way.
+void Editor::redo(PhysicsWorld& world) {
+    if (redoStack_.empty()) return;
+    UndoAction action = std::move(redoStack_.back());
+    redoStack_.pop_back();
+
+    undoing_ = true;
+    for (int i = (int)action.steps.size() - 1; i >= 0; --i) {
+        const UndoStep& step = action.steps[(size_t)i];
+        switch (step.kind) {
+        case UndoStep::Kind::Changed:
+            if (step.index < 0 || step.index >= (int)world.bodies.size()) break;
+            world.bodies[(size_t)step.index] = step.body;
+            world.bodies[(size_t)step.index].configure(world.bodies[(size_t)step.index].mass);
+            world.bodies[(size_t)step.index].syncPrevTransform();
+            break;
+        case UndoStep::Kind::Added:
+            if (step.index < 0 || step.index > (int)world.bodies.size()) break;
+            world.bodies.erase(world.bodies.begin() + step.index);
+            break;
+        case UndoStep::Kind::Removed:
+            if (step.index < 0 || step.index > (int)world.bodies.size()) break;
+            world.bodies.insert(world.bodies.begin() + step.index, step.body);
+            break;
+        }
+    }
+    undoing_ = false;
+
+    undoStack_.push_back(std::move(action));
+    pruneSelection(world);
+    world.wakeAll();
+    markSceneDirty();
 }
 
 bool Editor::tryNavigationGizmo(Camera& camera) {
@@ -763,6 +1046,12 @@ bool Editor::tryGizmoGrip(PhysicsWorld& world, Camera& camera) {
                                       viewRay_.forward, viewRay_.right, viewRay_.up,
                                       viewRay_.tanX, viewRay_.tanY, area, *body, mode);
     if (dragAxis_ < 0) return false;
+
+    // Whatever was being changed before is finished first, and then the body
+    // is remembered as it is: the whole drag is one change and Ctrl+Z can
+    // take it back in one go.
+    commitUndo();
+    rememberBody(world, activeBody_);
 
     dragOrigin_ = body->position;
     Vec3 axes[3];
@@ -951,6 +1240,14 @@ void Editor::handleViewport(PhysicsWorld& world, Camera& camera, Window& window)
         return;
     }
 
+    // A press on a window that is over the scene belongs to the window: a
+    // click on a floating panel must not also pick the body behind it, and a
+    // dialog has the whole window to itself.
+    if (ui_.pressOnOverlay()) {
+        if (ui_.pointerReleased()) dragAxis_ = -1;
+        return;
+    }
+
 const Rect viewport = layout_.viewport;
     // A press on the tool column or the "Scene" strip is a UI press, not a drag in
     // the scene: without this, clicking GIZ or M would also grab whatever is under
@@ -1015,11 +1312,17 @@ if (ui_.pointerDown() && dragAxis_ >= 0 && world.find(activeBody_)) {
         // Every frame the hand is moving the body is a frame the scene has changed:
         // this flag is what makes New Scene ask about the work before dropping it.
         markSceneDirty();
-        if (ui_.pointerReleased()) dragAxis_ = -1;
+        if (ui_.pointerReleased()) {
+            dragAxis_ = -1;
+            // The drag is over: the body as it was before it is one entry on the
+            // undo stack.
+            commitUndo();
+        }
         return;
     }
     if (ui_.pointerReleased() && dragAxis_ >= 0) {
         dragAxis_ = -1;
+        commitUndo();
         return;
     }
     if (pressAccepted())
@@ -1172,12 +1475,21 @@ void Editor::renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Windo
     // below asks the guard whether the pointer is over one - so a click on a
     // dropdown row never reaches the button underneath it, without any pass
     // having to claim the pointer by hand.
+    //
+    // The pass owns the surfaces it declared: a dropdown does not take the press
+    // from the rows inside it.
+    ui_.setOverlayOwner(kOwnerTopBarOverlay);
     drawTopBarOverlay(ui, world, camera, window, fbWidth, fbHeight);
+    ui_.setOverlayOwner(0);
     // A dialog is modal over everything, including the dropdowns: without the flush
     // its dim and its background would be drawn under the labels of the menu behind
     // it, and the menu would read as if it were on top of the dialog.
     ui.flush();
+    // The dialog owns the press inside it, and the whole window is in the guard
+    // as its surface, so nothing under it is alive while it is up.
+    ui_.setOverlayOwner(kOwnerModal);
     drawModal(ui, world, window, fbWidth, fbHeight);
+    ui_.setOverlayOwner(0);
     // Above even the dialogs: the drag ghost belongs to the pointer, not to the
     // layout, and it has to be visible over the dim.
     ui.flush();
@@ -1185,6 +1497,19 @@ void Editor::renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Windo
 
     ui.end();
     pruneSelection(world);
+
+    // The change that was being made is over when the body stops changing,
+    // and it becomes one entry on the undo stack. The body as it is now is
+    // also where the next change goes back to.
+    finishUndoIfDone(world);
+    if (activeBody_ >= 0 && activeBody_ < (int)world.bodies.size()) {
+        bodySnapshot_ = world.bodies[(size_t)activeBody_];
+        bodySnapshotIndex_ = activeBody_;
+        bodySnapshotValid_ = true;
+    } else {
+        bodySnapshotValid_ = false;
+        bodySnapshotIndex_ = -1;
+    }
 }
 
 // The docked panels, in the order the eye meets them: the tree on the left, the
@@ -1192,20 +1517,69 @@ void Editor::renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Windo
 // drawn here - it is drawn again over the scene, which is the only thing that
 // makes floating look different from docking.
 void Editor::drawDockedPanels(UiRenderer& ui, PhysicsWorld& world, Window& window) {
+    // The docked panels are the bottom of the window: they are under the
+    // floating ones, and the floating ones are in the guard, so a click on a
+    // floating panel does not reach the tree below it.
+    ui_.setOverlayOwner(0);
     for (int i = 0; i < kPanelCount; ++i) {
         if (!panels_[i].open || panels_[i].zone == PanelZone::Float) continue;
         drawPanelById(ui, world, window, (PanelId)i);
     }
 }
 
+// The floating panels, in the order they are drawn: the one under the pointer
+// last, so that the window the pointer is aiming at is the window on top.
+int Editor::floatingPanelOrder(int* out) const {
+    int count = 0;
+    for (int i = 0; i < kPanelCount; ++i)
+        if (panels_[i].zone == PanelZone::Float && panels_[i].open) out[count++] = i;
+
+    // The panel under the pointer comes to the front. Two windows that cover
+    // each other are two windows where one of them cannot be reached, and the
+    // one the pointer is on is the one the pointer is on.
+    for (int i = 0; i < count; ++i) {
+        const Rect rect = panels_[out[i]].floatRect;
+        if (!rect.contains(ui_.pointerX(), ui_.pointerY())) continue;
+        const int panel = out[i];
+        for (int j = i; j > 0; --j) out[j] = out[j - 1];
+        out[0] = panel;
+        break;
+    }
+    return count;
+}
+
+// The floating panels, declared into the overlay guard.
+//
+// The guard is what says "this press belongs to that surface", and a floating
+// panel is a surface: it is over the scene and over the panels below it, and
+// a click on it must not pick the body that is behind it or press the button
+// of the panel it is covering.
+void Editor::declareFloatingPanels() {
+    int order[kPanelCount];
+    const int count = floatingPanelOrder(order);
+    for (int i = 0; i < count; ++i) {
+        const int panel = order[i];
+        const Rect rect = panels_[panel].floatRect;
+        if (rect.width <= 0.0f || rect.height <= 0.0f) continue;
+        ui_.overlays().push(OverlayRect{rect.x, rect.y, rect.width, rect.height, true,
+                                         kOwnerFloatingPanel + panel});
+    }
+}
+
 void Editor::drawFloatingPanels(UiRenderer& ui, PhysicsWorld& world, Window& window) {
-    for (int i = 0; i < kPanelCount; ++i) {
-        if (panels_[i].zone != PanelZone::Float || !panels_[i].open) continue;
+    int order[kPanelCount];
+    const int count = floatingPanelOrder(order);
+    for (int i = 0; i < count; ++i) {
+        const int panel = order[i];
         // While it is being dragged the ghost is drawn instead, so the panel does
         // not run ahead of the pointer.
-        if (dragPanel_ == i) continue;
-        drawPanelById(ui, world, window, (PanelId)i);
+        if (dragPanel_ == panel) continue;
+        // The panel owns the press inside it: the guard does not take the press
+        // from the widgets of the surface it belongs to.
+        ui_.setOverlayOwner(kOwnerFloatingPanel + panel);
+        drawPanelById(ui, world, window, (PanelId)panel);
     }
+    ui_.setOverlayOwner(0);
 }
 
 void Editor::drawPanelById(UiRenderer& ui, PhysicsWorld& world, Window& window, PanelId id) {

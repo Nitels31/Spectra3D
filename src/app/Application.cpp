@@ -509,7 +509,7 @@ void Application::runEditorFrame(float dt) {
         }
 
     editor_->handleInput(world_, camera_, window_, window_.framebufferWidth(),
-                         window_.framebufferHeight());
+                         window_.framebufferHeight(), dt);
 
 
     // File > New Project / Open Project hand the window back to the launcher,

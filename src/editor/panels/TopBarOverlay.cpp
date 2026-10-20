@@ -134,16 +134,19 @@ void drawTick(UiRenderer& ui, const Rect& row, const Color& color) {
 // cannot disagree - and a menu that scrolls changes shape between them, which is
 // why the scroll is applied to both.
 void Editor::declareTopBarOverlays(UiRenderer& ui, int fbWidth, int fbHeight, int bodyCount) {
-    ui_.overlays().clear();
+    // The guard is not cleared here: the floating panels were declared before
+    // this pass, and they are under the dropdowns - a dropdown hangs over
+    // everything, and a floating window is under the dropdowns.
     if (openMenu_ < 0 && !layersOpen_ && helpPage_ == 0 && toolbarSearch_.empty()) return;
 
     if (helpPage_ != 0) {
         const bool about = helpPage_ == 2;
-        const int lines = about ? 4 : 7;
+        const int lines = about ? 4 : 10;
         const float height =
             kPanelPadding * 2.0f + 30.0f + (float)lines * kHelpLineHeight + 26.0f;
         ui_.overlays().push((float)fbWidth * 0.5f - kHelpPanelWidth * 0.5f,
-                            (float)fbHeight * 0.5f - height * 0.5f, kHelpPanelWidth, height);
+                            (float)fbHeight * 0.5f - height * 0.5f, kHelpPanelWidth, height,
+                            kOwnerTopBarOverlay);
     }
 
     if (openMenu_ >= 0) {
@@ -172,7 +175,8 @@ void Editor::declareTopBarOverlays(UiRenderer& ui, int fbWidth, int fbHeight, in
         // what lets this function skip measuring the rows a second time.
         const int rows = shown + (hidden > 0 ? 1 : 0);
         ui_.overlays().push(captionX, panelY, width,
-                            kPanelPadding * 2.0f + (float)rows * kMenuRowHeight);
+                            kPanelPadding * 2.0f + (float)rows * kMenuRowHeight,
+                            kOwnerTopBarOverlay);
     }
 
     if (layersOpen_) {
@@ -184,7 +188,7 @@ void Editor::declareTopBarOverlays(UiRenderer& ui, int fbWidth, int fbHeight, in
         const float panelX = std::fmax(
             4.0f, std::fmin(anchor.x, (float)fbWidth - kLayersPanelWidth - 4.0f));
         ui_.overlays().push(panelX, layout_.menuBar.y + layout_.menuBar.height - 1.0f,
-                            kLayersPanelWidth, height);
+                            kLayersPanelWidth, height, kOwnerTopBarOverlay);
     }
 
     if (!toolbarSearch_.empty()) {
@@ -193,7 +197,7 @@ void Editor::declareTopBarOverlays(UiRenderer& ui, int fbWidth, int fbHeight, in
         ui_.overlays().push(OverlayRect{
             searchField_.x, layout_.menuBar.y + layout_.menuBar.height - 1.0f,
             searchField_.width > 0.0f ? searchField_.width : 160.0f,
-            kPanelPadding * 2.0f + 3.0f * kRowHeight, false});
+            kPanelPadding * 2.0f + 3.0f * kRowHeight, false, kOwnerTopBarOverlay});
     }
 }
 
@@ -214,12 +218,14 @@ void Editor::drawTopBarOverlay(UiRenderer& ui, PhysicsWorld& world, Camera& came
         const bool about = helpPage_ == 2;
         // Key and description in two columns: the key is what a hand goes for and
         // it has to line up, which a single "key - description" string cannot do.
-        static const char* const kHelpKeys[7] = {
+        static const char* const kHelpKeys[10] = {
             "help.key.move", "help.key.up",    "help.key.boost", "help.key.look",
-            "help.key.gravity", "help.key.select", "help.key.tools"};
-        static const char* const kHelpDescs[7] = {
+            "help.key.gravity", "help.key.select", "help.key.tools", "help.key.delete",
+            "help.key.undo", "help.key.arrows"};
+        static const char* const kHelpDescs[10] = {
             "help.desc.move", "help.desc.up",    "help.desc.boost", "help.desc.look",
-            "help.desc.gravity", "help.desc.select", "help.desc.tools"};
+            "help.desc.gravity", "help.desc.select", "help.desc.tools", "help.desc.delete",
+            "help.desc.undo", "help.desc.arrows"};
         const int lines = about ? 4 : (int)(sizeof(kHelpKeys) / sizeof(kHelpKeys[0]));
 
         // The key column is as wide as its widest caption - measured, because

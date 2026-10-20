@@ -482,6 +482,21 @@ bool loadJson(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path
         Log::warn("Scene: %s has no bodies in it, loading it as an empty scene",
                   path.c_str());
 
+    // The models the scene names, read before the bodies are built: parsing a
+    // model is the slow part of opening a project and it touches no GL, so it
+    // runs on as many threads as the user asked for. The bodies then find the
+    // models already in the registry and the import costs nothing.
+    if (hasBodies) {
+        std::vector<std::string> names;
+        for (const json& node : root["bodies"]) {
+            if (!node.is_object() || !node.contains("mesh")) continue;
+            const json& mesh = node["mesh"];
+            if (!mesh.is_object() || !mesh.contains("name") || !mesh["name"].is_string()) continue;
+            names.push_back(mesh["name"].get<std::string>());
+        }
+        preloadMeshes(meshes, names, threads);
+    }
+
     int skipped = 0;
     if (hasBodies)
         for (const json& node : root["bodies"]) {
@@ -625,6 +640,7 @@ std::vector<std::string> sceneMeshNames(const std::string& path) {
 
     for (const json& node : root["bodies"]) {
         if (!node.is_object()) continue;
+        if (!node.contains("mesh")) continue;
         const json& mesh = node["mesh"];
         if (!mesh.is_object() || !mesh.contains("name") || !mesh["name"].is_string()) continue;
         names.push_back(mesh["name"].get<std::string>());

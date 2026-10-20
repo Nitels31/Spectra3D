@@ -425,7 +425,20 @@ bool SceneRenderer::drawImportedMesh(const RigidBody& body, const MeshRegistry& 
     glEnableClientState(GL_VERTEX_ARRAY);
     glEnableClientState(GL_NORMAL_ARRAY);
     for (const MeshPart& part : mesh->parts) {
-        glColor3f(part.color[0], part.color[1], part.color[2]);
+        // A part with colours of its own is drawn with them: the flat colour is
+        // the colour of the part, and the vertex colours are the colours of the
+        // ground it is made of. Only one of the two can be in force - a colour
+        // array switched on makes the flat colour go quiet - so the flat one is
+        // only set when there is no array.
+        const bool vertexColors =
+            part.colors.size() == part.vertices.size() / kMeshVertexFloats * 3 &&
+            !part.colors.empty();
+        if (vertexColors) {
+            glEnableClientState(GL_COLOR_ARRAY);
+            glColorPointer(3, GL_FLOAT, 0, part.colors.data());
+        } else {
+            glColor3f(part.color[0], part.color[1], part.color[2]);
+        }
         glVertexPointer(3, GL_FLOAT, (GLsizei)stride, part.vertices.data() + kMeshPositionOffset);
         glNormalPointer(GL_FLOAT, (GLsizei)stride,
                         part.vertices.data() + kMeshNormalOffset);
@@ -465,6 +478,11 @@ bool SceneRenderer::drawImportedMesh(const RigidBody& body, const MeshRegistry& 
     }
     glDisableClientState(GL_VERTEX_ARRAY);
     glDisableClientState(GL_NORMAL_ARRAY);
+    // The colour array too: it is switched on for the parts that carry colours
+    // of their own, and a colour array left switched on would answer for every
+    // draw after this one - the flat colours of the primitives would go quiet
+    // and everything would be painted in the last colour of the last model.
+    glDisableClientState(GL_COLOR_ARRAY);
     return true;
 }
 

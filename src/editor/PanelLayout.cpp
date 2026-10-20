@@ -183,6 +183,70 @@ unsigned gripsAt(const Workspace& ws, int panel, float x, float y) {
     return grips;
 }
 
+bool rectsOverlap(const Rect& a, const Rect& b) {
+    if (a.width <= 0.0f || a.height <= 0.0f) return false;
+    if (b.width <= 0.0f || b.height <= 0.0f) return false;
+    // The edges touch and nothing is covered, and that is not an overlap: the
+    // panels of the window stand next to each other all the time.
+    return a.x < b.x + b.width && b.x < a.x + a.width &&
+           a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+Rect findFreeSpot(const Workspace& ws, int panel, Rect wanted) {
+    // Every other open panel is in the way: a floating window that covers the
+    // tree hides the tree, and one that covers another floating window hides
+    // that one too. The scene is not in the way - a floating window is a
+    // window OVER the scene, and that is what it is for.
+    Rect occupied[kPanelCount];
+    int count = 0;
+    for (int i = 0; i < kPanelCount; ++i) {
+        if (i == panel || !ws.open[i]) continue;
+        const Rect rect =
+            ws.zones[i] == PanelZone::Float ? ws.floatRects[i] : zoneRect(ws, ws.zones[i]);
+        if (rect.width <= 0.0f || rect.height <= 0.0f) continue;
+        occupied[count++] = rect;
+    }
+    if (count == 0) return wanted;
+
+    const auto free = [&](const Rect& rect) {
+        for (int i = 0; i < count; ++i)
+            if (rectsOverlap(rect, occupied[i])) return false;
+        return true;
+    };
+    if (free(wanted)) return wanted;
+
+    const float width = (float)ws.fbWidth;
+    const float height = (float)ws.fbHeight;
+
+    // The cascade: the same window, a little further down and to the right
+    // each time. This is what a window manager does with a window that would
+    // land on another one.
+    constexpr float kStep = 28.0f;
+    for (int i = 1; i < 24; ++i) {
+        Rect rect = wanted;
+        rect.x = wanted.x + (float)i * kStep;
+        rect.y = wanted.y + (float)i * kStep;
+        if (rect.x + rect.width > width) break;
+        if (rect.y + rect.height > height) break;
+        if (free(rect)) return rect;
+    }
+
+    // And then a row along the top of the window, for the windows that do not
+    // fit in the cascade.
+    for (int i = 0; i < 8; ++i) {
+        Rect rect = wanted;
+        rect.x = (float)i * (wanted.width + 8.0f) + 8.0f;
+        rect.y = wanted.y;
+        if (rect.x + rect.width > width) break;
+        if (free(rect)) return rect;
+    }
+
+    // Nowhere free: the panel stays where it was dropped. A window that has
+    // been put somewhere on purpose should not be moved away from there
+    // because there was no better place.
+    return wanted;
+}
+
 WorkspaceSizes applyResize(const Workspace& ws, int panel, unsigned edges, float startSize,
                            float dx, float dy) {
     WorkspaceSizes sizes;

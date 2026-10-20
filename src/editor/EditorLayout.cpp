@@ -26,7 +26,9 @@ namespace {
 // 3: the three panels of the bottom row got heights of their own. A file
 // written before that has one height for the whole row, and the three share
 // it - which is what made the corners impossible to size on their own.
-constexpr int kLayoutVersion = 3;
+// 4: the landform panel is in the file as well. A file written before that has
+// no line for it, and the panel keeps the place it has now.
+constexpr int kLayoutVersion = 4;
 
 // `key=value` lines, `#` comments, blank lines skipped: the same shape as the
 // manifest, so one reader's rules apply to every text file the engine writes.
@@ -86,6 +88,7 @@ const char* panelKey(int index) {
     case (int)PanelId::Console: return "Console";
     case (int)PanelId::Favorites: return "Favorites";
     case (int)PanelId::Sounds: return "Sounds";
+    case (int)PanelId::Landform: return "Landform";
     default: return "";
     }
 }
@@ -299,6 +302,11 @@ void Editor::loadLayout() {
         }
         target.open = loaded[i].open;
         target.floatRect = loaded[i].floatRect;
+        // A window that comes back from the file does not come back on top of
+        // another one: it is put where it covers nothing, the same as when it
+        // is opened from the View menu.
+        if (target.open && target.zone == PanelZone::Float)
+            target.floatRect = findFreeSpot(workspace(), i, target.floatRect);
     }
     leftWidth_ = left;
     rightWidth_ = right;

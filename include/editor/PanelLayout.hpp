@@ -65,10 +65,12 @@ struct Workspace {
     float bottomRightHeight = 156.0f;
 
     // The zone of every panel, and whether it is open. The order is the panel
-    // order: hierarchy, inspector, console, favorites, sounds.
+    // order: hierarchy, inspector, console, favorites, sounds, landform. The
+    // landform is a tool window: it floats and it starts closed.
     PanelZone zones[kPanelCount] = {PanelZone::Left, PanelZone::Right, PanelZone::Bottom,
-                                    PanelZone::BottomLeft, PanelZone::BottomRight};
-    bool open[kPanelCount] = {true, true, true, true, true};
+                                    PanelZone::BottomLeft, PanelZone::BottomRight,
+                                    PanelZone::Float};
+    bool open[kPanelCount] = {true, true, true, true, true, false};
 
     // Where a floating panel is. It is part of the layout and it is saved with
     // it: a panel that floats and comes back floating comes back where it was.
@@ -105,6 +107,25 @@ enum : unsigned {
     kGripTop = 4u,
     kGripBottom = 8u,
 };
+
+// Do two rectangles cover any of the same ground?
+//
+// Two panels that stand next to each other do not overlap: the edges touch and
+// nothing is covered. A window that is dropped on top of another one covers
+// it, and the one underneath cannot be reached.
+bool rectsOverlap(const Rect& a, const Rect& b);
+
+// A place for a floating panel where it does not cover another panel.
+//
+// `wanted` is where the panel was dropped, and it is where the panel goes if
+// nothing is in the way. When something is, the panel is moved to the first
+// of a set of places where it is not: a cascade down the window, the way a
+// window manager opens a window that would land on another one.
+//
+// The scene is not in the way. A floating window is a window over the scene,
+// and covering the tree is what a floating window is for - but covering
+// another PANEL hides a panel, and the one underneath cannot be reached.
+Rect findFreeSpot(const Workspace& ws, int panel, Rect wanted);
 
 // The grip of a docked panel is the edge it has against the scene; a floating
 // panel has all four. The pointer has to be over THAT edge of THAT panel: a grip

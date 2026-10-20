@@ -57,7 +57,7 @@ namespace {
 // Uploads `width` x `height` RGBA8 pixels. One internal format for everything:
 // letting the driver pick the internal format per image is how two textures that
 // look the same in an art tool end up different on screen.
-unsigned upload(const unsigned char* pixels, int width, int height) {
+unsigned upload(const unsigned char* pixels, int width, int height, bool repeat) {
     unsigned tex = 0;
     glGenTextures(1, &tex);
     if (!tex) return 0;
@@ -86,9 +86,11 @@ unsigned upload(const unsigned char* pixels, int width, int height) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     // CLAMP rather than REPEAT: a default texture is clamped on every edge, and a
     // model whose UVs leave 0..1 then shows the border texel instead of a seam of
-    // wrapped image. Repeat is opt-in per texture later, not the global default.
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    // wrapped image. Repeat is asked for per texture - a ground of grass is a
+    // hundred metres of one picture, and it has to tile.
+    const int wrap = repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
 
     glBindTexture(GL_TEXTURE_2D, 0);
     return tex;
@@ -100,8 +102,8 @@ unsigned upload(const unsigned char* pixels, int width, int height) {
 //
 // Always four channels, so upload() has one layout to deal with and a greyscale
 // PNG does not arrive as three bytes per texel that GL would read as RGBA.
-unsigned decodeToTexture(const unsigned char* bytes, size_t size, const char* label,
-                          bool quiet) {
+unsigned decodeToTexture(const unsigned char* bytes, size_t size, const char* label, bool quiet,
+                          bool repeat = false) {
     int width = 0, height = 0, channels = 0;
     unsigned char* pixels =
         stbi_load_from_memory(bytes, (int)size, &width, &height, &channels, 4);
@@ -110,7 +112,7 @@ unsigned decodeToTexture(const unsigned char* bytes, size_t size, const char* la
             Log::error("Texture: cannot decode '%s': %s", label, stbi_failure_reason());
         return 0;
     }
-    const unsigned tex = upload(pixels, width, height);
+    const unsigned tex = upload(pixels, width, height, repeat);
     stbi_image_free(pixels);
     if (!tex && !quiet) Log::error("Texture: GL refused '%s'", label);
     return tex;
@@ -144,7 +146,7 @@ unsigned TextureRegistry::at(int index) const {
     return textures_[(size_t)index];
 }
 
-int TextureRegistry::loadFile(const std::string& path, bool quiet) {
+int TextureRegistry::loadFile(const std::string& path, bool quiet, bool repeat) {
     const int existing = find(path);
     if (existing >= 0) return existing;
 
@@ -152,7 +154,7 @@ int TextureRegistry::loadFile(const std::string& path, bool quiet) {
     int width = 0, height = 0, channels = 0;
     unsigned char* pixels = stbi_load(path.c_str(), &width, &height, &channels, 4);
     if (pixels) {
-        tex = upload(pixels, width, height);
+        tex = upload(pixels, width, height, repeat);
         stbi_image_free(pixels);
         if (!tex && !quiet) Log::error("Texture: GL refused '%s'", path.c_str());
     } else if (!quiet) {

@@ -25,7 +25,9 @@ public:
     // Failures are not fatal on purpose: a model whose map is missing still draws,
     // in its flat material colour. A broken texture reference should not make the
     // whole model disappear.
-    int loadFile(const std::string& path, bool quiet = false);
+    // A repeated picture is one that tiles: the ground is a hundred metres of
+    // grass, and one picture of grass stretched over it is not grass.
+    int loadFile(const std::string& path, bool quiet = false, bool repeat = false);
 
     // The same, for an image that was embedded in a model file instead of sitting
     // beside it. A .glb keeps its textures in its own binary chunk, so there is no

@@ -1,6 +1,5 @@
 # Spectra3D Broken UTF-8 UI strings
 # Deliberately corrupted: real invalid UTF-8 bytes, decoded wrong on purpose. Renders as garbage. Keys stay clean; values carry no '%'.
-
 menu.file=�ile
 menu.edit=E���
 menu.view=���w
@@ -248,10 +247,11 @@ sound.none=?o?e
 sound.volume=Vo?u?e
 settings.threads=?oad1ng thr34ds
 tab.landform=14ndsca47
-landform.minHeight=10w357 h31gh7
-landform.maxHeight=h1gh357 h31gh7
 landform.width=417d7h
 landform.depth=43p7h
-landform.cells=5qu4re5 4cr055
 landform.generate=6en3r47
 landform.hint=7h3 6r0und l4nds 1n 7h3 5c3n3 47 7h3 0r161n 4s 4 b0dy 0f 17s 0wn.
+landform.color=c010r
+landform.minHeight=m1n h31gh7
+landform.maxHeight=m4x h31gh7
+landform.cells=5qu4re5

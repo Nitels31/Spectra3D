@@ -72,13 +72,15 @@ void Editor::drawConsolePanel(UiRenderer& ui, const Rect& panel) {
         }
     }
 
+    // The title and the filters are on one line, and the line is below the
+    // panel's top edge: that edge is the grip, and a title under the grip is a
+    // title that cannot be grabbed. The title gives way when the filters need
+    // the room - two things drawn on top of each other are worse than one of
+    // them missing.
     const char* title = text("tab.console");
     const float filtersLeft = panel.x + panel.width - 8.0f - filtersWidth + 4.0f;
     if (filtersLeft > panel.x + 18.0f + ui.textWidth(title) + 8.0f)
-        // The title sits a little lower than in the other panels: the bottom
-        // row's panels are resized by their top edge, and the title has to be
-        // clear of that edge or a panel cannot be picked up by its own name.
-        ui.text(panel.x + 18.0f, panel.y + 9.0f, title, theme::text);
+        ui.text(panel.x + 18.0f, panel.y + 6.0f, title, theme::text);
 
     // Right to left, so the leftmost filter ends up next to the title.
     float x = panel.x + panel.width - 8.0f;
@@ -102,7 +104,9 @@ void Editor::drawConsolePanel(UiRenderer& ui, const Rect& panel) {
         ui.fillRect(bx, boxY + 9.0f, 10.0f, 1.0f, box);
         ui.fillRect(bx, boxY, 1.0f, 10.0f, box);
         ui.fillRect(bx + 9.0f, boxY, 1.0f, 10.0f, box);
-        ui.text(bx + 15.0f, hit.y + (hit.height - theme::textLineHeight) * 0.5f, label,
+        // On the same line as the title, so the header reads as one line and
+        // not as two that happen to be near each other.
+        ui.text(bx + 15.0f, panel.y + 6.0f, label,
                 *filter.flag ? theme::text : theme::textDim);
         x -= width + 4.0f;
     }

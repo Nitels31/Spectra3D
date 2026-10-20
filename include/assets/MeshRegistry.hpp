@@ -46,6 +46,14 @@ public:
     // stage its pictures with it: a model without its texture still draws, in
     // its flat colour, and that is not what anybody meant.
     const std::vector<std::string>& textureFilesOf(int index) const;
+
+    // A picture, loaded on demand. The registry knows where the textures live,
+    // so a caller that wants grass on the ground does not have to know where
+    // the grass is.
+    //
+    // `path` is relative to the assets: "image/textures/grass.jpg". A repeated
+    // picture is one that tiles.
+    int loadTexture(const std::string& path, bool repeat = false);
     const std::string& nameOf(int index) const;
     int size() const { return (int)assets_.size(); }
 

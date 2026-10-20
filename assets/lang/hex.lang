@@ -1,7 +1,6 @@
 # Spectra3D Hexadecimal UI strings
 # Every value is the hex encoding of the English string's UTF-8 bytes.
 # Mechanical, not translated - that is the joke. ASCII, so it renders fine.
-
 menu.file=46696c65
 menu.edit=45646974
 menu.view=56696577
@@ -249,10 +248,11 @@ sound.none=4e6f6e65
 sound.volume=566f6c756d65
 settings.threads=4c6f616465722074687265616473
 tab.landform=4c616e647363616674
-landform.minHeight=4c6f7765737420686569676874
-landform.maxHeight=4869676865737420686569676874
 landform.width=5769647468
 landform.depth=4465707468
-landform.cells=537561726573206163726f7373
 landform.generate=47656e6572617465
 landform.hint=5468652067726f756e64206c616e647320696e20746865207363656e6520617420746865206f726967696e2c206173206120626f6479206f6620697473206f776e2e
+landform.color=436f6c6f7572
+landform.minHeight=4d696e 6869676874
+landform.maxHeight=4d6178206869676874
+landform.cells=537561726573
