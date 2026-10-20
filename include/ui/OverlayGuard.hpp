@@ -11,6 +11,14 @@ struct OverlayRect {
     // (a tooltip, a status strip) lights up under the pointer but lets the click
     // through to whatever is under it.
     bool blocks = true;
+    // Who put the surface there. A surface does not take the press from the
+    // widgets inside it: the Close button of a panel is in the panel, and a
+    // panel that took the press from its own button would have a button that
+    // cannot be pressed.
+    //
+    // Zero means nobody - a surface that belongs to no pass, and one that
+    // takes the press from everybody.
+    int owner = 0;
 };
 
 // Decides which surface owns the pointer, in one place.
@@ -37,8 +45,8 @@ public:
     // earlier one.
     void push(const OverlayRect& rect) { surfaces_.push_back(rect); }
     // Convenience for the common case of a blocking surface.
-    void push(float x, float y, float width, float height) {
-        surfaces_.push_back(OverlayRect{x, y, width, height, true});
+    void push(float x, float y, float width, float height, int owner = 0) {
+        surfaces_.push_back(OverlayRect{x, y, width, height, true, owner});
     }
 
     void clear() { surfaces_.clear(); }
@@ -52,9 +60,18 @@ public:
     // drawn underneath it. Only a blocking surface can take a press, and only the
     // topmost one - a blocking surface under a non-blocking one is still visible
     // but is not what the user is aiming at.
-    bool pressTaken(float x, float y) const {
+    //
+    // `owner` is who is asking. The surface the asker is inside does not take
+    // the press from it: the widgets of a panel are in the panel, and a panel
+    // that took the press from its own widgets would have widgets that cannot
+    // be pressed. A surface that belongs to somebody else - the panel on top of
+    // this one, the dialog over the whole window - does take it.
+    bool pressTaken(float x, float y, int owner = 0) const {
         const int top = topmost(x, y);
-        return top >= 0 && surfaces_[(size_t)top].blocks;
+        if (top < 0) return false;
+        const OverlayRect& r = surfaces_[(size_t)top];
+        if (r.owner != 0 && r.owner == owner) return false;
+        return r.blocks;
     }
 
     // The surface a press would go to, for a caller that wants to route the event

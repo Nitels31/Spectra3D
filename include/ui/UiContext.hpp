@@ -54,11 +54,12 @@ public:
     // non-blocking overlay (a suggestion list) does not suppress - a click that
     // misses it belongs to the surface underneath.
     bool pointerPressed() const {
-        return pointerPressed_ && captureId_ == 0 && !overlays_.pressTaken(pointerX_, pointerY_);
+        return pointerPressed_ && captureId_ == 0 &&
+               !overlays_.pressTaken(pointerX_, pointerY_, overlayOwner_);
     }
     bool pointerReleased() const {
         return pointerReleased_ && captureId_ == 0 &&
-               !overlays_.pressTaken(pointerX_, pointerY_);
+               !overlays_.pressTaken(pointerX_, pointerY_, overlayOwner_);
     }
     // The same edges with the capture ignored. Only the popup that asked for the
     // capture reads these; every other reader wants the guarded version.
@@ -67,6 +68,16 @@ public:
     double scrollDelta() const { return scrollDelta_; }
     bool ctrlHeld() const { return ctrlHeld_; }
     bool cameraCaptured() const { return cameraCaptured_; }
+
+    // --- who is asking ------------------------------------------------------
+    // The pass that is drawing right now says who it is, and the surfaces that
+    // belong to it do not take the press from the widgets inside them.
+    //
+    // A panel that took the press from its own widgets would have a Close
+    // button that cannot be pressed, and a floating window that took the press
+    // from the panel below it would be a window that cannot be reached.
+    void setOverlayOwner(int owner) { overlayOwner_ = owner; }
+    int overlayOwner() const { return overlayOwner_; }
 
     // --- popup capture ------------------------------------------------------
     // A dropdown is drawn last in the frame, so every widget it covers has already
@@ -91,8 +102,10 @@ public:
     OverlayGuard& overlays() { return overlays_; }
     const OverlayGuard& overlays() const { return overlays_; }
     // True when the press belongs to a surface drawn above the widgets, so a
-    // button under an open dropdown stays inert.
-    bool pressOnOverlay() const { return overlays_.pressTaken(pointerX_, pointerY_); }
+    // button under an open dropdown stays inert. The surface the caller is
+    // inside does not count: a panel does not take the press from its own
+    // widgets.
+    bool pressOnOverlay() const { return overlays_.pressTaken(pointerX_, pointerY_, overlayOwner_); }
     bool hoverOnOverlay() const { return overlays_.overAny(pointerX_, pointerY_); }
 
     // --- scrolling clips ----------------------------------------------------
@@ -125,12 +138,28 @@ public:
     // Draggable + typeable numeric property. Returns true when `value` changed.
     bool propertyFloat(UiRenderer& ui, int id, float x, float y, float w, const char* label,
                        float& value, float pixelsPerStep, float lo, float hi);
+    // The same for a whole number. `pixelsPerStep` is how much one pixel of
+    // drag is worth; the default suits a small number like a count of sides.
     bool propertyInt(UiRenderer& ui, int id, float x, float y, float w, const char* label,
-                     int& value, int lo, int hi);
+                     int& value, int lo, int hi, float pixelsPerStep = 0.5f);
 
     // Feeds keyboard/character events into `field` while it is focused.
     void pumpTextField(Window& window, TextField& field, bool fieldHovered);
 
+    // --- the keyboard --------------------------------------------------------
+    // One field has the keyboard at a time, and this says whether one has.
+    //
+    // The window has one keyboard and one stream of characters, and every
+    // field in the editor wants them. The field that was clicked has them;
+    // the others keep their text and lose the caret. A character that arrives
+    // while no field has the keyboard belongs to nobody, and is dropped -
+    // otherwise it lands in whatever field is opened next, and the number
+    // somebody typed into the search box ends up in the width of the ground.
+    bool textFocused() const { return textFocus_ != nullptr; }
+    // The field that has the keyboard, or nullptr. The hotkeys ask: a Delete
+    // that throws the selection away while somebody is typing a name is not a
+    // shortcut, it is a mistake.
+    const TextField* focusedField() const { return textFocus_; }
 
 private:
     // Numeric properties share one inline editor; the template keeps the
@@ -139,6 +168,21 @@ private:
     bool propertyNumeric(UiRenderer& ui, int id, float x, float y, float w,
                          const char* label, T& value, float pixelsPerStep, T lo, T hi);
     bool closeValueEditorIfDone(bool fieldHovered);
+
+    // What the inline editor has to say about the key that was pressed.
+    enum class EditorResult {
+        StillEditing,  // the editor keeps the keyboard
+        Committed,     // the text in it is the value now
+        Cancelled,     // the text in it is worth nothing
+    };
+    EditorResult valueEditorResult(bool fieldHovered, bool hasFocus);
+    // The characters that go into the inline editor, and only into it.
+    void pumpValueEditor(Window& window);
+
+    // The field that has the keyboard, and the two things that go with it:
+    // taking the keyboard away from whoever had it, and giving it up.
+    void takeTextFocus(TextField& field);
+    void releaseTextFocus();
 
     // "%.2f" runs through the full printf float machinery and costs an order of
     // magnitude more than the memcpy it produces, so the formatted display text
@@ -192,6 +236,9 @@ private:
     // Which surface owns the pointer this frame. Kept here rather than in the
     // editor because the question belongs to the hit test, which is this class.
     OverlayGuard overlays_;
+    // Who is drawing right now. The surfaces that belong to this pass do not
+    // take the press from the widgets of this pass.
+    int overlayOwner_ = 0;
     float dragStartX_ = 0.0f;
     float dragStartValue_ = 0.0f;
 
@@ -200,6 +247,15 @@ private:
 
     TextField valueEditor_;
     ShownText shownText_[kShownTextSlots] = {};
+    // The field that has the keyboard. A pointer and not an id: the inline
+    // editor and the text fields are different objects, and an id would have
+    // to be kept apart between them.
+    TextField* textFocus_ = nullptr;
+    // True when the field that has the keyboard was pumped this frame. A field
+    // that was not pumped is a field that is not on the screen any more - the
+    // panel was closed - and a keyboard nobody is holding is a keyboard that
+    // silences every shortcut in the editor.
+    bool focusPumped_ = false;
 };
 
 } // namespace s3d

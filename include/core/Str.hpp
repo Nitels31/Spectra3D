@@ -39,6 +39,47 @@ inline char lowerAscii(char c) {
     return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
 }
 
+// Encodes one code point as UTF-8 and returns how many bytes it took.
+//
+// The engine's text is UTF-8 everywhere - the labels, the file names, the
+// scene files - and a text field that holds one byte per character cannot
+// hold a Ukrainian letter: it would cut it in half.
+inline int utf8Encode(unsigned cp, char* out) {
+    if (cp < 0x80u) {
+        out[0] = (char)cp;
+        return 1;
+    }
+    if (cp < 0x800u) {
+        out[0] = (char)(0xC0u | (cp >> 6));
+        out[1] = (char)(0x80u | (cp & 0x3Fu));
+        return 2;
+    }
+    if (cp < 0x10000u) {
+        out[0] = (char)(0xE0u | (cp >> 12));
+        out[1] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+        out[2] = (char)(0x80u | (cp & 0x3Fu));
+        return 3;
+    }
+    out[0] = (char)(0xF0u | (cp >> 18));
+    out[1] = (char)(0x80u | ((cp >> 12) & 0x3Fu));
+    out[2] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+    out[3] = (char)(0x80u | (cp & 0x3Fu));
+    return 4;
+}
+
+// The length of the text with its LAST CHARACTER taken off.
+//
+// The last character and not the last byte: a backspace that takes half a
+// letter off leaves a letter that cannot be drawn and a field that cannot be
+// typed into again.
+inline int utf8WithoutLast(const char* text, int length) {
+    if (length <= 0) return 0;
+    int at = length - 1;
+    // The continuation bytes of a multi-byte character all start with 0x80.
+    while (at > 0 && ((unsigned char)text[at] & 0xC0u) == 0x80u) --at;
+    return at;
+}
+
 inline std::string toLowerAscii(std::string s) {
     for (char& c : s) c = lowerAscii(c);
     return s;

@@ -74,6 +74,36 @@ public:
     bool mouseReleased(int button);
     double consumeScroll();
     int consumeTextInput(char* out, int maxChars);
+    // Throws the characters that have arrived away.
+    //
+    // They are kept until somebody reads them, and a character that nobody
+    // read is a character that lands in whatever is opened next: a digit typed
+    // with no field in sight turns up in the number in the field that is
+    // opened a moment later. A field that is given the keyboard throws the
+    // old characters away, because they were typed at something else.
+    void discardTextInput();
+
+    // Whether a character may be put in a text field: the ones the engine can
+    // draw.
+    //
+    // Printable ASCII, Latin-1 and the Cyrillic the interface is written in.
+    // A character the engine cannot draw is a character that would sit in the
+    // field as an invisible mark, so it is not put there at all.
+    //
+    // The list is here and not in the font atlas because the window is below
+    // the renderer - but a test asks the two whether they still agree.
+    static bool textCodepointSupported(unsigned codepoint);
+
+    // Whether a field has the keyboard.
+    //
+    // While it does, the characters that arrive are KEPT until somebody reads
+    // them - even the ones that arrive after the frame has been drawn. The
+    // frame drops what nobody read, and a character that arrives between the
+    // drawing and the end of the frame was read by nobody: a fast typist
+    // loses every second letter, and a letter that is lost is a name that is
+    // spelled wrong.
+    void setTextCaptured(bool captured) { textCaptured_ = captured; }
+    bool textCaptured() const { return textCaptured_; }
 
     bool keyDown(int key) const;
     bool takeKeyPress(int key);
@@ -123,6 +153,9 @@ private:
     double scrollAcc_ = 0.0;
     char textBuf_[64] = {};
     int textLen_ = 0;
+    // True while a text field has the keyboard. The characters that arrive
+    // then are kept until somebody reads them - see setTextCaptured().
+    bool textCaptured_ = false;
     bool captured_ = false;
     bool deltaPrimed_ = false;
     double lastX_ = 0.0, lastY_ = 0.0;

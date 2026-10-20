@@ -2,6 +2,7 @@
 
 #include "core/Log.hpp"
 #include "core/Project.hpp"
+#include "core/Str.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -249,11 +250,34 @@ void Window::onScroll(GLFWwindow* w, double, double yoff) {
     self->events_.push(InputEventType::Scroll, 0, yoff);
 }
 
+bool Window::textCodepointSupported(unsigned cp) {
+    if (cp >= 32 && cp <= 126) return true;       // printable ASCII
+    if (cp == 0x401 || cp == 0x451) return true;    // Є and є
+    if (cp >= 0x410 && cp <= 0x44F) return true;    // the Cyrillic block
+    // The Cyrillic outside that block that the interface needs: Ё, І, Ї, Ґ and
+    // their lower case.
+    if (cp == 0x404 || cp == 0x454 || cp == 0x406 || cp == 0x456 || cp == 0x407 ||
+        cp == 0x457 || cp == 0x490 || cp == 0x491)
+        return true;
+    if (cp >= 0xC0 && cp <= 0xFF) return true;      // Latin-1
+    // And the few below it that a French or a Spanish interface sets.
+    if (cp == 0xAB || cp == 0xBB || cp == 0x152 || cp == 0x153 || cp == 0xA1 ||
+        cp == 0xBF)
+        return true;
+    return false;
+}
+
 void Window::onChar(GLFWwindow* w, unsigned int cp) {
     Window* self = of(w);
-    if (!self || cp < 32 || cp > 126) return;
-    if (self->textLen_ < (int)sizeof(self->textBuf_) - 1)
-        self->textBuf_[self->textLen_++] = (char)cp;
+    if (!self) return;
+    if (!textCodepointSupported(cp)) return;
+    // UTF-8, because that is what the engine's text is: a field that holds one
+    // byte per character cannot hold a Ukrainian letter, and a letter that is
+    // cut in half is a letter that cannot be drawn.
+    char utf8[4];
+    const int bytes = str::utf8Encode(cp, utf8);
+    if (self->textLen_ + bytes >= (int)sizeof(self->textBuf_)) return;
+    for (int i = 0; i < bytes; ++i) self->textBuf_[self->textLen_++] = utf8[i];
 }
 
 void Window::onFramebufferSize(GLFWwindow* w, int width, int height) {
@@ -402,7 +426,12 @@ void Window::dropUnreadInput() {
     // Typed characters nobody asked for: a field that was not focused when they
     // arrived. Left in the buffer they keep `peekActivity()` true just as a stray
     // key press does.
-    textLen_ = 0;
+    //
+    // A field that HAS the keyboard is a different matter: the characters that
+    // arrive after the frame was drawn are read by the next one, and dropping
+    // them here loses every second letter of a fast typist's name. They are
+    // kept until the field reads them.
+    if (!textCaptured_) textLen_ = 0;
     scrollAcc_ = 0.0;
 
     // Same one-frame life as the edges above, and reported here so an overflow is
@@ -494,6 +523,8 @@ int Window::consumeTextInput(char* out, int maxChars) {
     textLen_ = 0;
     return n;
 }
+
+void Window::discardTextInput() { textLen_ = 0; }
 
 bool Window::keyDown(int key) const {
     return key >= 0 && key <= GLFW_KEY_LAST && keys_[key];

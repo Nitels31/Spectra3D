@@ -77,7 +77,16 @@ void Localizer::setLanguage(Language language) {
 const char* Localizer::get(const char* key) const {
     if (!active_) return key;
     const auto it = active_->find(key);
-    return it == active_->end() ? key : it->second.c_str();
+    if (it != active_->end()) return it->second.c_str();
+
+    // A string the active bundle does not have is a string the English one
+    // does. Without this the key itself is shown - "landform.seed" on a
+    // screen that is otherwise in that language - and a new word looks like a
+    // mistake in the program rather than a word nobody has translated yet.
+    const auto english = tables_.find(Language::English);
+    if (english == tables_.end()) return key;
+    const auto fallback = english->second.find(key);
+    return fallback == english->second.end() ? key : fallback->second.c_str();
 }
 
 // The name in its own language, which is what a list of languages is for: a user
