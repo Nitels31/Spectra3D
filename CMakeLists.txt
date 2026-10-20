@@ -485,6 +485,19 @@ add_custom_target(spectra_assets ALL
             "${SPECTRA_ASSETS}" "$<TARGET_FILE_DIR:spectra3d>/assets"
     COMMENT "Staging assets")
 
+# The shaders, staged next to the binary like the assets are.
+#
+# They are staged and not compiled into the program: a shader is a file, and
+# a file that is next to the binary can be read, checked and replaced without
+# rebuilding the engine. The loader that reads them is the next piece of work;
+# until then this only makes sure that the files the engine is going to read
+# are the files that are in the tree.
+add_custom_target(spectra_shaders ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/shaders"
+            "$<TARGET_FILE_DIR:spectra3d>/shaders"
+    COMMENT "Staging shaders")
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------

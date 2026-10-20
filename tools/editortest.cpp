@@ -526,6 +526,124 @@ void testWidgetIds() {
     }
 }
 
+// THE SHADERS SAY WHAT THEY ARE UNDER
+
+// Every shader in the tree, one after another.
+void collectShaders(const std::string& dir, std::vector<std::string>& out) {
+    std::vector<std::string> names;
+    if (!fs::listDirectory(dir, names)) return;
+    for (const std::string& name : names) {
+        const std::string path = str::join(dir, name);
+        if (fs::isDirectory(path)) {
+            collectShaders(path, out);
+            continue;
+        }
+        const std::string extension(str::extensionView(name));
+        if (extension == ".vert" || extension == ".frag") out.push_back(path);
+    }
+}
+
+// The varyings of a pair of shaders have to be the same ones.
+
+// The names a shader passes from one stage to the other: the "out" of the
+// vertex stage and the "in" of the fragment stage.
+void collectVaryings(const std::string& text, const char* keyword,
+                     std::vector<std::string>& out) {
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t end = text.find('\n', at);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(at, end - at);
+        at = end + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t'))
+            line.pop_back();
+        const size_t first = line.find_first_not_of(" \t");
+        if (first == std::string::npos) continue;
+        line = line.substr(first);
+        if (line.rfind("//", 0) == 0) continue;
+        if (line.find("uniform") != std::string::npos) continue;
+        if (line.rfind("layout", 0) == 0) continue;
+
+        const std::string key = std::string(" ") + keyword + " ";
+        const size_t found = line.find(key);
+        if (found == std::string::npos) continue;
+        const size_t semi = line.find(';', found);
+        if (semi == std::string::npos) continue;
+        const std::string declaration = line.substr(found + key.size(), semi - found - key.size());
+        const size_t space = declaration.find_last_of(" \t");
+        const std::string name =
+            space == std::string::npos ? declaration : declaration.substr(space + 1);
+        if (!name.empty()) out.push_back(name);
+    }
+}
+
+// The shaders are staged next to the program.
+void testShaders() {
+    heading("the shaders carry their licence");
+    const std::string dir = str::join(fs::executableDir(), "shaders");
+    std::vector<std::string> files;
+    collectShaders(dir, files);
+    if (files.empty()) {
+        std::printf("  skip no shaders next to the program\n");
+        return;
+    }
+    check((int)files.size() >= 6, "the shaders are staged next to the program");
+
+    for (const std::string& file : files) {
+        std::string text;
+        if (!fs::readFile(file, text)) {
+            check(false, "a shader can be read");
+            continue;
+        }
+
+        // The version has to be the first thing in the file: a comment above
+        // it and the driver will not read the shader at all.
+        const bool versionFirst = text.rfind("#version", 0) == 0;
+        check(versionFirst, "a shader starts with its version");
+
+        // And the licence, right under it.
+        const bool licensed =
+            text.find("Licensed under the Blue Oak Model License 1.0.0.") != std::string::npos;
+        check(licensed, "a shader says which licence it is under");
+
+        // The braces have to match, or the driver will say so at the worst
+        // possible moment.
+        int depth = 0;
+        bool balanced = true;
+        for (char c : text) {
+            if (c == '{') ++depth;
+            else if (c == '}') --depth;
+            if (depth < 0) balanced = false;
+        }
+        check(balanced && depth == 0, "the braces of a shader match");
+    }
+
+    // A pair of shaders has to pass the same things: a varying the vertex
+    // stage sends and the fragment stage does not know about is a link error
+    // the driver finds at the worst possible moment.
+    for (const std::string& file : files) {
+        const std::string extension(str::extensionView(file));
+        if (extension != ".vert") continue;
+        const std::string stem = file.substr(0, file.size() - extension.size());
+        std::string fragmentText;
+        if (!fs::readFile(stem + ".frag", fragmentText)) continue;
+        std::string vertexText;
+        if (!fs::readFile(file, vertexText)) continue;
+
+        std::vector<std::string> sent, received;
+        collectVaryings(vertexText, "out", sent);
+        collectVaryings(fragmentText, "in", received);
+        bool same = sent.size() == received.size();
+        for (const std::string& name : sent) {
+            bool found = false;
+            for (const std::string& other : received)
+                if (other == name) found = true;
+            if (!found) same = false;
+        }
+        check(same, "a pair of shaders passes the same things");
+    }
+}
+
 void testFont() {
     heading("the shipped font has the letters");
     const std::string& assets = fs::assetRoot();
@@ -614,6 +732,7 @@ int main() {
     testLandform();
     testTextCodepoints();
     testWidgetIds();
+    testShaders();
     testFont();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);

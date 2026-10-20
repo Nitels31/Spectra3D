@@ -31,8 +31,11 @@ src/                 implementation (.cpp), split by layer
   i18n/              Localizer
   editor/            Editor, panels/, PanelLayout, Picking, Gizmo, AssetBrowser
   script/            ScriptHost, Bindings, BindEngine, BindScene, BindCamera,
-                   BindInput, BindString
+                     BindInput, BindString
   app/               Application, Launcher, FixedClock, main
+  shaders/           the GLSL the world is drawn with: scene.*, and
+                     shadows/ for the shadow map's own pass and its debug view
+
 
 include/             every engine header, same layer split + json/
   <layer>/*.hpp      Log.hpp, Camera.hpp, Editor.hpp, ... (all .cpp files write
@@ -52,7 +55,8 @@ tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp, editortest.cpp, s
                      window to check that a dropdown does not act on its own
                      opening click
 build/               all output: spectra3d.exe, glfw3.dll, engine.log,
-                     settings.ini, project/, a copy of assets/ (gitignored)
+                     settings.ini, project/, a copy of assets/ and of
+                     src/shaders/ (gitignored)
   lib/               the static libraries the executable links, incl.
                      libspectra_runtime.a - every engine layer below app/ and
                      editor/, which is the engine without an editor
@@ -628,6 +632,26 @@ The making is spread over as many threads as **Settings > Loader threads** says
 touches no GL, so it runs in parallel and the textures are uploaded afterwards,
 on the thread that owns the context.
 
+### The shaders
+
+`src/shaders/` holds the GLSL the world is drawn with, and `src/shaders/shadows/`
+the ones that belong to the shadow alone. Every file is GLSL 330, one shader in
+a file, and every file says at the top that it is under the Blue Oak Model
+License 1.0.0 - under the `#version`, because the version has to be the first
+thing in the file or the driver will not read the shader at all.
+
+The shadow is a map of how far away the sun hit something first, and the three
+modes are that one comparison with a different neighbourhood around it: one
+tap (the default - a hard sun has a hard shadow), sixteen taps in a Poisson
+disk (PCF), and the blockers looked for first so that the width of the shadow
+follows from how far they are (PCSS). The map is a layer per cascade, one to
+four of them.
+
+> The shaders are written; **the engine does not draw with them yet**. The
+> renderer is still the fixed pipeline, and the part that reads the files,
+> compiles them, draws the map and draws the scene with them is the next piece
+> of work. `src/shaders/README.md` says what the C++ side has to give them.
+
 ### Checking the editor
 
 The panel geometry is checked the same way - with no window and no editor:
@@ -638,7 +662,7 @@ cmake --build build --config Release
 build\editortest.exe
 ```
 
-73 checks: that the window is tiled (each column ends where the panel in its own
+96 checks: that the window is tiled (each column ends where the panel in its own
 corner begins, the console is the middle column's rectangle and sits directly
 under the view), that a closed panel reserves nothing, that a grip moves the
 thing it is on and nothing else (the top edge of the favourites panel changes
@@ -651,7 +675,9 @@ forward, and the frustum the renderer builds is the camera's field of view over
 the same rectangle), that the noise is a noise (two points that are close
 together have nearly the same value), that the ground is made of it and stands
 where it says it does, that a text field can hold every character the engine can
-draw, that no two stretches of widget ids meet, and that the font the engine ships has every letter the
+draw, that no two stretches of widget ids meet, that every shader starts with
+its version and says which licence it is under, that a pair of shaders passes
+the same things, and that the font the engine ships has every letter the
 atlas draws.
 
 The geometry itself is in `editor/PanelLayout.hpp` rather than inside the
