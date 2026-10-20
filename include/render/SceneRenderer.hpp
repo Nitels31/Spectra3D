@@ -156,7 +156,7 @@ private:
     void beginScenePass();
     // Draws one mesh with the scene's program.
     bool drawMeshWithShader(const MeshAsset& mesh, const TextureRegistry& textures,
-                            const Mat4& model, const Color& tint);
+                            const Mat4& model);
 
     void extractFrustum(const float* projection, const float* view);
     bool sphereVisible(const Vec3& center, float radius) const;

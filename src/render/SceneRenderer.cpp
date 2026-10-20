@@ -336,10 +336,13 @@ bool SceneRenderer::shadowMapIsStale(const PhysicsWorld& world, const Camera& ca
     if (!state.ready) return true;
     if (state.resolution != shadowMap_.resolution() || state.cascades != shadowMap_.layers())
         return true;
-    if (state.eye.x != camera.position.x || state.eye.y != camera.position.y ||
-        state.eye.z != camera.position.z || state.yaw != camera.yaw ||
-        state.pitch != camera.pitch || state.fov != camera.fovDeg)
-        return true;
+    // The eye is NOT part of this. The map is a picture of the world as the
+    // sun sees it, and the sun does not care where the eye is: a map that
+    // moved with the eye would be a different picture every time the eye
+    // moved, and then it would have to be drawn again every time the eye
+    // moved - which is every frame of a flight, and the whole point of the
+    // map was to stop that.
+    (void)camera;
 
     // The bodies that cast: where they are and how big they are.
     std::vector<std::array<float, 7>> casters;
@@ -385,16 +388,34 @@ void SceneRenderer::rememberShadowState(const PhysicsWorld& world, const Camera&
 void SceneRenderer::renderShadowMap(const PhysicsWorld& world, const MeshRegistry& meshes,
                                     const TextureRegistry& textures, const Camera& camera,
                                     float alpha, int hiddenBody) {
-    // Where the map is fitted: the slice of the view that each stretch of the
-    // scene covers. The bodies are not what decides it - a ground of forty
-    // metres and a box of one metre in the same map means that the box's
-    // shadow is a smear of fifty texels.
-    Vec3 forward, right, up;
-    camera.basis(forward, right, up);
-    const float halfHeight = std::tan(camera.fovDeg * 0.5f * kPi / 180.0f);
-    const float aspect = (float)std::max(1, viewportWidth_) / (float)std::max(1, viewportHeight_);
-    shadowMap_.fit(camera.position, forward, right, up, halfHeight, aspect, (float)kNearPlane,
-                    (float)kFarPlane);
+    // Where the map is fitted: the middle of the scene and how far it reaches.
+    // The eye is not part of it, and that is the whole optimisation: the map
+    // is a picture of the world as the sun sees it, and it does not move when
+    // the eye does.
+    Vec3 low{1e9f, 1e9f, 1e9f};
+    Vec3 high{-1e9f, -1e9f, -1e9f};
+    bool any = false;
+    for (size_t i = 0; i < world.bodies.size(); ++i) {
+        const RigidBody& body = world.bodies[i];
+        if (!body.visible || !body.castsShadow) continue;
+        const float radius = body.boundRadius;
+        low.x = std::fmin(low.x, body.position.x - radius);
+        low.y = std::fmin(low.y, body.position.y - radius);
+        low.z = std::fmin(low.z, body.position.z - radius);
+        high.x = std::fmax(high.x, body.position.x + radius);
+        high.y = std::fmax(high.y, body.position.y + radius);
+        high.z = std::fmax(high.z, body.position.z + radius);
+        any = true;
+    }
+    if (!any) {
+        // Nothing casts: a small box around the origin, so that the shader has
+        // a matrix and the map is not empty.
+        low = Vec3{-1.0f, -1.0f, -1.0f};
+        high = Vec3{1.0f, 1.0f, 1.0f};
+    }
+    const Vec3 centre = (low + high) * 0.5f;
+    const float radius = (high - low).length() * 0.5f;
+    shadowMap_.fit(centre, radius);
 
     // The map is a picture of its own: the viewport of the scene and the
     // scissor around it would cut it to a corner of the screen.
@@ -754,7 +775,7 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
             const Mat4 model = Mat4::compose(drawPosition, drawOrientation,
                                               Vec3{scale, scale, scale}) *
                                Mat4::translation(-mesh->center);
-            drawMeshWithShader(*mesh, textures, model, Color{1.0f, 1.0f, 1.0f});
+            drawMeshWithShader(*mesh, textures, model);
             ++paletteIndex;
             continue;
         }
@@ -896,7 +917,8 @@ void SceneRenderer::beginScenePass() {
     glBindTexture(GL_TEXTURE_2D, whiteTexture_);
     sceneProgram_.setInt("uAlbedoMap", 0);
 
-    // The matrices of the cascades and where the stretches of the scene end.
+    // The matrices of the cascades, the middle of the scene and the radius of
+    // each stretch of it.
     float matrices[16 * 4] = {};
     const std::vector<Mat4>& lights = shadowMap_.lightMatrices();
     for (int i = 0; i < 4; ++i) {
@@ -905,22 +927,29 @@ void SceneRenderer::beginScenePass() {
     }
     sceneProgram_.setMat4Array("uLightViewProjection[0]", matrices, 4);
 
-    float splits[4] = {};
-    const std::vector<float>& ends = shadowMap_.cascadeSplits();
-    for (int i = 0; i < 4; ++i) splits[i] = i < (int)ends.size() ? ends[(size_t)i] : 0.0f;
-    sceneProgram_.setFloatArray("uCascadeSplits[0]", splits, 4);
+    const std::vector<float>& radii = shadowMap_.cascadeRadii();
+    float radiusValues[4] = {};
+    for (int i = 0; i < 4; ++i)
+        radiusValues[i] = i < (int)radii.size() ? radii[(size_t)i] : 0.0f;
+    sceneProgram_.setFloatArray("uCascadeRadii[0]", radiusValues, 4);
+    const Vec3 centre = shadowMap_.sceneCentre();
+    sceneProgram_.setVec3("uSceneCentre", centre.x, centre.y, centre.z);
 }
 
 // One mesh, with the scene's program.
 bool SceneRenderer::drawMeshWithShader(const MeshAsset& mesh, const TextureRegistry& textures,
-                                       const Mat4& model, const Color& tint) {
+                                       const Mat4& model) {
     if (!sceneProgram_.ready()) return false;
 
     const size_t stride = sizeof(float) * kMeshVertexFloats;
     sceneProgram_.setMat4("uModel", model.m);
-    sceneProgram_.setVec3("uTint", tint.r, tint.g, tint.b);
 
     for (const MeshPart& part : mesh.parts) {
+        // The colour of the part multiplies the picture, the way the fixed
+        // pipeline multiplied it: a part with a colour of its own is a part
+        // that is tinted, and the tint is the part's own.
+        sceneProgram_.setVec3("uTint", part.color[0], part.color[1], part.color[2]);
+
         // A mesh with colours of its own - the ground has them, and they are
         // the colours of the biomes - and a mesh without, which is every
         // imported model.

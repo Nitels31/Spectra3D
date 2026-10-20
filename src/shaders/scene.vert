@@ -23,9 +23,15 @@ uniform mat4 uProjection;
 // One matrix per cascade: the light's view and projection, fitted to the
 // stretch of the scene that the cascade covers.
 uniform mat4 uLightViewProjection[4];
-// Where the stretches end, in the distance from the eye. The cascade a
-// fragment is in is the one whose stretch it is in.
-uniform float uCascadeSplits[4];
+// The radius of each stretch of the scene, and the middle of the scene itself.
+//
+// The stretches are the halves of the scene, and not the reaches of the
+// camera: the map is a picture of the world as the sun sees it, and the sun
+// does not care where the eye is. A map that moved with the eye would have to
+// be drawn again every time the eye moved, and the whole point of the map is
+// to stop that.
+uniform float uCascadeRadii[4];
+uniform vec3 uSceneCentre;
 uniform int uCascadeCount;
 
 out vec3 vWorldPosition;
@@ -58,13 +64,17 @@ void main() {
     vColor = aColor;
 
     // The cascade: the stretch of the scene the fragment is in, measured from
-    // the eye. The loop is over three and not over uCascadeCount: a loop with
-    // a dynamic bound is the one thing a shader cannot unroll, and the number
-    // of cascades is the same for every vertex of the frame.
-    float viewDepth = -(uView * world).z;
+    // the middle of the scene. The loop is over three and not over
+    // uCascadeCount: a loop with a dynamic bound is the one thing a shader
+    // cannot unroll, and the number of cascades is the same for every vertex
+    // of the frame.
+    float fromCentre = distance(world.xyz, uSceneCentre);
     int cascade = 0;
     for (int i = 0; i < 3; ++i) {
-        if (i < uCascadeCount - 1 && viewDepth > uCascadeSplits[i]) cascade = i + 1;
+        if (i < uCascadeCount && fromCentre <= uCascadeRadii[i]) {
+            cascade = i;
+            break;
+        }
     }
     vCascade = cascade;
 

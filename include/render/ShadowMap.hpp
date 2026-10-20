@@ -90,35 +90,39 @@ public:
     int layers() const { return layers_; }
 
     // The matrix of every cascade and where the stretches of the scene end.
-    // The shader picks the cascade by the distance from the eye and multiplies
-    // by this one matrix.
+    // The shader picks the cascade by the distance from the middle of the
+    // scene and multiplies by this one matrix.
     const std::vector<Mat4>& lightMatrices() const { return lightMatrices_; }
     const std::vector<float>& cascadeSplits() const { return cascadeSplits_; }
+    // The middle of the scene and the radius of each stretch of it.
+    const Vec3& sceneCentre() const { return sceneCentre_; }
+    const std::vector<float>& cascadeRadii() const { return cascadeRadii_; }
 
     // The pass: the map is filled with the distance from the sun.
     void beginPass(int cascade);
     void endPass();
 
-    // Fits the box of every cascade to the slice of the view it covers.
+    // Fits the box of every cascade to the scene.
     //
-    // The bodies are not what decides it. A ground of forty metres and a box
-    // of one metre in the same map means that the box's shadow is a smear of
-    // fifty texels, and a shadow has to be sharper than that to be worth
-    // looking at.
+    // The scene and not the view: the map is a picture of the world as the sun
+    // sees it, and the sun does not care where the eye is. A map fitted to the
+    // view is a different picture every time the eye moves, and then it has to
+    // be drawn again every time the eye moves - which is every frame of a
+    // flight, and the whole point of the map was to stop that.
     //
-    // The eye, where it looks and how wide it looks are what decide it: the
-    // map covers what is on the screen, and the texels are spent there.
-    void fit(const Vec3& eye, const Vec3& forward, const Vec3& right, const Vec3& up,
-             float halfHeight, float aspect, float nearPlane, float farPlane);
+    // The centre of the scene and its radius are what the cascades are cut
+    // from: the first is the middle of everything that casts, and the rest are
+    // the halves of it, so that what is in the middle of the scene gets the
+    // texels and what is at the edge does not steal them.
+    void fit(const Vec3& centre, float radius);
 
 private:
     // Creates the texture and the framebuffer that draws into it.
     bool create(int resolution, int layers);
     void destroy();
 
-    // Fits the box of one cascade to the slice of the view it covers.
-    void fitCascade(int cascade, const Vec3& eye, const Vec3& forward, const Vec3& right,
-                    const Vec3& up, float halfHeight, float aspect);
+    // Fits the box of one cascade to the sphere of the scene it covers.
+    void fitCascade(int cascade, const Vec3& centre, float radius);
 
     ShadowSettings settings_;
     unsigned int texture_ = 0;
@@ -128,6 +132,9 @@ private:
     int layers_ = 0;
     std::vector<Mat4> lightMatrices_;
     std::vector<float> cascadeSplits_;
+    // The middle of the scene, and the radius of each stretch of it.
+    Vec3 sceneCentre_;
+    std::vector<float> cascadeRadii_;
 };
 
 } // namespace s3d
