@@ -107,6 +107,10 @@ private:
     // fill the screen.
     int sceneCamera_ = -1;
     SceneRenderer sceneRenderer_;
+    // The shadows, as they are set right now. The editor changes them where
+    // the shadows can be seen, and they are the project's - so they go into
+    // the manifest with the rest of it.
+    ShadowSettings shadowSettings_;
     UiRenderer uiRenderer_;
     Launcher launcher_;
     UiContext launcherUi_;

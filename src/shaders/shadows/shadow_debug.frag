@@ -32,12 +32,12 @@ void main() {
         return;
     }
 
-    const float distance = texture(uShadowMap, vec3(centred + 0.5, float(uLayer))).r;
-    const float shade = clamp(distance, 0.0, 1.0);
+    float distance = texture(uShadowMap, vec3(centred + 0.5, float(uLayer))).r;
+    float shade = clamp(distance, 0.0, 1.0);
 
     // The grey of the distance, and the line of the far plane over it.
     vec3 colour = vec3(shade);
-    const float line = 1.0 - smoothstep(0.0, 1.5 * uTexelSize, abs(distance - uFarPlane));
+    float line = 1.0 - smoothstep(0.0, 1.5 * uTexelSize, abs(distance - uFarPlane));
     colour = mix(colour, vec3(1.0, 0.35, 0.25), line);
 
     oColour = vec4(colour, 1.0);

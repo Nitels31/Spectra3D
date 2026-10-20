@@ -209,6 +209,12 @@ public:
     bool showShadowMap() const { return showShadowMap_; }
     const LayoutRects& layout() const { return layout_; }
 
+    // The shadows, as the user sets them. The settings belong to the project
+    // and not to the machine, and the editor changes them where the shadows
+    // can be seen: the pointer is the application's copy, and the application
+    // puts it into the renderer and into the manifest.
+    void setShadowSettings(ShadowSettings* settings) { shadowSettings_ = settings; }
+
     void saveScene(const PhysicsWorld& world);
     void loadScene(PhysicsWorld& world);
 
@@ -448,6 +454,12 @@ private:
         TogglePanel,
         // The map of the shadows, drawn over the scene: what the sun sees.
         ShadowMap,
+        // The shadows themselves: how they are drawn, how big the map is and
+        // how many stretches of the scene get a map of their own. They are the
+        // project's, and they are set where they can be seen.
+        ShadowQuality,
+        ShadowSize,
+        ShadowCascades,
         // Create: a piece of ground, made of noise. It opens the panel that
         // says how the ground is made.
         Landform,
@@ -716,6 +728,8 @@ private:
     bool snapEnabled_ = false;
     // The map of the shadows, drawn over the scene: what the sun sees.
     bool showShadowMap_ = false;
+    // The shadows themselves, where the user sets them.
+    ShadowSettings* shadowSettings_ = nullptr;
     // Console lives under the viewport and the inspector now, so it is always
     // there; these three are its level filters.
     bool consoleWarn_ = true;

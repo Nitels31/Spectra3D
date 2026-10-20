@@ -104,95 +104,93 @@ void ShadowMap::setSettings(const ShadowSettings& settings) {
     create(resolution, layers);
 }
 
-void ShadowMap::fit(const std::vector<Vec3>& centres, const std::vector<float>& radii,
-                    const Vec3& eye, const Vec3& forward, float nearPlane, float farPlane) {
+void ShadowMap::fit(const Vec3& eye, const Vec3& forward, const Vec3& right, const Vec3& up,
+                    float halfHeight, float aspect, float nearPlane, float farPlane) {
     if (!ready()) return;
 
     // Where the stretches of the scene end, from the eye out.
     //
-    // Half of them are spread evenly and half of them are spread
-    // logarithmically: the even ones give the far ground the same share of the
-    // scene, and the logarithmic ones give the near ground the texels it
-    // needs - a shadow of a box at the camera's feet is a shadow of a few
-    // pixels, and one at the horizon is a shadow of a smear.
+    // They are spread logarithmically: the near ground gets the texels it
+    // needs and the far ground does not steal them. A shadow of a box at the
+    // camera's feet is a shadow of a few pixels, and one at the horizon is a
+    // shadow of a smear, and the two cannot have the same map.
+    //
+    // The near end is not the camera's near plane: a hundredth of a metre is
+    // not a thing anybody sees, and a stretch of the scene that holds it is a
+    // stretch that holds nothing.
     cascadeSplits_.clear();
-    const float closest = std::fmax(nearPlane, 0.05f);
+    const float closest = std::fmax(nearPlane, 0.5f);
     for (int i = 1; i <= layers_; ++i) {
         const float t = (float)i / (float)layers_;
-        const float even = nearPlane + (farPlane - nearPlane) * t;
-        const float logarithmic = closest * std::pow(farPlane / closest, t);
-        cascadeSplits_.push_back(std::fmin(farPlane, even * 0.5f + logarithmic * 0.5f));
+        cascadeSplits_.push_back(closest * std::pow(farPlane / closest, t));
     }
 
     lightMatrices_.assign((size_t)layers_, Mat4::identity());
     for (int cascade = 0; cascade < layers_; ++cascade)
-        fitCascade(cascade, centres, radii, eye, forward, nearPlane, farPlane);
+        fitCascade(cascade, eye, forward, right, up, halfHeight, aspect);
 }
 
-void ShadowMap::fitCascade(int cascade, const std::vector<Vec3>& centres,
-                           const std::vector<float>& radii, const Vec3& eye,
-                           const Vec3& forward, float nearPlane, float farPlane) {
-    // Where this stretch of the scene begins and ends.
-    const float from = cascade == 0 ? nearPlane : cascadeSplits_[(size_t)cascade - 1];
+void ShadowMap::fitCascade(int cascade, const Vec3& eye, const Vec3& forward, const Vec3& right,
+                           const Vec3& up, float halfHeight, float aspect) {
+    // The slice of the view this stretch of the scene covers.
+    const float from = cascade == 0 ? 0.0f : cascadeSplits_[(size_t)cascade - 1];
     const float to = cascadeSplits_[(size_t)cascade];
 
-    // The things in it: the bodies that are within this stretch, measured from
-    // the eye along the way the camera looks.
-    Vec3 low{1e9f, 1e9f, 1e9f};
-    Vec3 high{-1e9f, -1e9f, -1e9f};
-    bool any = false;
-    for (size_t i = 0; i < centres.size(); ++i) {
-        const Vec3 offset = centres[i] - eye;
-        const float depth = dot(offset, forward);
-        if (depth < from || depth > to) continue;
-        const float radius = radii[i];
-        low.x = std::fmin(low.x, centres[i].x - radius);
-        low.y = std::fmin(low.y, centres[i].y - radius);
-        low.z = std::fmin(low.z, centres[i].z - radius);
-        high.x = std::fmax(high.x, centres[i].x + radius);
-        high.y = std::fmax(high.y, centres[i].y + radius);
-        high.z = std::fmax(high.z, centres[i].z + radius);
-        any = true;
+    // The corners of the slice, in the world: the four edges of the picture at
+    // the near end of the stretch and at the far end of it.
+    float minX = 1e9f, maxX = -1e9f, minY = 1e9f, maxY = -1e9f, minZ = 1e9f, maxZ = -1e9f;
+    for (int corner = 0; corner < 8; ++corner) {
+        const float depth = (corner & 1) ? to : from;
+        const float sx = (corner & 2) ? 1.0f : -1.0f;
+        const float sy = (corner & 4) ? 1.0f : -1.0f;
+        const float half = halfHeight * depth;
+        const Vec3 point = eye + forward * depth + right * (sx * half * aspect) +
+                           up * (sy * half);
+        minX = std::fmin(minX, point.x);
+        maxX = std::fmax(maxX, point.x);
+        minY = std::fmin(minY, point.y);
+        maxY = std::fmax(maxY, point.y);
+        minZ = std::fmin(minZ, point.z);
+        maxZ = std::fmax(maxZ, point.z);
     }
 
-    if (!any) {
-        // Nothing in this stretch: a small box around the eye, so that the
-        // shader has a matrix and the map is not empty.
-        low = eye - Vec3{kEmptyBox, kEmptyBox, kEmptyBox};
-        high = eye + Vec3{kEmptyBox, kEmptyBox, kEmptyBox};
-    }
-
-    const Vec3 centre = (low + high) * 0.5f;
-    const Vec3 extent = high - low;
+    const Vec3 centre = (Vec3{minX, minY, minZ} + Vec3{maxX, maxY, maxZ}) * 0.5f;
+    const Vec3 extent = Vec3{maxX, maxY, maxZ} - Vec3{minX, minY, minZ};
     const float radius = extent.length() * 0.5f + kLightMargin;
 
     // The light's own box: the sun is far enough away that the light is
     // parallel, and the box is what it can see.
+    //
+    // The light's eye is on the SUN's side of the scene and looks back at it.
+    // The other way round is the same box with the light underneath the world,
+    // and then the map holds the underside of everything and every surface
+    // that faces the sun comes out in its own shadow.
     const Vec3 direction = sunDirection(settings_);
-    const Vec3 lightEye = centre - direction * (radius + kLightMargin);
-    const Vec3 up = std::fabs(direction.y) > 0.99f ? Vec3{0.0f, 0.0f, 1.0f} : Vec3{0.0f, 1.0f, 0.0f};
-    const Mat4 view = lookAt(lightEye, centre, up);
+    const Vec3 lightEye = centre + direction * (radius + kLightMargin);
+    const Vec3 upAxis =
+        std::fabs(direction.y) > 0.99f ? Vec3{0.0f, 0.0f, 1.0f} : Vec3{0.0f, 1.0f, 0.0f};
+    const Mat4 view = lookAt(lightEye, centre, upAxis);
 
     // The corners of the box in the light's own space: the light looks down
     // its own -Z, so the depth of the box is measured backwards.
-    float minX = 1e9f, maxX = -1e9f, minY = 1e9f, maxY = -1e9f, minZ = 1e9f, maxZ = -1e9f;
+    float lMinX = 1e9f, lMaxX = -1e9f, lMinY = 1e9f, lMaxY = -1e9f, lMinZ = 1e9f, lMaxZ = -1e9f;
     for (int corner = 0; corner < 8; ++corner) {
-        const Vec3 point{(corner & 1) ? high.x : low.x, (corner & 2) ? high.y : low.y,
-                         (corner & 4) ? high.z : low.z};
+        const Vec3 point{(corner & 1) ? maxX : minX, (corner & 2) ? maxY : minY,
+                         (corner & 4) ? maxZ : minZ};
         const Vec3 inLight = view.transformPoint(point);
-        minX = std::fmin(minX, inLight.x);
-        maxX = std::fmax(maxX, inLight.x);
-        minY = std::fmin(minY, inLight.y);
-        maxY = std::fmax(maxY, inLight.y);
-        minZ = std::fmin(minZ, inLight.z);
-        maxZ = std::fmax(maxZ, inLight.z);
+        lMinX = std::fmin(lMinX, inLight.x);
+        lMaxX = std::fmax(lMaxX, inLight.x);
+        lMinY = std::fmin(lMinY, inLight.y);
+        lMaxY = std::fmax(lMaxY, inLight.y);
+        lMinZ = std::fmin(lMinZ, inLight.z);
+        lMaxZ = std::fmax(lMaxZ, inLight.z);
     }
 
     // A little more room than the box needs, so that the shadow of a thing
     // that is just outside the box is not cut in half.
     const float pad = 1.0f;
-    const Mat4 projection = ortho(minX - pad, maxX + pad, minY - pad, maxY + pad, -maxZ,
-                                  -minZ);
+    const Mat4 projection = ortho(lMinX - pad, lMaxX + pad, lMinY - pad, lMaxY + pad, -lMaxZ,
+                                  -lMinZ);
     lightMatrices_[(size_t)cascade] = projection * view;
 }
 

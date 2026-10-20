@@ -399,14 +399,13 @@ void Application::loadProjectWorld(const ProjectInfo& project) {
 
     // The shadows, as the project asks for them. They are the project's and
     // not the machine's, so the scene looks the same everywhere.
-    ShadowSettings shadows;
-    shadows.quality = project_.shadowQuality == 0   ? ShadowQuality::Off
-                      : project_.shadowQuality == 2 ? ShadowQuality::Filtered
-                      : project_.shadowQuality == 3 ? ShadowQuality::Soft
-                                                   : ShadowQuality::Hard;
-    shadows.resolution = project_.shadowResolution;
-    shadows.cascades = project_.shadowCascades;
-    sceneRenderer_.setShadowSettings(shadows);
+    shadowSettings_.quality = project_.shadowQuality == 0   ? ShadowQuality::Off
+                             : project_.shadowQuality == 2 ? ShadowQuality::Filtered
+                             : project_.shadowQuality == 3 ? ShadowQuality::Soft
+                                                          : ShadowQuality::Hard;
+    shadowSettings_.resolution = project_.shadowResolution;
+    shadowSettings_.cascades = project_.shadowCascades;
+    sceneRenderer_.setShadowSettings(shadowSettings_);
 
     const std::string scenePath = ProjectLibrary::scenePath(project_);
     // Before the scene is read: loading a model is what pulls its textures in, so
@@ -429,6 +428,10 @@ void Application::openProject(const ProjectInfo& project) {
     const std::string scenePath = ProjectLibrary::scenePath(project_);
 
     editor_ = std::make_unique<Editor>(meshes_, localizer_, sound_);
+    // The editor changes the shadows where they can be seen, and they are the
+    // project's: the editor is given the settings to change, and the
+    // application puts them into the renderer and into the manifest.
+    editor_->setShadowSettings(&shadowSettings_);
     editor_->setScenePath(scenePath);
     editor_->setProjectName(project_.name);
     // Captured after the manifest has been applied, so "reset camera" in the View
@@ -540,6 +543,14 @@ void Application::runEditorFrame(float dt) {
         // time it is opened it goes back to the text file and the scene that
         // was saved is gone.
         project_.sceneFile = str::fileName(editor_->scenePath());
+        // The shadows, as they are set now: they are the project's, and the
+        // project is what is written out.
+        project_.shadowQuality = shadowSettings_.quality == ShadowQuality::Off     ? 0
+                                : shadowSettings_.quality == ShadowQuality::Filtered ? 2
+                                : shadowSettings_.quality == ShadowQuality::Soft     ? 3
+                                                                                   : 1;
+        project_.shadowResolution = shadowSettings_.resolution;
+        project_.shadowCascades = shadowSettings_.cascades;
         if (!launcher_.projects().writeManifest(project_))
             Log::error("Project: cannot write the manifest");
         else
@@ -813,6 +824,9 @@ void Application::renderScene() {
     viewport.height = (int)rect.height;
 
     sceneRenderer_.beginFrame(window_.framebufferWidth(), window_.framebufferHeight());
+    // The shadows, as they are set right now. The editor changes them where
+    // the shadows can be seen, and they are the project's.
+    sceneRenderer_.setShadowSettings(shadowSettings_);
     sceneRenderer_.setShowShadowDebug(editor_->showShadowMap());
     sceneRenderer_.renderWorld(world_, meshes_, textures_, camera_, viewport,
                                editor_->showGrid(), editor_->showVectors(), clockAlpha_,

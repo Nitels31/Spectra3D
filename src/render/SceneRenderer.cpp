@@ -1,5 +1,6 @@
 #include "render/SceneRenderer.hpp"
 
+#include "core/Log.hpp"
 #include "core/Math.hpp"
 #include "platform/GlFunctions.hpp"
 
@@ -232,8 +233,16 @@ void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& m
     // The shadow of the sun, before anything is drawn: the shadow of a thing
     // is in the picture of the ground it falls on, and the ground cannot be
     // drawn before the map is full.
-    if (shadowsEnabled() && shadowProgram_.ready())
-        renderShadowMap(world, meshes, textures, camera, alpha, hiddenBody);
+    //
+    // And only when the map has gone stale: while the editor sits still, the
+    // world and the eye are the same, and the map would be the same picture
+    // again and again.
+    if (shadowsEnabled() && shadowProgram_.ready()) {
+        if (shadowMapIsStale(world, camera)) {
+            renderShadowMap(world, meshes, textures, camera, alpha, hiddenBody);
+            rememberShadowState(world, camera);
+        }
+    }
 
     // The sky first, with the depth test off: it is behind everything, and
     // everything else is drawn over it.
@@ -247,14 +256,14 @@ void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& m
     glDisable(GL_SCISSOR_TEST);
 
     // And the map, if it is asked for: what the sun sees, in the corner.
-    if (showShadowDebug_) renderShadowDebug(viewport);
+    if (showShadowDebug_) renderShadowDebug(camera, viewport);
 }
 
 // The map on the screen: what the sun sees.
 //
 // It is drawn over the scene, in the corner of the viewport, so that the map
 // and the picture it belongs to can be looked at together.
-void SceneRenderer::renderShadowDebug(const Viewport& viewport) {
+void SceneRenderer::renderShadowDebug(const Camera& camera, const Viewport& viewport) {
     if (!shadowDebugProgram_.ready() || !shadowMap_.ready()) return;
     if (viewport.width < 8 || viewport.height < 8) return;
 
@@ -274,7 +283,22 @@ void SceneRenderer::renderShadowDebug(const Viewport& viewport) {
     gl::ActiveTexture(GL_TEXTURE4);
     glBindTexture(GL_TEXTURE_2D_ARRAY, shadowMap_.texture());
     shadowDebugProgram_.setInt("uShadowMap", 4);
-    shadowDebugProgram_.setInt("uLayer", 0);
+    // The layer of the stretch the eye is in: the map of a stretch nobody is
+    // looking at is a map of nothing.
+    int layer = 0;
+    {
+        Vec3 forward, right, up;
+        camera.basis(forward, right, up);
+        const float depth = dot(camera.position - camera.position, forward);
+        const std::vector<float>& ends = shadowMap_.cascadeSplits();
+        for (size_t i = 0; i < ends.size(); ++i)
+            if (depth <= ends[i]) {
+                layer = (int)i;
+                break;
+            }
+        layer = std::max(0, std::min(layer, shadowMap_.layers() - 1));
+    }
+    shadowDebugProgram_.setInt("uLayer", layer);
     shadowDebugProgram_.setFloat("uFarPlane", 1.0f);
     shadowDebugProgram_.setFloat("uTexelSize", 1.0f / (float)std::max(1, shadowMap_.resolution()));
     gl::ActiveTexture(GL_TEXTURE0);
@@ -297,6 +321,63 @@ void SceneRenderer::renderShadowDebug(const Viewport& viewport) {
     glDisable(GL_SCISSOR_TEST);
 }
 
+// The shadow map is drawn again only when the world or the eye has moved.
+//
+// The map is a picture of the world as the sun sees it, and the sun does not
+// move and the world does not move while the editor sits still: the map would
+// be the same picture a thousand times a second. So the state the map depends
+// on is remembered, and the pass is skipped when it has not changed.
+//
+// The cost of the test is a walk over the bodies that cast, and the cost of
+// the pass is a walk over the bodies that cast plus four draws of the scene.
+// The test is the cheaper of the two by a long way.
+bool SceneRenderer::shadowMapIsStale(const PhysicsWorld& world, const Camera& camera) const {
+    const ShadowState& state = shadowState_;
+    if (!state.ready) return true;
+    if (state.resolution != shadowMap_.resolution() || state.cascades != shadowMap_.layers())
+        return true;
+    if (state.eye.x != camera.position.x || state.eye.y != camera.position.y ||
+        state.eye.z != camera.position.z || state.yaw != camera.yaw ||
+        state.pitch != camera.pitch || state.fov != camera.fovDeg)
+        return true;
+
+    // The bodies that cast: where they are and how big they are.
+    std::vector<std::array<float, 7>> casters;
+    casters.reserve(world.bodies.size());
+    for (size_t i = 0; i < world.bodies.size(); ++i) {
+        const RigidBody& body = world.bodies[i];
+        if (!body.visible || !body.castsShadow) continue;
+        casters.push_back({body.position.x, body.position.y, body.position.z,
+                           body.boundRadius, body.meshScale, (float)body.mesh,
+                           body.shape == Shape::Mesh ? 1.0f : 0.0f});
+    }
+    if (casters.size() != state.casters.size()) return true;
+    for (size_t i = 0; i < casters.size(); ++i)
+        for (size_t k = 0; k < casters[i].size(); ++k)
+            if (casters[i][k] != state.casters[i][k]) return true;
+    return false;
+}
+
+void SceneRenderer::rememberShadowState(const PhysicsWorld& world, const Camera& camera) {
+    ShadowState& state = shadowState_;
+    state.casters.clear();
+    state.casters.reserve(world.bodies.size());
+    for (size_t i = 0; i < world.bodies.size(); ++i) {
+        const RigidBody& body = world.bodies[i];
+        if (!body.visible || !body.castsShadow) continue;
+        state.casters.push_back({body.position.x, body.position.y, body.position.z,
+                                 body.boundRadius, body.meshScale, (float)body.mesh,
+                                 body.shape == Shape::Mesh ? 1.0f : 0.0f});
+    }
+    state.eye = camera.position;
+    state.yaw = camera.yaw;
+    state.pitch = camera.pitch;
+    state.fov = camera.fovDeg;
+    state.resolution = shadowMap_.resolution();
+    state.cascades = shadowMap_.layers();
+    state.ready = true;
+}
+
 // The shadow pass: the map of what the sun hit first.
 //
 // The bodies are drawn twice - once into the map and once into the scene -
@@ -304,23 +385,15 @@ void SceneRenderer::renderShadowDebug(const Viewport& viewport) {
 void SceneRenderer::renderShadowMap(const PhysicsWorld& world, const MeshRegistry& meshes,
                                     const TextureRegistry& textures, const Camera& camera,
                                     float alpha, int hiddenBody) {
-    // Where the things are: the map is fitted to them, and a box that does
-    // not hold the thing that casts into it cuts the shadow in half.
-    std::vector<Vec3> centres;
-    std::vector<float> radii;
-    centres.reserve(world.bodies.size());
-    radii.reserve(world.bodies.size());
-    for (int index = 0; index < (int)world.bodies.size(); ++index) {
-        const RigidBody& body = world.bodies[(size_t)index];
-        if (!body.visible || index == hiddenBody) continue;
-        if (!body.castsShadow) continue;
-        centres.push_back(body.position);
-        radii.push_back(body.boundRadius);
-    }
-
+    // Where the map is fitted: the slice of the view that each stretch of the
+    // scene covers. The bodies are not what decides it - a ground of forty
+    // metres and a box of one metre in the same map means that the box's
+    // shadow is a smear of fifty texels.
     Vec3 forward, right, up;
     camera.basis(forward, right, up);
-    shadowMap_.fit(centres, radii, camera.position, forward, (float)kNearPlane,
+    const float halfHeight = std::tan(camera.fovDeg * 0.5f * kPi / 180.0f);
+    const float aspect = (float)std::max(1, viewportWidth_) / (float)std::max(1, viewportHeight_);
+    shadowMap_.fit(camera.position, forward, right, up, halfHeight, aspect, (float)kNearPlane,
                     (float)kFarPlane);
 
     // The map is a picture of its own: the viewport of the scene and the
@@ -816,7 +889,12 @@ void SceneRenderer::beginScenePass() {
     gl::ActiveTexture(GL_TEXTURE3);
     glBindTexture(GL_TEXTURE_2D_ARRAY, shadowMap_.texture());
     sceneProgram_.setInt("uShadowMapFiltered", 3);
+    // And the white texel on the first unit: the primitives have no picture
+    // of their own, and a sampler with nothing bound to it reads black - a
+    // whole object drawn in the colour of nothing.
     gl::ActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, whiteTexture_);
+    sceneProgram_.setInt("uAlbedoMap", 0);
 
     // The matrices of the cascades and where the stretches of the scene end.
     float matrices[16 * 4] = {};

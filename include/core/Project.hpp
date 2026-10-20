@@ -127,7 +127,7 @@ struct ProjectInfo {
     // 1 one tap, 2 the filtered one, 3 the soft one.
     int shadowQuality = 1;
     int shadowResolution = 2048;
-    int shadowCascades = 1;
+    int shadowCascades = 4;
     bool valid = false;
 };
 

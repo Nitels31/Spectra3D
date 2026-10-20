@@ -24,35 +24,46 @@ struct ShadowSettings {
     // The size of the map, in texels a side.
     int resolution = 2048;
 
-    // How many stretches of the scene get a map of their own. One is enough
-    // for a small scene; four is enough for a big one, and every one of them
-    // is a layer of the same texture.
-    int cascades = 1;
+    // How many stretches of the scene get a map of their own. Four is the
+    // default: one map for the whole scene means forty metres of ground and
+    // a box of one metre share the same texels, and the shadow of the box is
+    // then a smear.
+    int cascades = 4;
 
     // The sun. The azimuth is around the vertical axis, the elevation is above
     // the horizon, and both are in degrees.
-    float sunAzimuth = 40.0f;
-    float sunElevation = 52.0f;
+    //
+    // They are the numbers the fixed pipeline's light had, so that the picture
+    // is the picture it was before the shadows came: the same light, the same
+    // direction, and the shadow is the only thing that is new.
+    float sunAzimuth = 41.2f;
+    float sunElevation = 58.6f;
 
     // The bias of the comparison, in the map's own units. Too little and the
     // ground is striped by its own shadow; too much and the shadow lets go of
     // the thing that casts it.
-    float bias = 0.0012f;
+    float bias = 0.0006f;
 
     // The widest the penumbra of the soft mode may get, in texels.
     float radius = 12.0f;
 
     // The light: the sun's own colour, the sky's and the ground's bounce.
-    Vec3 sunColour{1.00f, 0.96f, 0.88f};
-    Vec3 skyColour{0.42f, 0.52f, 0.68f};
-    Vec3 groundColour{0.24f, 0.22f, 0.19f};
-    float ambient = 0.55f;
-    float specular = 0.22f;
+    //
+    // They are the numbers the fixed pipeline's light had, so that a scene
+    // without shadows looks exactly as it did before.
+    Vec3 sunColour{0.95f, 0.94f, 0.90f};
+    Vec3 skyColour{0.26f, 0.27f, 0.31f};
+    Vec3 groundColour{0.20f, 0.19f, 0.18f};
+    float ambient = 1.0f;
+    // The fixed pipeline had no shine at all, and a scene that used to have
+    // none should not grow one by accident.
+    float specular = 0.0f;
     float shininess = 32.0f;
 
-    // The haze: the colour of the far things and how fast they lose it.
+    // The haze: the colour of the far things and how fast they lose it. The
+    // fixed pipeline had none, so it is off until somebody asks for it.
     Vec3 fogColour{0.62f, 0.72f, 0.86f};
-    float fogDensity = 0.006f;
+    float fogDensity = 0.0f;
 };
 
 // The direction of the sun, from the settings: the point where the light is.
@@ -88,23 +99,26 @@ public:
     void beginPass(int cascade);
     void endPass();
 
-    // Fits the box of every cascade to the scene.
+    // Fits the box of every cascade to the slice of the view it covers.
     //
-    // The bodies are the world as far as the shadow is concerned: a box has to
-    // hold everything that can cast into its stretch of the scene, and the box
-    // that holds it is the box the shadow is drawn in.
-    void fit(const std::vector<Vec3>& centres, const std::vector<float>& radii,
-             const Vec3& eye, const Vec3& forward, float nearPlane, float farPlane);
+    // The bodies are not what decides it. A ground of forty metres and a box
+    // of one metre in the same map means that the box's shadow is a smear of
+    // fifty texels, and a shadow has to be sharper than that to be worth
+    // looking at.
+    //
+    // The eye, where it looks and how wide it looks are what decide it: the
+    // map covers what is on the screen, and the texels are spent there.
+    void fit(const Vec3& eye, const Vec3& forward, const Vec3& right, const Vec3& up,
+             float halfHeight, float aspect, float nearPlane, float farPlane);
 
 private:
     // Creates the texture and the framebuffer that draws into it.
     bool create(int resolution, int layers);
     void destroy();
 
-    // Fits the box of one cascade to the things that are in it.
-    void fitCascade(int cascade, const std::vector<Vec3>& centres,
-                    const std::vector<float>& radii, const Vec3& eye, const Vec3& forward,
-                    float nearPlane, float farPlane);
+    // Fits the box of one cascade to the slice of the view it covers.
+    void fitCascade(int cascade, const Vec3& eye, const Vec3& forward, const Vec3& right,
+                    const Vec3& up, float halfHeight, float aspect);
 
     ShadowSettings settings_;
     unsigned int texture_ = 0;

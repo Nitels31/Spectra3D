@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <vector>
 
 #include <GL/gl.h>
@@ -83,7 +84,7 @@ public:
 
     // The map on the screen: what the sun sees. Drawn over the scene, in the
     // corner of the viewport.
-    void renderShadowDebug(const Viewport& viewport);
+    void renderShadowDebug(const Camera& camera, const Viewport& viewport);
     // Whether it is drawn at all.
     void setShowShadowDebug(bool show) { showShadowDebug_ = show; }
     bool showShadowDebug() const { return showShadowDebug_; }
@@ -161,6 +162,27 @@ private:
     bool sphereVisible(const Vec3& center, float radius) const;
     void drawCameraEntity(const RigidBody& body, const Mat4& model);
 
+    // The shadow map is drawn again only when the world or the eye has moved.
+    //
+    // The map is a picture of the world as the sun sees it, and the sun does
+    // not move and the world does not move while the editor sits still: the
+    // map would be the same picture a thousand times a second. So the state
+    // the map depends on is remembered, and the pass is skipped when it has
+    // not changed.
+    struct ShadowState {
+        // Every body that casts: where it is and how big it is.
+        std::vector<std::array<float, 7>> casters;
+        // The eye, and the way it looks.
+        Vec3 eye;
+        float yaw = 0.0f, pitch = 0.0f, fov = 70.0f;
+        // The settings, for the map's own size.
+        int resolution = 0, cascades = 0;
+        bool ready = false;
+    };
+    // True when the map has to be drawn again.
+    bool shadowMapIsStale(const PhysicsWorld& world, const Camera& camera) const;
+    void rememberShadowState(const PhysicsWorld& world, const Camera& camera);
+
     PrimitiveCache primitives_;
     Skybox sky_;
     float projection_[16] = {};
@@ -190,6 +212,10 @@ private:
 
     // Whether the map of the shadows is drawn over the scene.
     bool showShadowDebug_ = false;
+
+    // The state the shadow map depends on, so that the pass is skipped when
+    // nothing has moved.
+    ShadowState shadowState_;
 
     // Static grid positions plus the per-frame colour stream. Built once, then
     // drawn with a single glDrawArrays instead of ~1000 immediate-mode calls.

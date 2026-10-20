@@ -675,20 +675,25 @@ The map is 1024, 2048 or 4096 to a side, and it has one layer per cascade -
 a cascade is a stretch of the scene with a map of its own, so that the near
 ground gets the texels and the far ground does not steal them. One to four of
 them.
+The shadows are the **project's** and not the machine's: a scene that looks the
+same on another machine is the same scene, and the shadows are a part of
+how it looks. They are set in the editor, where they can be seen, and they go
+into the manifest with the rest of the project.
 
-The shadows are the **project's** and not the machine's: a scene that looks
-the same on another machine is the same scene, and the shadows are a part of
-how it looks. The launcher's settings panel edits them for the project that
-is selected. Every body casts a shadow until it is told not to, and that flag
-is in the inspector with the other flags.
+**View >** has all of it: the quality (off, one tap, PCF, PCSS), the size of
+the map (1024, 2048, 4096) and how many stretches of the scene get a map of
+their own (one to four). **View > Shadow map** draws what the sun sees in the
+corner of the viewport - the one thing that is worth looking at when the
+shadows are not what they should be.
 
-**View > Shadow map** draws what the sun sees in the corner of the viewport -
-the one thing that is worth looking at when the shadows are not what they
-should be.
+The map is drawn again only when the world or the eye has moved: while the
+editor sits still, the sun does not move and neither does anything else, and
+the map would be the same picture a thousand times a second.
 
 > The scene is drawn with a program now, and the grid, the gizmo and the
 > selection are still drawn by the fixed pipeline. The shadow of the sun is
 > real; the rest of the picture is the old one with new light on it.
+
 
 ### Checking the editor
 

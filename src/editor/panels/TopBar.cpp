@@ -179,6 +179,36 @@ void Editor::buildMenuRows() {
     // The map of the shadows, drawn over the scene: what the sun sees. The one
     // thing that is worth seeing when the shadows are not what they should be.
     add(Action::ShadowMap, 0, text("view.shadowMap"), showShadowMap_);
+    // And the shadows themselves: how they are drawn, how big the map is, and
+    // how many stretches of the scene get a map of their own. All of it the
+    // project's, and all of it here where the shadows can be seen.
+    if (shadowSettings_) {
+        add(Action::None, 0, nullptr, false, true);
+        static const char* const kQualityKeys[4] = {"settings.shadowOff", "settings.shadowHard",
+                                                    "settings.shadowFiltered", "settings.shadowSoft"};
+        static const ShadowQuality kQualities[4] = {ShadowQuality::Off, ShadowQuality::Hard,
+                                                    ShadowQuality::Filtered, ShadowQuality::Soft};
+        for (int i = 0; i < 4; ++i)
+            add(Action::ShadowQuality, i, text(kQualityKeys[i]),
+                shadowSettings_->quality == kQualities[i]);
+
+        static const char* const kSizeKeys[3] = {"settings.shadowSize1024", "settings.shadowSize2048",
+                                                 "settings.shadowSize4096"};
+        static const int kSizes[3] = {1024, 2048, 4096};
+        for (int i = 0; i < 3; ++i)
+            add(Action::ShadowSize, i, text(kSizeKeys[i]),
+                shadowSettings_->resolution == kSizes[i]);
+
+        for (int i = 1; i <= 4; ++i) {
+            // The label lives in the editor and not in this loop: a row keeps
+            // the pointer, and a pointer into a loop's own stack is a pointer
+            // to nothing by the time the menu is drawn.
+            static char labels[4][48] = {};
+            std::snprintf(labels[i - 1], sizeof(labels[i - 1]), "%s %d",
+                          text("settings.shadowCascades"), i);
+            add(Action::ShadowCascades, i, labels[i - 1], shadowSettings_->cascades == i);
+        }
+    }
     add(Action::None, 0, nullptr, false, true);
     // Which panels are on screen. Closed with the X in a panel's header, reopened
     // from here - so "I do not need this panel" is one click and not a restart.
@@ -481,6 +511,26 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         break;
     case Action::ShadowMap:
         showShadowMap_ = !showShadowMap_;
+        break;
+    case Action::ShadowQuality:
+        if (shadowSettings_) {
+            switch (param) {
+            case 0: shadowSettings_->quality = ShadowQuality::Off; break;
+            case 1: shadowSettings_->quality = ShadowQuality::Hard; break;
+            case 2: shadowSettings_->quality = ShadowQuality::Filtered; break;
+            case 3: shadowSettings_->quality = ShadowQuality::Soft; break;
+            default: break;
+            }
+        }
+        break;
+    case Action::ShadowSize:
+        if (shadowSettings_) {
+            const int size = param == 0 ? 1024 : (param == 1 ? 2048 : 4096);
+            shadowSettings_->resolution = size;
+        }
+        break;
+    case Action::ShadowCascades:
+        if (shadowSettings_) shadowSettings_->cascades = std::clamp(param, 1, 4);
         break;
     case Action::FrameSelection:
         frameSelection(world, camera);

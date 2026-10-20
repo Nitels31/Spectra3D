@@ -59,10 +59,12 @@ public:
     // Where an attribute lives, or -1 when the program does not have it.
     int attribute(const char* name) const;
 
-private:
-    // The place of a uniform in the program, and whether it was found.
+public:
+    // The place of a uniform in the program, or -1 when the program does not
+    // have it.
     int uniformLocation(const char* name) const;
 
+private:
     unsigned int program_ = 0;
     // The uniforms that were looked up and where they are. A name that was not
     // found is remembered as -1, so that a missing uniform is looked up once
