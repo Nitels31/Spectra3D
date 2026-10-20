@@ -22,10 +22,12 @@ build_linux.sh        a CMake wrapper
 src/                 implementation (.cpp), split by layer
   core/              Log, Str, Math, Project (Settings, ProjectLibrary, ProjectInfo)
   platform/          Window (GLFW + keyboard/mouse state + frame waiting),
-                     Filesystem (removeTree and the system folder picker)
+                     Filesystem (removeTree and the system folder picker),
+                     GlFunctions (the OpenGL the 1.1 headers do not have)
   physics/           RigidBody, Material, PhysicsWorld (broadphase, solver, sleeping)
   assets/            MeshRegistry, MeshImport, loaders/{glb,obj,ply,fbx}
-  render/            SceneRenderer, UiRenderer, TextAtlas, PrimitiveCache, Camera
+  render/            SceneRenderer, UiRenderer, TextAtlas, PrimitiveCache, Camera,
+                     ShaderProgram, ShadowMap
   ui/                Theme (palettes), UiContext
   scene/             BodyFactory, SceneSerializer
   i18n/              Localizer
@@ -651,6 +653,42 @@ four of them.
 > renderer is still the fixed pipeline, and the part that reads the files,
 > compiles them, draws the map and draws the scene with them is the next piece
 > of work. `src/shaders/README.md` says what the C++ side has to give them.
+
+### The shadows
+
+The sun casts a shadow, and the shadow is a map of how far away the sun hit
+something first. The map holds a distance and not the depth of the window,
+because a directional light has an orthographic projection: the distance in
+the map is the distance in the world, and a shadow is one comparison of two
+numbers that mean the same thing.
+
+Three modes, and the project says which one it wants:
+
+| Mode | What it does |
+|---|---|
+| Off | no shadow at all |
+| 1 tap | one read, one comparison: the edge is a stair |
+| PCF | sixteen reads in a Poisson disk: the edge is soft over a texel or two |
+| PCSS | the blockers are looked for first, and the width of the shadow follows from how far they are |
+
+The map is 1024, 2048 or 4096 to a side, and it has one layer per cascade -
+a cascade is a stretch of the scene with a map of its own, so that the near
+ground gets the texels and the far ground does not steal them. One to four of
+them.
+
+The shadows are the **project's** and not the machine's: a scene that looks
+the same on another machine is the same scene, and the shadows are a part of
+how it looks. The launcher's settings panel edits them for the project that
+is selected. Every body casts a shadow until it is told not to, and that flag
+is in the inspector with the other flags.
+
+**View > Shadow map** draws what the sun sees in the corner of the viewport -
+the one thing that is worth looking at when the shadows are not what they
+should be.
+
+> The scene is drawn with a program now, and the grid, the gizmo and the
+> selection are still drawn by the fixed pipeline. The shadow of the sun is
+> real; the rest of the picture is the old one with new light on it.
 
 ### Checking the editor
 
