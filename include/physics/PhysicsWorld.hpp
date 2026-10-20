@@ -8,16 +8,18 @@ namespace s3d {
 
 enum class GravityAxis { NegX = 0, PosX = 1, NegY = 2, PosY = 3, NegZ = 4, PosZ = 5 };
 
-// Owns every body and advances the simulation. Contact generation is split into
-// arena walls and body-body pairs; the latter uses a sort-based spatial hash so
-// cost stays close to linear in body count.
+// Owns every body and advances the simulation. Contact generation is a
+// body-body pass over a sort-based spatial hash, so the cost stays close to
+// linear in the number of bodies.
+//
+// **There are no walls.** The world has no box around it: a game decides
+// where its own bounds are, and a hard-coded box that stops a thing in mid
+// air is not a bound, it is a bug with a shape.
 class PhysicsWorld {
 public:
     Vec3 gravity{0.0f, -9.80665f, 0.0f};
     float gravityMagnitude = 9.80665f;
     GravityAxis gravityAxis = GravityAxis::NegY;
-    Vec3 arenaMin{-60.0f, -9.0f, -60.0f};
-    Vec3 arenaMax{60.0f, 150.0f, 60.0f};
 
     std::vector<RigidBody> bodies;
 
@@ -49,15 +51,13 @@ public:
     // everything - which is how the viewport goes back to the free camera.
     void setActiveCamera(int index);
 
-    // One resolved contact for the last step. `bodyB` == kNoBody for arena
-    // walls, in which case `wall`/`slot` address the warm-start cache.
+    // One resolved contact for the last step.
     //
     // Public because the shell needs them: a body that hits something is a
     // body that makes a sound, and the sound is played by whoever owns the
     // device - the physics layer knows nothing about sound and must not.
     struct Contact {
         static constexpr uint32_t kNoBody = UINT32_MAX;
-        static constexpr int kNoWall = -1;
 
         uint32_t bodyA;
         uint32_t bodyB;
@@ -65,15 +65,13 @@ public:
         Vec3 armB;
         Vec3 normal;
         float penetration;
-        int wall;
         int slot;
         float accumulatedNormal;
         float accumulatedTangent;
         float warmNormal;
         float warmTangent;
-        // Index into the pair warm-start table for a body-body contact, -1 for a
-        // wall contact (which keeps its cache in the RigidBody instead). Set only
-        // for pairs; the default leaves every wall contact's -1.
+        // Index into the pair warm-start table. -1 for a contact that is not
+        // between two bodies.
         int pairIndex = -1;
     };
 
@@ -84,7 +82,6 @@ public:
 private:
     void integrateForces(float dt);
     void generateContacts();
-    void collectWallContacts();
     void collectPairContacts();
     void applyWarmStart();
     bool solveIteration();
@@ -131,14 +128,6 @@ std::vector<Contact> contacts_;
     int seedPairWarm(uint64_t key, size_t& cursor);
     void clearPairWarm();
 
-    // Steps since the world was created; used to invalidate warm-start caches.
-    uint16_t stepStamp_ = 0;
-
-    uint16_t previousStepStamp_ = 0;
-
-    // Reused by resolvePenetrations so the step allocates nothing.
-    std::vector<float> deepestPenetration_;
-    std::vector<Vec3> pushDirection_;
     // Same, for body pairs: the deepest contact of each pair, so one pair is
     // pushed out once instead of once per contact point.
     std::vector<float> pairDeepest_;

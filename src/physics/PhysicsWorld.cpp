@@ -6,21 +6,16 @@
 namespace s3d {
 namespace {
 
-// Arena wall normals, indexed the same way as the warm-start cache slots.
+// THERE ARE NO WALLS.
 //
-// FIVE walls and no floor.
+// The world has no box around it, and that is the point: a game decides where
+// its own bounds are, and a hard-coded box that stops a thing in mid air is
+// not a bound - it is a bug with a shape. What falls out of the world keeps
+// falling, and what flies out of it keeps flying.
 //
-// The floor was the one wall nobody could see. The grid is drawn at y = 0 and
-// the floor was at y = -9, so a body fell through the grid and stopped in
-// mid-air - a barrier that is invisible, which is the worst kind of barrier
-// there is, and the reason a game in this engine could never let anything
-// fall away. There is no floor now: what falls out of the world keeps
-// falling, and the engine has no invisible shelf to catch it on.
-const Vec3 kWallNormals[5] = {{1, 0, 0}, {-1, 0, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
-
-// How many walls the arena has, which is also how many warm-start slots a body
-// has: one per wall, because a body's impulse against a wall is its own.
-constexpr int kWallCount = 5;
+// There was a floor once, at y = -9, under a grid drawn at y = 0: a body fell
+// through the grid and stopped nine metres below it, in mid air, against
+// something nobody could see. The walls went the same way.
 
 // Broadphase cell size in metres.
 constexpr float kCellSize = 2.0f;
@@ -285,13 +280,9 @@ void PhysicsWorld::clear() {
 }
 
 void PhysicsWorld::clearWarmStartCache() {
-    for (RigidBody& b : bodies)
-        for (int wall = 0; wall < kWallCount; ++wall)
-            for (int slot = 0; slot < 8; ++slot) {
-                b.warmNormal[wall][slot] = 0.0f;
-                b.warmTangent[wall][slot] = 0.0f;
-                b.warmStamp[wall][slot] = 0;
-            }
+    // The pair table is the only warm-start cache there is: the walls are
+    // gone and a body's own cache went with them.
+    clearPairWarm();
 }
 
 void PhysicsWorld::wakeAll() {
@@ -299,15 +290,7 @@ void PhysicsWorld::wakeAll() {
     // accumulated against a body that is being moved again would be applied to a
     // state it was never measured for.
     clearPairWarm();
-    for (RigidBody& b : bodies) {
-        b.wake();
-        for (int w = 0; w < kWallCount; ++w)
-            for (int k = 0; k < 8; ++k) {
-                b.warmNormal[w][k] = 0.0f;
-                b.warmTangent[w][k] = 0.0f;
-                b.warmStamp[w][k] = 0;
-            }
-    }
+    for (RigidBody& b : bodies) b.wake();
 }
 
 int PhysicsWorld::sleepingCount() const {
@@ -383,13 +366,6 @@ void PhysicsWorld::refreshDerived(RigidBody& body) const {
 }
 
 void PhysicsWorld::step(float dt) {
-    previousStepStamp_ = stepStamp_;
-    if (++stepStamp_ == 0) { // 0 marks "never written" - clear on wrap
-        stepStamp_ = 1;
-        previousStepStamp_ = 0;
-        clearWarmStartCache();
-    }
-
     integrateForces(dt);
 
     contacts_.clear();
@@ -465,58 +441,7 @@ void PhysicsWorld::integrateForces(float dt) {
 }
 
 void PhysicsWorld::generateContacts() {
-    collectWallContacts();
     collectPairContacts();
-}
-
-void PhysicsWorld::collectWallContacts() {
-    // The plane of each wall, in the same order as the normals: the wall the
-    // normal points away from, so the gap below is a distance from the wall.
-    //
-    // The floor is not here. The walls are the four sides and the ceiling; a
-    // body that falls past the bottom of the arena falls out of the world.
-    const float plane[kWallCount] = {arenaMin.x, -arenaMax.x, -arenaMax.y, arenaMin.z,
-                                     -arenaMax.z};
-
-    for (uint32_t bi = 0; bi < bodies.size(); ++bi) {
-        RigidBody& b = bodies[bi];
-        // A camera never touches a wall: it is a thing that is looked at, not a
-        // thing that rests on the floor.
-        if (b.asleep || b.material.isStatic || b.isCamera()) continue;
-
-        if (b.shape == Shape::Sphere) {
-            const float r = b.halfExtents.x;
-            for (int w = 0; w < kWallCount; ++w) {
-                const float gap = dot(kWallNormals[w], b.position) - plane[w] - r;
-                if (gap > kContactMargin) continue;
-                b.touching = true;
-                contacts_.push_back({bi, Contact::kNoBody, -kWallNormals[w] * r, Vec3{},
-                                     kWallNormals[w], -gap, w, 0,
-                                     0.0f, 0.0f, 0.0f, 0.0f});
-            }
-            continue;
-        }
-
-        // Oriented box: every corner within reach of a wall becomes a contact,
-        // keyed by (wall, corner) so warm-start impulses survive the step.
-        // The corners are in the same order as the walls.
-        const float cornerMin[kWallCount] = {b.aabbMin.x - kContactMargin,
-                                            -b.aabbMax.x - kContactMargin,
-                                            -b.aabbMax.y - kContactMargin,
-                                            b.aabbMin.z - kContactMargin,
-                                            -b.aabbMax.z - kContactMargin};
-        for (int w = 0; w < kWallCount; ++w) {
-            if (cornerMin[w] >= plane[w]) continue;
-            for (int k = 0; k < 8; ++k) {
-                const float gap = dot(kWallNormals[w], b.corners[k]) - plane[w];
-                if (gap > kContactMargin) continue;
-                b.touching = true;
-                contacts_.push_back({bi, Contact::kNoBody, b.corners[k] - b.position,
-                                     Vec3{}, kWallNormals[w], -gap, w, k,
-                                     0.0f, 0.0f, 0.0f, 0.0f});
-            }
-        }
-    }
 }
 
 int PhysicsWorld::seedPairWarm(uint64_t key, size_t& cursor) {
@@ -657,7 +582,7 @@ const bool aSphere = A.shape == Shape::Sphere;
             const Vec3 n = d / dist;
             A.touching = B.touching = true;
             contacts_.push_back({iA, iB, n * rA, n * (-rB), n, rA + rB - dist,
-                                 Contact::kNoWall, 0, 0.0f, 0.0f, 0.0f, 0.0f,
+                                 0, 0.0f, 0.0f, 0.0f, 0.0f,
                                  pairIndex});
             continue;
         }
@@ -719,7 +644,7 @@ const bool aSphere = A.shape == Shape::Sphere;
             const Vec3 armA = aSphere ? armSphere : armBox;
             const Vec3 armB = aSphere ? armBox : armSphere;
 contacts_.push_back({cA, cB, armA, armB, normal, penetration,
-                                 Contact::kNoWall, 0, 0.0f, 0.0f, 0.0f, 0.0f,
+                                 0, 0.0f, 0.0f, 0.0f, 0.0f,
                                  pairIndex});
             continue;
         }
@@ -734,7 +659,7 @@ contacts_.push_back({cA, cB, armA, armB, normal, penetration,
             A.touching = B.touching = true;
             contacts_.push_back({iA, iB, cp - A.position, cp - B.position,
                                  manifold[p].normal, manifold[p].depth,
-                                 Contact::kNoWall, p, 0.0f, 0.0f, 0.0f, 0.0f,
+                                 p, 0.0f, 0.0f, 0.0f, 0.0f,
                                  pairIndex});
         }
     }
@@ -747,7 +672,7 @@ void PhysicsWorld::applyWarmStart() {
         if (c.penetration < 0.0f) continue;
 
         float jn, jt;
-        if (c.bodyB != Contact::kNoBody) {
+        {
             // Read this pair's row, at this contact point's slot. The table was
             // seeded in collectPairContacts() from whatever the same pair carried
             // last step; a pair that just formed has a zeroed row and starts cold.
@@ -761,16 +686,6 @@ void PhysicsWorld::applyWarmStart() {
                     jt = pairWarmNextValues_[cell].tangent;
                 }
             }
-        } else {
-            RigidBody& b = bodies[c.bodyA];
-            if (b.material.isStatic) continue;
-            // Only an impulse written by the previous step is still valid. This
-            // replaces sweeping the whole 6x8 cache of every body each step, and
-            // it also stops a body that flew away from being kicked by an
-            // impulse left over from its previous landing.
-            if (b.warmStamp[c.wall][c.slot] != previousStepStamp_) continue;
-            jn = b.warmNormal[c.wall][c.slot];
-            jt = b.warmTangent[c.wall][c.slot];
         }
         if (jn <= 0.0f) continue;
 
@@ -881,28 +796,19 @@ const Vec3 tangentVel = relative - c.normal * dot(relative, c.normal);
 
 void PhysicsWorld::storeWarmStart() {
     for (Contact& c : contacts_) {
-        if (c.bodyB != Contact::kNoBody) {
-            // Body-body warm start lives in the persistent pair table, not on the
-            // contact: the contact is destroyed at the start of the next step, so
-            // anything written here would be gone before it was ever read. Each
-            // contact point has its own slot, so a pair's points do not overwrite
-            // one another.
-            if (c.pairIndex < 0) continue;
-            const size_t cell = (size_t)c.pairIndex * (size_t)kPairSlots +
-                                (size_t)(c.slot & (kPairSlots - 1));
-            if (cell >= pairWarmNextValues_.size()) continue;
-            pairWarmNextValues_[cell].normal = std::clamp(c.accumulatedNormal, 0.0f, 1e6f);
-            const float maxTangent = 0.6f * std::fabs(c.accumulatedNormal);
-            pairWarmNextValues_[cell].tangent =
-                std::clamp(c.accumulatedTangent, -maxTangent, maxTangent);
-        } else {
-            RigidBody& b = bodies[c.bodyA];
-            b.warmNormal[c.wall][c.slot] = std::clamp(c.accumulatedNormal, 0.0f, 1e6f);
-            const float maxTangent = 0.6f * std::fabs(c.accumulatedNormal);
-            b.warmTangent[c.wall][c.slot] =
-                std::clamp(c.accumulatedTangent, -maxTangent, maxTangent);
-            b.warmStamp[c.wall][c.slot] = stepStamp_;
-        }
+        // Body-body warm start lives in the persistent pair table, not on the
+        // contact: the contact is destroyed at the start of the next step, so
+        // anything written here would be gone before it was ever read. Each
+        // contact point has its own slot, so a pair's points do not overwrite
+        // one another.
+        if (c.pairIndex < 0) continue;
+        const size_t cell = (size_t)c.pairIndex * (size_t)kPairSlots +
+                            (size_t)(c.slot & (kPairSlots - 1));
+        if (cell >= pairWarmNextValues_.size()) continue;
+        pairWarmNextValues_[cell].normal = std::clamp(c.accumulatedNormal, 0.0f, 1e6f);
+        const float maxTangent = 0.6f * std::fabs(c.accumulatedNormal);
+        pairWarmNextValues_[cell].tangent =
+            std::clamp(c.accumulatedTangent, -maxTangent, maxTangent);
     }
 
     // No cache sweep is needed: applyWarmStart only accepts an impulse whose
@@ -914,37 +820,16 @@ void PhysicsWorld::resolvePenetrations() {
     const std::size_t n = bodies.size();
     if (n == 0 || contacts_.empty()) return;
 
-    // Arena walls: push each body out along its deepest contact only.
-    // Scratch buffers are reused between steps - this runs 60 times a second and
-    // two heap allocations per step is pure overhead.
-    if (deepestPenetration_.size() < n) {
-        deepestPenetration_.resize(n);
-        pushDirection_.resize(n);
-    }
-    std::fill(deepestPenetration_.begin(), deepestPenetration_.begin() + n, 0.0f);
-
-    for (const Contact& c : contacts_) {
-        if (c.bodyB != Contact::kNoBody) continue;
-        const uint32_t idx = c.bodyA;
-        if (idx >= n || bodies[idx].asleep || bodies[idx].material.isStatic) continue;
-        if (c.penetration > deepestPenetration_[idx]) {
-            deepestPenetration_[idx] = c.penetration;
-            pushDirection_[idx] = c.normal;
-        }
-    }
-    for (std::size_t i = 0; i < n; ++i)
-        if (deepestPenetration_[i] > kPenetrationSlop)
-            bodies[i].position += pushDirection_[i] *
-                                  ((deepestPenetration_[i] - kPenetrationSlop) * kWallCorrection);
-
-// Body pairs: resolve each pair ONCE, from its deepest contact point.
+    // Body pairs: resolve each pair ONCE, from its deepest contact point.
     //
-    // Doing it per contact is the same bug the wall loop above avoids: a box-box
-    // pair emits up to 16 contact points, so pushing on every one moves the pair
-    // up to 16x further than it needs, overshoots, the next step finds a gap, and
-    // the stack never settles. Folding each pair down to its deepest point first
-    // makes the correction once-per-pair and order-independent.
+    // Doing it per contact is the same bug a per-contact correction has: a
+    // box-box pair emits up to 16 contact points, so pushing on every one
+    // moves the pair up to 16x further than it needs, overshoots, the next
+    // step finds a gap, and the stack never settles. Folding each pair down to
+    // its deepest point first makes the correction once-per-pair and
+    // order-independent.
     const size_t pairs = pairWarmNextKeys_.size();
+
     if (pairs > 0) {
         if (pairDeepest_.size() < pairs) {
             pairDeepest_.resize(pairs);

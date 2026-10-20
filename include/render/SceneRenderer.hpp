@@ -46,7 +46,10 @@ struct Viewport {
 class SceneRenderer {
 public:
     // Enables fixed-function lighting and builds the primitive cache.
-    void initialize(const Vec3& arenaMin, const Vec3& arenaMax);
+    //
+    // There is no arena: the world has no box around it, and the primitives are
+    // only the shapes the scenes are made of.
+    void initialize();
 
     // The shadows, as the user sets them. A change of the size or of the
     // number of the stretches of the scene makes the map again.

@@ -79,7 +79,7 @@ float fadeOut(float distance, float start, float end) {
 
 } // namespace
 
-void SceneRenderer::initialize(const Vec3& arenaMin, const Vec3& arenaMax) {
+void SceneRenderer::initialize() {
     glShadeModel(GL_SMOOTH);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
@@ -123,7 +123,7 @@ void SceneRenderer::initialize(const Vec3& arenaMin, const Vec3& arenaMax) {
                              shaderPath("shadows/shadow_debug.frag"));
     shadowMap_.initialize(shadowMap_.settings());
 
-    primitives_.build(arenaMin, arenaMax);
+    primitives_.build();
     buildArenaGrid();
 }
 

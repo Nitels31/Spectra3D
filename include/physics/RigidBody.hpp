@@ -124,15 +124,9 @@ struct RigidBody {
 
     Material material;
 
-    // Warm-start impulses per arena wall and per OBB corner. `warmStamp` marks
-    // which entries were refreshed by the current step, so impulses left over
-    // from an older contact cannot re-enter after a body leaves the surface.
-    //
-    // One slot per wall, and the arena has five: the four sides and the
-    // ceiling. There is no floor - see the wall table in PhysicsWorld.cpp.
-    float warmNormal[5][8] = {};
-    float warmTangent[5][8] = {};
-    uint16_t warmStamp[5][8] = {};
+    // There is no warm-start cache here. The walls are gone - the world has no
+    // box around it - and the impulses of a body against another body live in
+    // the physics world's pair table, which outlives the contacts of a step.
 
     // Recomputes mass properties from the current shape and dimensions and
     // clamps them into valid ranges. Called after every dimension edit.

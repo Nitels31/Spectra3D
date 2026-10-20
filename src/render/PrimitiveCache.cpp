@@ -3,8 +3,6 @@
 namespace s3d {
 namespace {
 
-constexpr int kArenaWallCount = 6;
-
 // Interleaved position/normal, 6 floats per vertex - the same layout
 // drawImportedMesh() and drawArena() already feed to glVertexPointer, so the
 // primitives speak the dialect the rest of the renderer uses.
@@ -79,35 +77,31 @@ void lines::arrow(const Vec3& from, const Vec3& to, const Vec3& color) {
 PrimitiveCache::~PrimitiveCache() { release(); }
 
 void PrimitiveCache::release() {
-    if (base_) {
-        glDeleteLists(base_, 11);
-        base_ = 0;
-    }
     if (cube_) {
         glDeleteLists(cube_, 1);
         cube_ = 0;
     }
-    sphere_ = cylinder_ = cone_ = pyramid_ = arenaEdges_ = 0;
-    for (int i = 0; i < kArenaWallCount; ++i) wallGrid_[i] = 0;
+    if (sphere_) {
+        glDeleteLists(sphere_, 1);
+        sphere_ = 0;
+    }
+    if (cylinder_) {
+        glDeleteLists(cylinder_, 1);
+        cylinder_ = 0;
+    }
+    if (cone_) {
+        glDeleteLists(cone_, 1);
+        cone_ = 0;
+    }
+    if (pyramid_) {
+        glDeleteLists(pyramid_, 1);
+        pyramid_ = 0;
+    }
 }
 
-void PrimitiveCache::build(const Vec3& boundsMin, const Vec3& boundsMax) {
+void PrimitiveCache::build() {
     release();
     buildCube();
-
-    // One contiguous block of 11 lists: 6 wall grids, arena edges, sphere,
-    // cylinder, cone, pyramid. Contiguity makes teardown a single call.
-    base_ = glGenLists(11);
-    if (!base_) return;
-    for (int i = 0; i < kArenaWallCount; ++i) wallGrid_[i] = base_ + i;
-    arenaEdges_ = base_ + 6;
-    sphere_ = base_ + 7;
-    cylinder_ = base_ + 8;
-    cone_ = base_ + 9;
-    pyramid_ = base_ + 10;
-
-    for (int i = 0; i < kArenaWallCount; ++i) buildWallGrid(i, boundsMin, boundsMax);
-    buildArenaEdges(boundsMin, boundsMax);
     buildSphere();
     buildCylinder();
     buildCone();
@@ -146,6 +140,7 @@ void PrimitiveCache::buildCube() {
 }
 
 void PrimitiveCache::buildSphere() {
+    if (!sphere_) sphere_ = glGenLists(1);
     const int stacks = 10, slices = 16;
     sphereVerts_.clear();
     for (int i = 0; i < stacks; ++i) {
@@ -174,6 +169,7 @@ void PrimitiveCache::buildSphere() {
 }
 
 void PrimitiveCache::buildCylinder() {
+    if (!cylinder_) cylinder_ = glGenLists(1);
     const int slices = 24;
     cylinderVerts_.clear();
     // Side wall: one quad (two triangles) per slice, normals from the rim angle.
@@ -209,6 +205,7 @@ void PrimitiveCache::buildCylinder() {
 }
 
 void PrimitiveCache::buildCone() {
+    if (!cone_) cone_ = glGenLists(1);
     const int slices = 24;
     coneVerts_.clear();
     // Side: a triangle per slice, normal tilted by the slope (height 2 over
@@ -237,6 +234,7 @@ void PrimitiveCache::buildCone() {
 }
 
 void PrimitiveCache::buildPyramid(int sides) {
+    if (!pyramid_) pyramid_ = glGenLists(1);
     pyramidVerts_.clear();
     const float topY = 1.0f, bottomY = -1.0f;
     // Side: one triangle per side, face normal from the winding.
@@ -260,66 +258,6 @@ void PrimitiveCache::buildPyramid(int sides) {
         pushVertex(pyramidVerts_, {std::cos(a0), bottomY, std::sin(a0)}, {0.0f, bottomY, 0.0f});
     }
     compileVertexList(pyramid_, pyramidVerts_, GL_TRIANGLES);
-}
-
-void PrimitiveCache::buildWallGrid(int wall, const Vec3& mn, const Vec3& mx) {
-    static const int wallAxis[6] = {0, 0, 1, 1, 2, 2};
-    const int a = wallAxis[wall];
-    const int u = (a + 1) % 3, v = (a + 2) % 3;
-    const float depth = (wall % 2 == 0) ? component(mn, a) : component(mx, a);
-
-    // Large arenas get a coarse grid so the line count stays sane.
-    const float stepU = (component(mx, u) - component(mn, u) > 30.0f) ? 5.0f : 1.0f;
-    const float stepV = (component(mx, v) - component(mn, v) > 30.0f) ? 5.0f : 1.0f;
-
-    auto pointAt = [&](float uu, float vv) {
-        return lines::axisVector(a, depth) + lines::axisVector(u, uu) + lines::axisVector(v, vv);
-    };
-
-    // Lines carry no normals, so this one keeps a positions-only buffer.
-    wallGridVerts_[wall].clear();
-    std::vector<float>& verts = wallGridVerts_[wall];
-    for (float gv = component(mn, v) + stepV; gv < component(mx, v) - 1e-3f; gv += stepV) {
-        const Vec3 p1 = pointAt(component(mn, u), gv);
-        const Vec3 p2 = pointAt(component(mx, u), gv);
-        verts.push_back(p1.x); verts.push_back(p1.y); verts.push_back(p1.z);
-        verts.push_back(p2.x); verts.push_back(p2.y); verts.push_back(p2.z);
-    }
-    for (float gu = component(mn, u) + stepU; gu < component(mx, u) - 1e-3f; gu += stepU) {
-        const Vec3 p1 = pointAt(gu, component(mn, v));
-        const Vec3 p2 = pointAt(gu, component(mx, v));
-        verts.push_back(p1.x); verts.push_back(p1.y); verts.push_back(p1.z);
-        verts.push_back(p2.x); verts.push_back(p2.y); verts.push_back(p2.z);
-    }
-    glNewList(wallGrid_[wall], GL_COMPILE);
-    glEnableClientState(GL_VERTEX_ARRAY);
-    glVertexPointer(3, GL_FLOAT, 0, verts.data());
-    glDrawArrays(GL_LINES, 0, (GLsizei)(verts.size() / 3));
-    glDisableClientState(GL_VERTEX_ARRAY);
-    glEndList();
-}
-
-void PrimitiveCache::buildArenaEdges(const Vec3& mn, const Vec3& mx) {
-    arenaEdgesVerts_.clear();
-    std::vector<float>& verts = arenaEdgesVerts_;
-    Vec3 corners[8];
-    for (int k = 0; k < 8; ++k)
-        corners[k] = lines::axisVector(0, (k & 1) ? mx.x : mn.x) +
-                     lines::axisVector(1, (k & 2) ? mx.y : mn.y) +
-                     lines::axisVector(2, (k & 4) ? mx.z : mn.z);
-    for (int k = 0; k < 8; ++k)
-        for (int bit = 0; bit < 3; ++bit) {
-            const int j = k ^ (1 << bit);
-            if (j <= k) continue;
-            verts.push_back(corners[k].x); verts.push_back(corners[k].y); verts.push_back(corners[k].z);
-            verts.push_back(corners[j].x); verts.push_back(corners[j].y); verts.push_back(corners[j].z);
-        }
-    glNewList(arenaEdges_, GL_COMPILE);
-    glEnableClientState(GL_VERTEX_ARRAY);
-    glVertexPointer(3, GL_FLOAT, 0, verts.data());
-    glDrawArrays(GL_LINES, 0, (GLsizei)(verts.size() / 3));
-    glDisableClientState(GL_VERTEX_ARRAY);
-    glEndList();
 }
 
 } // namespace s3d

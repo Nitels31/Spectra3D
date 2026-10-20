@@ -139,7 +139,7 @@ bool Application::initialize() {
 
     localizer_.loadBundles();
     uiRenderer_.buildFonts();
-    sceneRenderer_.initialize(world_.arenaMin, world_.arenaMax);
+    sceneRenderer_.initialize();
     loadSky();
     startAudio();
 

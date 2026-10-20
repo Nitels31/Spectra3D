@@ -19,6 +19,9 @@ namespace s3d {
 //
 // The vertex buffers are members, not locals: a display list keeps the client
 // pointers, not a copy of the data, so the buffer must outlive the list.
+//
+// There is no arena here either: the world has no box around it, and the
+// shapes are the shapes the scenes are made of.
 class PrimitiveCache {
 public:
     ~PrimitiveCache();
@@ -27,8 +30,8 @@ public:
     PrimitiveCache(const PrimitiveCache&) = delete;
     PrimitiveCache& operator=(const PrimitiveCache&) = delete;
 
-    // Builds every unit primitive plus the arena grid/edge lists for `bounds`.
-    void build(const Vec3& boundsMin, const Vec3& boundsMax);
+    // Builds every unit primitive.
+    void build();
 
     // Releases the display lists. Safe to call twice.
     void release();
@@ -38,8 +41,6 @@ public:
     unsigned cylinder() const { return cylinder_; }
     unsigned cone() const { return cone_; }
     unsigned pyramid() const { return pyramid_; }
-    unsigned wallGrid(int wall) const { return wallGrid_[wall]; }
-    unsigned arenaEdges() const { return arenaEdges_; }
 
 private:
     void buildCube();
@@ -47,28 +48,20 @@ private:
     void buildCylinder();
     void buildCone();
     void buildPyramid(int sides);
-    void buildWallGrid(int wall, const Vec3& mn, const Vec3& mx);
-    void buildArenaEdges(const Vec3& mn, const Vec3& mx);
 
-    unsigned base_ = 0;
     unsigned cube_ = 0;
-    unsigned wallGrid_[6] = {};
-    unsigned arenaEdges_ = 0;
     unsigned sphere_ = 0;
     unsigned cylinder_ = 0;
     unsigned cone_ = 0;
     unsigned pyramid_ = 0;
 
-    // Interleaved x,y,z,nx,ny,nz for the lit primitives; positions only for the
-    // two line lists. Built once in build() and kept for the display lists to
-    // read on every replay.
+    // Interleaved x,y,z,nx,ny,nz for the lit primitives. Built once in build()
+    // and kept for the display lists to read on every replay.
     std::vector<float> cubeVerts_;
     std::vector<float> sphereVerts_;
     std::vector<float> cylinderVerts_;
     std::vector<float> coneVerts_;
     std::vector<float> pyramidVerts_;
-    std::vector<float> wallGridVerts_[6];
-    std::vector<float> arenaEdgesVerts_;
 };
 
 // Immediate-mode line helpers shared by the debug draw paths.

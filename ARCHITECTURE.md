@@ -253,6 +253,12 @@ worth drawing near the camera, and the major lines are ten units apart and
 carry the grid out to the horizon, where one unit is smaller than a pixel and
 would only alias.
 
+**There is no arena.** The world has no box around it: the physics has no
+walls, and nothing is drawn that says where a thing would stop. A game
+decides where its own bounds are, and a hard-coded box that stops a thing in
+mid air is not a bound - it is a bug with a shape. What falls out of the world
+keeps falling.
+
 **Every line is cut into short segments**, so that each segment can have its
 own transparency. A line drawn as one long segment can only be faded as a
 whole, and both of its ends are far away - so a line faded as a whole is
@@ -978,12 +984,14 @@ Facts worth keeping in mind, because they mildly contradict intuition:
 These existed in the code before the refactor:
 
 - **The arena floor generated no contacts.** The contact generator skipped the wall
-  gravity pointed at, so bodies fell through it. All six walls take part now —
-  `PhysicsWorld::collectWallContacts()`.
+  gravity pointed at, so bodies fell through it. There are no walls at all now:
+  the world has no box around it, and a game decides where its own bounds are.
+  What falls out of the world keeps falling.
 - **Warm-start impulses lived forever.** The cache keyed by (wall, corner) was never
   cleared when a contact went away, so a body that bounced and fell back in the same
-  place got a shove from the previous impact and the bounces grew without bound. A
-  `warmStamp` now invalidates surfaces that are not in this step's contact set.
+  place got a shove from the previous impact and the bounces grew without bound. The
+  impulses of a pair live in a table keyed by the pair, and a pair that is gone has
+  no row.
 - **Micro-jitter at rest.** A contact was created only on penetration, so a resting
   body fell and re-took an impulse every step and never slept. Contacts are now
   speculative (a 2 cm gap) and the solver does not touch surfaces that cannot close
