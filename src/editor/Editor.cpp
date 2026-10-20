@@ -38,6 +38,11 @@ const NavBall kNavBalls[6] = {
     {26.0f, -26.0f, 0.0f, 0.0f},      // -Z
 };
 
+// Which way is down, for the number keys: 1 and 2 are up and down, and then
+// the four sides, so that the keys go round the way the arrows on a keypad do.
+const GravityAxis kGravityAxes[6] = {GravityAxis::NegY, GravityAxis::PosY, GravityAxis::NegX,
+                                      GravityAxis::PosX, GravityAxis::NegZ, GravityAxis::PosZ};
+
 } // namespace
 
 // Whether two bodies are the same body in the same state, as far as the
@@ -767,6 +772,21 @@ void Editor::handleHotkeys(PhysicsWorld& world, Camera& camera, Window& window, 
     // Ctrl+Z takes the last change back.
     if (ui_.ctrlHeld() && window.takeKeyPress(GLFW_KEY_Z)) {
         undo(world);
+        return;
+    }
+
+    // The number keys pick which way is down.
+    //
+    // They are here and not in the shell around the editor because a field
+    // with the keyboard has it: a digit typed into a search box is a digit
+    // typed into a search box and not a new gravity, and a world that turns
+    // on its side because somebody typed a "3" is a thing nobody can explain.
+    //
+    // And it is an edit to the document: the gravity is saved with the scene.
+    for (int i = 0; i < 6; ++i) {
+        if (!window.takeKeyPress(GLFW_KEY_1 + i)) continue;
+        world.setGravity(kGravityAxes[i]);
+        markSceneDirty();
         return;
     }
 

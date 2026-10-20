@@ -46,9 +46,6 @@ constexpr float kLookSensitivity = 0.0025f;
 // loud as it is going to be: a body that falls from the sky should not deafen.
 constexpr float kImpactFullScale = 6.0f;
 
-const GravityAxis kGravityAxes[6] = {GravityAxis::NegY, GravityAxis::PosY, GravityAxis::NegX,
-                                      GravityAxis::PosX, GravityAxis::NegZ, GravityAxis::PosZ};
-
 } // namespace
 
 
@@ -541,14 +538,10 @@ void Application::runEditorFrame(float dt) {
     // the movement keys are not the game's to answer to.
     updateCameraInput(window_, dt, !gameCameraInCharge);
 
-    // Gravity is part of what gets saved with the scene, so picking an axis is an
-    // edit to the document, not a view setting.
-    for (int i = 0; i < 6; ++i)
-        if (window_.takeKeyPress(GLFW_KEY_1 + i)) {
-            world_.setGravity(kGravityAxes[i]);
-            editor_->markSceneDirty();
-        }
-
+    // Gravity is picked with the number keys, and that is the editor's hotkey
+    // and not the shell's: the keys have to be quiet while somebody is typing
+    // a name into a field, or a digit in a search box turns the world on its
+    // side.
     editor_->handleInput(world_, camera_, window_, window_.framebufferWidth(),
                          window_.framebufferHeight(), dt);
 

@@ -439,10 +439,16 @@ Five things to know before changing any of it:
 
 `Editor` is orchestration only: selection, play mode, input routing, layout. Drawing
 is split across `panels/*.cpp`, geometry lives in `Picking`/`Gizmo`, and the model
-list lives in `AssetBrowser`. `Editor::handleHotkeys()` is empty on purpose: play,
-pause, stop, save, load and delete live on buttons and menu rows, because every one
-of them mutates or discards the scene and a stray keypress while typing used to throw
-work away.
+list lives in `AssetBrowser`. `Editor::handleHotkeys()` holds the shortcuts that
+are *not* commands: play, pause, stop, save, load and delete live on buttons and
+menu rows, because every one of them mutates or discards the scene and a stray
+keypress while typing used to throw work away.
+
+**A field with the keyboard has it.** The shortcut handler returns before it
+looks at a key when a text field is focused or a dialog is open, and that is
+the rule every shortcut in the editor lives under. It is not a detail: the
+number keys pick which way is down, and a digit typed into a search box used
+to turn the world on its side — and to save the turned world with the scene.
 
 One file per region of the screen, so they cannot overlap by convention and each one
 owns its own arrangement:
@@ -858,9 +864,10 @@ reading their names.
   not an error), creates the `Editor` and hands it the scene path.
 - There is no way back to the launcher: `Application::closeProject()` exists and
   nothing calls it. Leaving the editor means closing the window.
-- `Application::runEditorFrame()`: camera keys and `1..6` for gravity →
-  `Editor::handleInput()` → `consumePlayStarted()` (a one-shot signal) →
-  `runProjectScripts()` during it → a fixed `world_.step()` → render.
+- `Application::runEditorFrame()`: camera keys → `Editor::handleInput()` (which owns
+  the `1..6` gravity keys too, because a field with the keyboard has it) →
+  `consumePlayStarted()` (a one-shot signal) → `runProjectScripts()` during it →
+  a fixed `world_.step()` → render.
 
 **"Build" is `stageBuild()`.** There is no separate player: the player *is* this
 executable, so a build is the program, the DLLs beside it, `assets/` and the project
