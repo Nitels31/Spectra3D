@@ -401,6 +401,12 @@ void Editor::drawFlagsSection(UiRenderer& ui, RigidBody& body, const Rect& dock,
     y += kRowStep;
     ui_.checkbox(ui, kInspectorProperty + 2, dock.x, y, dock.width, text("flag.locked"),
                  body.locked);
+    y += kRowStep;
+    // Whether the body casts a shadow. A body that does not is still drawn and
+    // still catches a shadow - it is only the shadow it casts that is not
+    // there, which is what a flat ground plane wants.
+    ui_.checkbox(ui, kInspectorProperty + 3, dock.x, y, dock.width, text("flag.castsShadow"),
+                 body.castsShadow);
     y += 24.0f;
 }
 

@@ -5,10 +5,13 @@
 
 #include "assets/MeshRegistry.hpp"
 #include "assets/TextureRegistry.hpp"
+#include "core/Math.hpp"
 #include "physics/PhysicsWorld.hpp"
 #include "render/Camera.hpp"
 #include "render/Color.hpp"
 #include "render/PrimitiveCache.hpp"
+#include "render/ShaderProgram.hpp"
+#include "render/ShadowMap.hpp"
 #include "render/Skybox.hpp"
 
 namespace s3d {
@@ -36,12 +39,22 @@ struct Viewport {
     int height = 0;
 };
 
-// 3D scene renderer: fixed-function lighting, arena, bodies, frustum culling and
-// the selection/gizmo overlays. UI drawing lives in UiRenderer instead.
+// 3D scene renderer: the arena, the bodies, the shadow of the sun, frustum
+// culling and the selection/gizmo overlays. UI drawing lives in UiRenderer
+// instead.
 class SceneRenderer {
 public:
     // Enables fixed-function lighting and builds the primitive cache.
     void initialize(const Vec3& arenaMin, const Vec3& arenaMax);
+
+    // The shadows, as the user sets them. A change of the size or of the
+    // number of the stretches of the scene makes the map again.
+    void setShadowSettings(const ShadowSettings& settings);
+    const ShadowSettings& shadowSettings() const { return shadowMap_.settings(); }
+    // True when the shadows are drawn at all.
+    bool shadowsEnabled() const { return shadowMap_.settings().quality != ShadowQuality::Off; }
+    // The map, for the debug view.
+    const ShadowMap& shadowMap() const { return shadowMap_; }
 
     // Clears the whole framebuffer before the viewport pass. Without this a
     // window that was just resized (or a frame captured mid-resize) can show
@@ -67,6 +80,13 @@ public:
                      float alpha, int hiddenBody = -1);
 
     void renderSelection(const RigidBody& body);
+
+    // The map on the screen: what the sun sees. Drawn over the scene, in the
+    // corner of the viewport.
+    void renderShadowDebug(const Viewport& viewport);
+    // Whether it is drawn at all.
+    void setShowShadowDebug(bool show) { showShadowDebug_ = show; }
+    bool showShadowDebug() const { return showShadowDebug_; }
 
     // Which handles the gizmo draws. One enum instead of a bool because the tool
     // now has three shapes, and a bool that encodes two of them is how the rotate
@@ -121,6 +141,22 @@ private:
                      const TextureRegistry& textures, float alpha, int hiddenBody);
     void drawDebugVectors(const PhysicsWorld& world);
 
+    // The shadow pass: the map of what the sun hit first.
+    //
+    // It is a pass of its own and not a part of the scene pass, because it
+    // happens before it: the shadow of a thing is in the picture of the
+    // ground it falls on, and the ground cannot be drawn before the map is
+    // full.
+    void renderShadowMap(const PhysicsWorld& world, const MeshRegistry& meshes,
+                         const TextureRegistry& textures, const Camera& camera, float alpha,
+                         int hiddenBody);
+
+    // The uniforms the scene pass shares: the sun, the sky, the shadow map.
+    void beginScenePass();
+    // Draws one mesh with the scene's program.
+    bool drawMeshWithShader(const MeshAsset& mesh, const TextureRegistry& textures,
+                            const Mat4& model, const Color& tint);
+
     void extractFrustum(const float* projection, const float* view);
     bool sphereVisible(const Vec3& center, float radius) const;
     bool drawImportedMesh(const RigidBody& body, const MeshRegistry& meshes,
@@ -132,6 +168,30 @@ private:
     float projection_[16] = {};
     float view_[16] = {};
     float frustum_[6][4] = {};
+
+    // The programs. The scene's own, the one that fills the shadow map, and
+    // the one that shows it.
+    ShaderProgram sceneProgram_;
+    ShaderProgram shadowProgram_;
+    ShaderProgram shadowDebugProgram_;
+    ShadowMap shadowMap_;
+
+    // The matrices the shaders are given, in the same numbers the fixed
+    // pipeline is given: the picture and the pointer have to agree about
+    // where a thing is, and so do the two ways of drawing it.
+    Mat4 projectionMatrix_;
+    Mat4 viewMatrix_;
+
+    // The viewport of the scene, kept for the shadow pass: the map is a
+    // picture of its own, and the scene's viewport would cut it to a corner.
+    int viewportX_ = 0, viewportY_ = 0, viewportWidth_ = 0, viewportHeight_ = 0;
+
+    // A white texel, for the things that have no picture: the primitives, and
+    // a mesh that was not given one.
+    GLuint whiteTexture_ = 0;
+
+    // Whether the map of the shadows is drawn over the scene.
+    bool showShadowDebug_ = false;
 
     // Static grid positions plus the per-frame colour stream. Built once, then
     // drawn with a single glDrawArrays instead of ~1000 immediate-mode calls.

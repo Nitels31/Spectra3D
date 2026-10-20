@@ -1,6 +1,7 @@
 #include "render/SceneRenderer.hpp"
 
 #include "core/Math.hpp"
+#include "platform/GlFunctions.hpp"
 
 #include <algorithm>
 
@@ -119,8 +120,32 @@ void SceneRenderer::initialize(const Vec3& arenaMin, const Vec3& arenaMax) {
     // drawImportedMesh toggles GL_TEXTURE_2D around.
     glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
+    // A white texel, for the things that have no picture of their own.
+    glGenTextures(1, &whiteTexture_);
+    glBindTexture(GL_TEXTURE_2D, whiteTexture_);
+    const unsigned char white[4] = {255, 255, 255, 255};
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, white);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    // The programs. The scene's own, and the one that fills the shadow map.
+    //
+    // A program that does not load is not a reason to stop: the engine draws
+    // the scene with what it has, and the log says what is missing.
+    sceneProgram_.load(shaderPath("scene.vert"), shaderPath("scene.frag"));
+    shadowProgram_.load(shaderPath("shadows/shadow_depth.vert"),
+                        shaderPath("shadows/shadow_depth.frag"));
+    shadowDebugProgram_.load(shaderPath("shadows/shadow_debug.vert"),
+                             shaderPath("shadows/shadow_debug.frag"));
+    shadowMap_.initialize(shadowMap_.settings());
+
     primitives_.build(arenaMin, arenaMax);
     buildArenaGrid();
+}
+
+void SceneRenderer::setShadowSettings(const ShadowSettings& settings) {
+    shadowMap_.setSettings(settings);
 }
 
 void cameraFrustum(const Camera& camera, int width, int height, double& halfWidth,
@@ -154,10 +179,25 @@ void SceneRenderer::setProjection(const Camera& camera, const Viewport& viewport
     projection_[1] = projection_[2] = projection_[3] = projection_[4] = 0.0f;
     projection_[6] = projection_[7] = projection_[12] = projection_[13] = projection_[15] = 0.0f;
 
+    // The same numbers as a matrix, for the shaders. The two have to be the
+    // same numbers: the fixed pipeline draws the grid and the gizmo, and the
+    // shader draws the bodies, and they are all in the same picture.
+    projectionMatrix_ = frustum((float)-halfWidth, (float)halfWidth, (float)-halfHeight,
+                                 (float)halfHeight, (float)kNearPlane, (float)kFarPlane);
+    std::copy(projectionMatrix_.m, projectionMatrix_.m + 16, projection_);
+
     glViewport(viewport.glX, viewport.glY, viewport.width, viewport.height);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     glFrustum(-halfWidth, halfWidth, -halfHeight, halfHeight, kNearPlane, kFarPlane);
+
+    // The viewport of the scene, kept for the shadow pass: the map is a
+    // picture of its own and the scene's viewport would cut it to a corner of
+    // the screen.
+    viewportX_ = viewport.glX;
+    viewportY_ = viewport.glY;
+    viewportWidth_ = viewport.width;
+    viewportHeight_ = viewport.height;
 }
 
 void SceneRenderer::setViewMatrix(const Camera& camera) {
@@ -175,6 +215,15 @@ void SceneRenderer::setViewMatrix(const Camera& camera) {
     glLoadIdentity();
     glMultMatrixf(m);
     std::copy(m, m + 16, view_);
+
+    // The same matrix, for the shaders.
+    viewMatrix_ = Mat4::identity();
+    viewMatrix_.m[0] = right.x;  viewMatrix_.m[4] = right.y;  viewMatrix_.m[8] = right.z;
+    viewMatrix_.m[1] = up.x;     viewMatrix_.m[5] = up.y;     viewMatrix_.m[9] = up.z;
+    viewMatrix_.m[2] = -forward.x; viewMatrix_.m[6] = -forward.y; viewMatrix_.m[10] = -forward.z;
+    viewMatrix_.m[12] = -dot(right, camera.position);
+    viewMatrix_.m[13] = -dot(up, camera.position);
+    viewMatrix_.m[14] = dot(forward, camera.position);
 }
 
 void SceneRenderer::beginFrame(int framebufferWidth, int framebufferHeight) {
@@ -198,6 +247,12 @@ void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& m
     glDisable(GL_LIGHTING);
     extractFrustum(projection_, view_);
 
+    // The shadow of the sun, before anything is drawn: the shadow of a thing
+    // is in the picture of the ground it falls on, and the ground cannot be
+    // drawn before the map is full.
+    if (shadowsEnabled() && shadowProgram_.ready())
+        renderShadowMap(world, meshes, textures, camera, alpha, hiddenBody);
+
     // The sky first, with the depth test off: it is behind everything, and
     // everything else is drawn over it.
     sky_.draw(camera);
@@ -208,6 +263,199 @@ void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& m
     if (showVectors) drawDebugVectors(world);
     glEnable(GL_LIGHTING);
     glDisable(GL_SCISSOR_TEST);
+
+    // And the map, if it is asked for: what the sun sees, in the corner.
+    if (showShadowDebug_) renderShadowDebug(viewport);
+}
+
+// The map on the screen: what the sun sees.
+//
+// It is drawn over the scene, in the corner of the viewport, so that the map
+// and the picture it belongs to can be looked at together.
+void SceneRenderer::renderShadowDebug(const Viewport& viewport) {
+    if (!shadowDebugProgram_.ready() || !shadowMap_.ready()) return;
+    if (viewport.width < 8 || viewport.height < 8) return;
+
+    // A square in the corner, a tenth of the viewport's width.
+    const int size = std::max(64, std::min(viewport.width, viewport.height) / 4);
+    const int x = viewport.glX + viewport.width - size - 8;
+    const int y = viewport.glY + viewport.height - size - 8;
+
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(x, y, size, size);
+    glViewport(x, y, size, size);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_BLEND);
+
+    shadowDebugProgram_.use();
+    gl::ActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, shadowMap_.texture());
+    shadowDebugProgram_.setInt("uShadowMap", 4);
+    shadowDebugProgram_.setInt("uLayer", 0);
+    shadowDebugProgram_.setFloat("uFarPlane", 1.0f);
+    shadowDebugProgram_.setFloat("uTexelSize", 1.0f / (float)std::max(1, shadowMap_.resolution()));
+    gl::ActiveTexture(GL_TEXTURE0);
+
+    // The quad: two triangles over the whole of the little square.
+    static const float kQuad[12] = {-1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f,
+                                    -1.0f, -1.0f, 1.0f,  1.0f, -1.0f, 1.0f};
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glVertexPointer(2, GL_FLOAT, 0, kQuad);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glDisableClientState(GL_VERTEX_ARRAY);
+
+    gl::UseProgram(0);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_LIGHTING);
+
+    // And the scene's own picture back.
+    glViewport(viewport.glX, viewport.glY, viewport.width, viewport.height);
+    glScissor(viewport.glX, viewport.glY, viewport.width, viewport.height);
+    glDisable(GL_SCISSOR_TEST);
+}
+
+// The shadow pass: the map of what the sun hit first.
+//
+// The bodies are drawn twice - once into the map and once into the scene -
+// and the map is the cheaper of the two: a position and nothing else.
+void SceneRenderer::renderShadowMap(const PhysicsWorld& world, const MeshRegistry& meshes,
+                                    const TextureRegistry& textures, const Camera& camera,
+                                    float alpha, int hiddenBody) {
+    // Where the things are: the map is fitted to them, and a box that does
+    // not hold the thing that casts into it cuts the shadow in half.
+    std::vector<Vec3> centres;
+    std::vector<float> radii;
+    centres.reserve(world.bodies.size());
+    radii.reserve(world.bodies.size());
+    for (int index = 0; index < (int)world.bodies.size(); ++index) {
+        const RigidBody& body = world.bodies[(size_t)index];
+        if (!body.visible || index == hiddenBody) continue;
+        if (!body.castsShadow) continue;
+        centres.push_back(body.position);
+        radii.push_back(body.boundRadius);
+    }
+
+    Vec3 forward, right, up;
+    camera.basis(forward, right, up);
+    shadowMap_.fit(centres, radii, camera.position, forward, (float)kNearPlane,
+                    (float)kFarPlane);
+
+    // The map is a picture of its own: the viewport of the scene and the
+    // scissor around it would cut it to a corner of the screen.
+    glDisable(GL_SCISSOR_TEST);
+
+    shadowProgram_.use();
+    for (int cascade = 0; cascade < shadowMap_.layers(); ++cascade) {
+        shadowMap_.beginPass(cascade);
+        const Mat4& light = shadowMap_.lightMatrices()[(size_t)cascade];
+        shadowProgram_.setMat4("uLightViewProjection", light.m);
+        shadowProgram_.setMat4("uModel", Mat4::identity().m);
+
+        for (int index = 0; index < (int)world.bodies.size(); ++index) {
+            const RigidBody& body = world.bodies[(size_t)index];
+            if (!body.visible || index == hiddenBody) continue;
+            if (!body.castsShadow) continue;
+
+            const Vec3 drawPosition{lerpf(body.prevPosition.x, body.position.x, alpha),
+                                    lerpf(body.prevPosition.y, body.position.y, alpha),
+                                    lerpf(body.prevPosition.z, body.position.z, alpha)};
+            const Quat drawOrientation = nlerp(body.prevOrientation, body.orientation, alpha);
+
+            if (body.hasMesh()) {
+                const MeshAsset* mesh = meshes.at(body.mesh);
+                if (!mesh) continue;
+                const float scale = body.meshScale * mesh->scale;
+                Mat4 model = Mat4::compose(drawPosition, drawOrientation,
+                                           Vec3{scale, scale, scale}) *
+                             Mat4::translation(-mesh->center);
+                shadowProgram_.setMat4("uModel", model.m);
+                for (const MeshPart& part : mesh->parts) {
+                    if (part.indices.empty()) continue;
+                    glEnableClientState(GL_VERTEX_ARRAY);
+                    glVertexPointer(3, GL_FLOAT, (GLsizei)(sizeof(float) * kMeshVertexFloats),
+                                    part.vertices.data() + kMeshPositionOffset);
+                    glDrawElements(GL_TRIANGLES, (GLsizei)part.indices.size(), GL_UNSIGNED_INT,
+                                   part.indices.data());
+                    glDisableClientState(GL_VERTEX_ARRAY);
+                }
+                continue;
+            }
+
+            // The primitives: the same shapes, the same transforms, and only
+            // the position matters for a shadow.
+            Mat4 model = Mat4::compose(drawPosition, drawOrientation, Vec3{1.0f, 1.0f, 1.0f});
+            switch (body.shape) {
+            case Shape::Sphere: {
+                const float r = body.halfExtents.x;
+                model = Mat4::compose(drawPosition, drawOrientation, Vec3{r, r, r});
+                shadowProgram_.setMat4("uModel", model.m);
+                glCallList(primitives_.sphere());
+                break;
+            }
+            case Shape::Cylinder: {
+                model = Mat4::compose(drawPosition, drawOrientation,
+                                      Vec3{body.cylinderRadius, body.halfExtents.y,
+                                           body.cylinderRadius});
+                shadowProgram_.setMat4("uModel", model.m);
+                glCallList(primitives_.cylinder());
+                break;
+            }
+            case Shape::Capsule: {
+                const float r = body.capsuleRadius;
+                const float halfHeight = body.capsuleHeight * 0.5f;
+                model = Mat4::compose(drawPosition, drawOrientation, Vec3{r, r, r}) *
+                        Mat4::translation(Vec3{0.0f, halfHeight, 0.0f});
+                shadowProgram_.setMat4("uModel", model.m);
+                glCallList(primitives_.sphere());
+                model = Mat4::compose(drawPosition, drawOrientation, Vec3{r, r, r}) *
+                        Mat4::translation(Vec3{0.0f, -halfHeight, 0.0f});
+                shadowProgram_.setMat4("uModel", model.m);
+                glCallList(primitives_.sphere());
+                model = Mat4::compose(drawPosition, drawOrientation,
+                                      Vec3{r, body.halfExtents.y, r}) *
+                        Mat4::translation(Vec3{0.0f, -halfHeight, 0.0f});
+                shadowProgram_.setMat4("uModel", model.m);
+                glCallList(primitives_.cylinder());
+                break;
+            }
+            case Shape::Cone: {
+                model = Mat4::compose(drawPosition, drawOrientation,
+                                      Vec3{body.coneRadius, body.coneHeight * 0.5f,
+                                           body.coneRadius});
+                shadowProgram_.setMat4("uModel", model.m);
+                glCallList(primitives_.cone());
+                break;
+            }
+            case Shape::Pyramid:
+            case Shape::Prism: {
+                const float radius = body.shape == Shape::Pyramid ? body.pyramidBaseRadius
+                                                                 : body.prismRadius;
+                const float height = body.shape == Shape::Pyramid ? body.pyramidHeight
+                                                                 : body.prismHeight;
+                model = Mat4::compose(drawPosition, drawOrientation,
+                                      Vec3{radius, height * 0.5f, radius});
+                shadowProgram_.setMat4("uModel", model.m);
+                glCallList(primitives_.pyramid());
+                break;
+            }
+            case Shape::Camera:
+            case Shape::Box:
+            default: {
+                model = Mat4::compose(drawPosition, drawOrientation, body.halfExtents);
+                shadowProgram_.setMat4("uModel", model.m);
+                glCallList(primitives_.cube());
+                break;
+            }
+            }
+        }
+        shadowMap_.endPass();
+    }
+    gl::UseProgram(0);
+
+    // And the scene's own picture back.
+    glViewport(viewportX_, viewportY_, viewportWidth_, viewportHeight_);
+    glEnable(GL_SCISSOR_TEST);
 }
 
 void SceneRenderer::extractFrustum(const float* projection, const float* view) {
@@ -488,6 +736,8 @@ bool SceneRenderer::drawImportedMesh(const RigidBody& body, const MeshRegistry& 
 
 void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& meshes,
                                const TextureRegistry& textures, float alpha, int hiddenBody) {
+    beginScenePass();
+
     int paletteIndex = 0;
     for (int index = 0; index < (int)world.bodies.size(); ++index) {
         const RigidBody& body = world.bodies[(size_t)index];
@@ -518,78 +768,218 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
                                 ? Color{body.material.color.x, body.material.color.y,
                                         body.material.color.z}
                                 : kBodyPalette[paletteIndex & 7];
-        glColor3f(color.r, color.g, color.b);
 
-        // Exactly one push/pop per body, whichever path is taken below.
-        glPushMatrix();
-        glTranslatef(drawPosition.x, drawPosition.y, drawPosition.z);
-        if (!drawImportedMesh(body, meshes, textures, drawOrientation)) {
-            switch (body.shape) {
-            case Shape::Sphere: {
-                const float r = body.halfExtents.x;
-                glScalef(r, r, r);
-                glCallList(primitives_.sphere());
-                break;
-            }
-            case Shape::Cylinder: {
-                applyRotation(drawOrientation);
-                glScalef(body.cylinderRadius, body.halfExtents.y, body.cylinderRadius);
-                glCallList(primitives_.cylinder());
-                break;
-            }
-            case Shape::Capsule: {
-                const float r = body.capsuleRadius;
-                const float halfHeight = body.capsuleHeight * 0.5f;
-                applyRotation(drawOrientation);
-                const float toTop[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, halfHeight, 0, 1};
-                glMultMatrixf(toTop);
-                glScalef(r, r, r);
-                glCallList(primitives_.sphere());
-                const float toBottom[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0,
-                                             0, -halfHeight * 2.0f, 0, 1};
-                glMultMatrixf(toBottom);
-                glScalef(r, r, r);
-                glCallList(primitives_.sphere());
-                glScalef(1.0f / r, 1.0f / r, 1.0f / r);
-                glScalef(1.0f, halfHeight, 1.0f);
-                glCallList(primitives_.cylinder());
-                break;
-            }
-            case Shape::Cone: {
-                applyRotation(drawOrientation);
-                glScalef(body.coneRadius, body.coneHeight * 0.5f, body.coneRadius);
-                glCallList(primitives_.cone());
-                break;
-            }
-            case Shape::Pyramid:
-            case Shape::Prism: {
-                const float radius =
-                    (body.shape == Shape::Pyramid) ? body.pyramidBaseRadius : body.prismRadius;
-                const float height =
-                    (body.shape == Shape::Pyramid) ? body.pyramidHeight : body.prismHeight;
-                applyRotation(drawOrientation);
-                glScalef(radius, height * 0.5f, radius);
-                glCallList(primitives_.pyramid());
-                break;
-            }
-            case Shape::Camera: {
-                // A camera is drawn as what it is: a body with a lens, and the
-                // frustum it looks through. The frustum is the part that says
-                // something - a box on its own is a box.
-                drawCameraEntity(body, drawOrientation);
-                break;
-            }
-            default: {
-                applyRotation(drawOrientation);
-                glScalef(body.halfExtents.x, body.halfExtents.y, body.halfExtents.z);
-                glCallList(primitives_.cube());
-                break;
-            }
+        // A mesh is drawn with the scene's program; a primitive is drawn with
+        // the same program, and the same matrix, so the two look like the
+        // same world.
+        const MeshAsset* mesh = body.hasMesh() ? meshes.at(body.mesh) : nullptr;
+        if (mesh) {
+            const float scale = body.meshScale * mesh->scale;
+            const Mat4 model = Mat4::compose(drawPosition, drawOrientation,
+                                              Vec3{scale, scale, scale}) *
+                               Mat4::translation(-mesh->center);
+            drawMeshWithShader(*mesh, textures, model, Color{1.0f, 1.0f, 1.0f});
+            ++paletteIndex;
+            continue;
+        }
+
+        // The primitives. The colour of the body is the colour of the thing:
+        // the primitives have no colours of their own, and the tint is what
+        // the editor picked.
+        sceneProgram_.setVec3("uTint", color.r, color.g, color.b);
+        sceneProgram_.setInt("uUseVertexColour", 0);
+
+        Mat4 model = Mat4::compose(drawPosition, drawOrientation, Vec3{1.0f, 1.0f, 1.0f});
+        switch (body.shape) {
+        case Shape::Sphere: {
+            const float r = body.halfExtents.x;
+            model = Mat4::compose(drawPosition, drawOrientation, Vec3{r, r, r});
+            sceneProgram_.setMat4("uModel", model.m);
+            glCallList(primitives_.sphere());
+            break;
+        }
+        case Shape::Cylinder: {
+            model = Mat4::compose(drawPosition, drawOrientation,
+                                  Vec3{body.cylinderRadius, body.halfExtents.y,
+                                       body.cylinderRadius});
+            sceneProgram_.setMat4("uModel", model.m);
+            glCallList(primitives_.cylinder());
+            break;
+        }
+        case Shape::Capsule: {
+            const float r = body.capsuleRadius;
+            const float halfHeight = body.capsuleHeight * 0.5f;
+            model = Mat4::compose(drawPosition, drawOrientation, Vec3{r, r, r}) *
+                    Mat4::translation(Vec3{0.0f, halfHeight, 0.0f});
+            sceneProgram_.setMat4("uModel", model.m);
+            glCallList(primitives_.sphere());
+            model = Mat4::compose(drawPosition, drawOrientation, Vec3{r, r, r}) *
+                    Mat4::translation(Vec3{0.0f, -halfHeight, 0.0f});
+            sceneProgram_.setMat4("uModel", model.m);
+            glCallList(primitives_.sphere());
+            model = Mat4::compose(drawPosition, drawOrientation,
+                                  Vec3{r, body.halfExtents.y, r}) *
+                    Mat4::translation(Vec3{0.0f, -halfHeight, 0.0f});
+            sceneProgram_.setMat4("uModel", model.m);
+            glCallList(primitives_.cylinder());
+            break;
+        }
+        case Shape::Cone: {
+            model = Mat4::compose(drawPosition, drawOrientation,
+                                  Vec3{body.coneRadius, body.coneHeight * 0.5f,
+                                       body.coneRadius});
+            sceneProgram_.setMat4("uModel", model.m);
+            glCallList(primitives_.cone());
+            break;
+        }
+        case Shape::Pyramid:
+        case Shape::Prism: {
+            const float radius =
+                body.shape == Shape::Pyramid ? body.pyramidBaseRadius : body.prismRadius;
+            const float height =
+                body.shape == Shape::Pyramid ? body.pyramidHeight : body.prismHeight;
+            model = Mat4::compose(drawPosition, drawOrientation,
+                                  Vec3{radius, height * 0.5f, radius});
+            sceneProgram_.setMat4("uModel", model.m);
+            glCallList(primitives_.pyramid());
+            break;
+        }
+        case Shape::Camera: {
+            // A camera is drawn as what it is: a body with a lens, and the
+            // frustum it looks through. The frustum is the part that says
+            // something - a box on its own is a box.
+            drawCameraEntity(body, drawOrientation);
+            break;
+        }
+        default: {
+            model = Mat4::compose(drawPosition, drawOrientation, body.halfExtents);
+            sceneProgram_.setMat4("uModel", model.m);
+            glCallList(primitives_.cube());
+            break;
         }
         }
-        glPopMatrix();
         ++paletteIndex;
     }
+    gl::UseProgram(0);
+}
+
+// The uniforms the scene pass shares: the sun, the sky and the shadow map.
+void SceneRenderer::beginScenePass() {
+    if (!sceneProgram_.ready()) return;
+    sceneProgram_.use();
+
+    const ShadowSettings& settings = shadowMap_.settings();
+    const Vec3 sun = sunDirection(settings);
+    sceneProgram_.setVec3("uSunDirection", sun.x, sun.y, sun.z);
+    sceneProgram_.setVec3("uSunColour", settings.sunColour.x, settings.sunColour.y,
+                          settings.sunColour.z);
+    sceneProgram_.setVec3("uSkyColour", settings.skyColour.x, settings.skyColour.y,
+                          settings.skyColour.z);
+    sceneProgram_.setVec3("uGroundColour", settings.groundColour.x, settings.groundColour.y,
+                          settings.groundColour.z);
+    sceneProgram_.setFloat("uAmbient", settings.ambient);
+    sceneProgram_.setFloat("uSpecular", settings.specular);
+    sceneProgram_.setFloat("uShininess", settings.shininess);
+    sceneProgram_.setVec3("uFogColour", settings.fogColour.x, settings.fogColour.y,
+                          settings.fogColour.z);
+    sceneProgram_.setFloat("uFogDensity", settings.fogDensity);
+    sceneProgram_.setMat4("uView", viewMatrix_.m);
+    sceneProgram_.setMat4("uProjection", projectionMatrix_.m);
+
+    // The shadow map: the same picture read two ways. The filter belongs to
+    // the sampler and not to the texture, so the one map is both.
+    const int quality = settings.quality == ShadowQuality::Off     ? 0
+                        : settings.quality == ShadowQuality::Hard   ? 1
+                        : settings.quality == ShadowQuality::Filtered ? 2
+                                                                     : 3;
+    sceneProgram_.setInt("uShadowMode", quality);
+    sceneProgram_.setFloat("uShadowTexelSize", 1.0f / (float)std::max(1, shadowMap_.resolution()));
+    sceneProgram_.setFloat("uShadowBias", settings.bias);
+    sceneProgram_.setFloat("uShadowRadius", settings.radius);
+    sceneProgram_.setInt("uCascadeCount", shadowMap_.layers());
+
+    gl::ActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, shadowMap_.texture());
+    sceneProgram_.setInt("uShadowMap", 2);
+    gl::ActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, shadowMap_.texture());
+    sceneProgram_.setInt("uShadowMapFiltered", 3);
+    gl::ActiveTexture(GL_TEXTURE0);
+
+    // The matrices of the cascades and where the stretches of the scene end.
+    float matrices[16 * 4] = {};
+    const std::vector<Mat4>& lights = shadowMap_.lightMatrices();
+    for (int i = 0; i < 4; ++i) {
+        const Mat4& light = i < (int)lights.size() ? lights[(size_t)i] : Mat4::identity();
+        std::copy(light.m, light.m + 16, matrices + i * 16);
+    }
+    sceneProgram_.setMat4Array("uLightViewProjection[0]", matrices, 4);
+
+    float splits[4] = {};
+    const std::vector<float>& ends = shadowMap_.cascadeSplits();
+    for (int i = 0; i < 4; ++i) splits[i] = i < (int)ends.size() ? ends[(size_t)i] : 0.0f;
+    sceneProgram_.setFloatArray("uCascadeSplits[0]", splits, 4);
+}
+
+// One mesh, with the scene's program.
+bool SceneRenderer::drawMeshWithShader(const MeshAsset& mesh, const TextureRegistry& textures,
+                                       const Mat4& model, const Color& tint) {
+    if (!sceneProgram_.ready()) return false;
+
+    const size_t stride = sizeof(float) * kMeshVertexFloats;
+    sceneProgram_.setMat4("uModel", model.m);
+    sceneProgram_.setVec3("uTint", tint.r, tint.g, tint.b);
+
+    for (const MeshPart& part : mesh.parts) {
+        // A mesh with colours of its own - the ground has them, and they are
+        // the colours of the biomes - and a mesh without, which is every
+        // imported model.
+        const bool vertexColors =
+            part.colors.size() == part.vertices.size() / kMeshVertexFloats * 3 &&
+            !part.colors.empty();
+        sceneProgram_.setInt("uUseVertexColour", vertexColors ? 1 : 0);
+
+        glEnableClientState(GL_VERTEX_ARRAY);
+        glEnableClientState(GL_NORMAL_ARRAY);
+        if (vertexColors) {
+            glEnableClientState(GL_COLOR_ARRAY);
+            glColorPointer(3, GL_FLOAT, 0, part.colors.data());
+        }
+        glVertexPointer(3, GL_FLOAT, (GLsizei)stride, part.vertices.data() + kMeshPositionOffset);
+        glNormalPointer(GL_FLOAT, (GLsizei)stride, part.vertices.data() + kMeshNormalOffset);
+
+        // The picture on the surface, or the white one: a mesh without a
+        // picture is not a mesh without a colour.
+        const unsigned tex = textures.at(part.texture);
+        const bool hasTexture = tex != 0;
+        if (hasTexture) {
+            gl::ActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+            glTexCoordPointer(2, GL_FLOAT, (GLsizei)stride,
+                              part.vertices.data() + kMeshTexCoordOffset);
+            sceneProgram_.setInt("uAlbedoMap", 0);
+        } else {
+            gl::ActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, whiteTexture_);
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+            sceneProgram_.setInt("uAlbedoMap", 0);
+        }
+
+        if (!part.indices.empty()) {
+            glDrawElements(GL_TRIANGLES, (GLsizei)part.indices.size(), GL_UNSIGNED_INT,
+                           part.indices.data());
+        } else {
+            glDrawArrays(GL_TRIANGLES, 0,
+                         (GLsizei)(part.vertices.size() / kMeshVertexFloats));
+        }
+
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        if (vertexColors) glDisableClientState(GL_COLOR_ARRAY);
+    }
+    glDisableClientState(GL_VERTEX_ARRAY);
+    glDisableClientState(GL_NORMAL_ARRAY);
+    return true;
 }
 
 void SceneRenderer::drawCameraEntity(const RigidBody& body, const Quat& orientation) {

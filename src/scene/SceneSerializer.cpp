@@ -392,6 +392,9 @@ bool saveJson(const PhysicsWorld& world, const MeshRegistry& meshes, const std::
         flags["visible"] = body.visible;
         flags["locked"] = body.locked;
         flags["favorite"] = body.favorite;
+        // Whether the body casts a shadow. The ones that are not written are
+        // the ones made before the shadows existed, and they all cast.
+        flags["castsShadow"] = body.castsShadow;
         node["flags"] = flags;
 
         if (body.isCamera()) {
@@ -542,6 +545,10 @@ bool loadJson(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path
                 if (flags.contains("visible")) body.visible = flags["visible"].get<bool>();
                 if (flags.contains("locked")) body.locked = flags["locked"].get<bool>();
                 if (flags.contains("favorite")) body.favorite = flags["favorite"].get<bool>();
+                // A scene made before the shadows existed does not say, and
+                // every body in it casts one.
+                if (flags.contains("castsShadow"))
+                    body.castsShadow = flags["castsShadow"].get<bool>();
             }
 
             if (node.contains("camera") && node["camera"].is_object()) {

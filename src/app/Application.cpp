@@ -397,6 +397,17 @@ void Application::loadProjectWorld(const ProjectInfo& project) {
     camera_.pitch = project_.cameraPitch;
     camera_.fovDeg = project_.cameraFov;
 
+    // The shadows, as the project asks for them. They are the project's and
+    // not the machine's, so the scene looks the same everywhere.
+    ShadowSettings shadows;
+    shadows.quality = project_.shadowQuality == 0   ? ShadowQuality::Off
+                      : project_.shadowQuality == 2 ? ShadowQuality::Filtered
+                      : project_.shadowQuality == 3 ? ShadowQuality::Soft
+                                                   : ShadowQuality::Hard;
+    shadows.resolution = project_.shadowResolution;
+    shadows.cascades = project_.shadowCascades;
+    sceneRenderer_.setShadowSettings(shadows);
+
     const std::string scenePath = ProjectLibrary::scenePath(project_);
     // Before the scene is read: loading a model is what pulls its textures in, so
     // the mesh registry needs to know where to put them.
@@ -802,6 +813,7 @@ void Application::renderScene() {
     viewport.height = (int)rect.height;
 
     sceneRenderer_.beginFrame(window_.framebufferWidth(), window_.framebufferHeight());
+    sceneRenderer_.setShowShadowDebug(editor_->showShadowMap());
     sceneRenderer_.renderWorld(world_, meshes_, textures_, camera_, viewport,
                                editor_->showGrid(), editor_->showVectors(), clockAlpha_,
                                sceneCamera_);

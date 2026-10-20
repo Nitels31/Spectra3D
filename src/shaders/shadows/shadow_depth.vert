@@ -20,8 +20,8 @@ uniform mat4 uLightViewProjection;
 out float vDistance;
 
 void main() {
-    const vec4 world = uModel * vec4(aPosition, 1.0);
-    const vec4 light = uLightViewProjection * world;
+    vec4 world = uModel * vec4(aPosition, 1.0);
+    vec4 light = uLightViewProjection * world;
 
     // The distance from the light, in the map's own units: 0 at the near
     // plane of the light and 1 at the far one. The light is orthographic, so

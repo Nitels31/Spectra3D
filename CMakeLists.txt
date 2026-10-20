@@ -280,6 +280,8 @@ set(SPECTRA_SRC_UI
 set(SPECTRA_SRC_RENDER
     src/render/Camera.cpp
     src/render/PrimitiveCache.cpp
+    src/render/ShaderProgram.cpp
+    src/render/ShadowMap.cpp
     src/render/Skybox.cpp
     src/render/TextAtlas.cpp
     src/render/UiRenderer.cpp
@@ -305,6 +307,7 @@ set(SPECTRA_SRC_PHYSICS
 set(SPECTRA_SRC_PLATFORM
     src/platform/Window.cpp
     src/platform/Filesystem.cpp
+    src/platform/GlFunctions.cpp
 )
 set(SPECTRA_SRC_CORE
     src/core/Log.cpp
@@ -349,6 +352,12 @@ target_include_directories(spectra_runtime PUBLIC ${SPECTRA_INCLUDE})
 # Compile-time location of the shipped assets, so the engine also runs straight
 # out of the source tree. The staged copy next to the binary is what it prefers.
 target_compile_definitions(spectra_runtime PRIVATE SPECTRA_ASSET_DIR="${SPECTRA_ASSETS}")
+
+# Where the shaders are in the source tree, so that the engine runs out of the
+# tree without anything being staged. The staged copy next to the binary is what
+# it prefers.
+target_compile_definitions(spectra_runtime PRIVATE
+    SPECTRA_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 target_link_libraries(spectra_runtime PUBLIC
     spectra_freetype

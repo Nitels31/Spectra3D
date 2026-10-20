@@ -235,6 +235,16 @@ void ProjectLibrary::scan() {
     Log::info("Projects: %d in '%s'", (int)projects_.size(), root_.c_str());
 }
 
+ProjectInfo* ProjectLibrary::projectAt(int index) {
+    if (index < 0 || index >= (int)projects_.size()) return nullptr;
+    return &projects_[(size_t)index];
+}
+
+const ProjectInfo* ProjectLibrary::projectAt(int index) const {
+    if (index < 0 || index >= (int)projects_.size()) return nullptr;
+    return &projects_[(size_t)index];
+}
+
 ProjectInfo ProjectLibrary::create(const std::string& name, LanguageTag language) {
     const std::string clean = str::trim(name);
     if (!isValidName(clean)) {
@@ -354,6 +364,12 @@ bool ProjectLibrary::readManifest(const std::string& projectPath, ProjectInfo& o
             info.cameraFov = clampf(number, kFovMin, kFovMax);
         } else if (key == "favorite") {
             if (parseInt(value, integer)) info.favorite = integer != 0;
+        } else if (key == "shadowQuality") {
+            if (parseInt(value, integer)) info.shadowQuality = std::clamp(integer, 0, 3);
+        } else if (key == "shadowResolution") {
+            if (parseInt(value, integer)) info.shadowResolution = std::clamp(integer, 256, 8192);
+        } else if (key == "shadowCascades") {
+            if (parseInt(value, integer)) info.shadowCascades = std::clamp(integer, 1, 4);
         } else if (key == "scene") {
             // The name of the scene file inside the project. A project that
             // keeps its scene in JSON says so here, and a project that says
@@ -406,6 +422,12 @@ text += "cameraFov=" + formatFloat(info.cameraFov) + "\n";
     text += "favorite=";
     text += info.favorite ? "1" : "0";
     text += "\n";
+    // The shadows: how they are drawn, how big the map is, and how many
+    // stretches of the scene get a map of their own.
+    text += "shadowQuality=" + std::to_string(std::clamp(info.shadowQuality, 0, 3)) + "\n";
+    text += "shadowResolution=" +
+            std::to_string(std::clamp(info.shadowResolution, 256, 8192)) + "\n";
+    text += "shadowCascades=" + std::to_string(std::clamp(info.shadowCascades, 1, 4)) + "\n";
     // The scene file the project keeps its scene in. A name, not a path: the
     // scene lives inside the project folder and nowhere else. The resolved name,
     // so a project that has not migrated yet keeps saying what it is using.

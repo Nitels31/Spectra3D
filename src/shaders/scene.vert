@@ -41,7 +41,7 @@ out vec4 vShadowCoord;
 flat out int vCascade;
 
 void main() {
-    const vec4 world = uModel * vec4(aPosition, 1.0);
+    vec4 world = uModel * vec4(aPosition, 1.0);
     vWorldPosition = world.xyz;
 
     // The normal is turned by the model matrix and not by the view matrix: the
@@ -61,7 +61,7 @@ void main() {
     // the eye. The loop is over three and not over uCascadeCount: a loop with
     // a dynamic bound is the one thing a shader cannot unroll, and the number
     // of cascades is the same for every vertex of the frame.
-    const float viewDepth = -(uView * world).z;
+    float viewDepth = -(uView * world).z;
     int cascade = 0;
     for (int i = 0; i < 3; ++i) {
         if (i < uCascadeCount - 1 && viewDepth > uCascadeSplits[i]) cascade = i + 1;

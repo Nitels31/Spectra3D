@@ -86,11 +86,16 @@ struct RigidBody {
     Vec3 aabbMax;
 
     // --- simulation flags --------------------------------------------------
-bool asleep = false;
+    bool asleep = false;
     float sleepTime = 0.0f;
     bool touching = false;
     bool visible = true;
     bool locked = false;
+    // Whether the body casts a shadow. A body that does not is still drawn
+    // and still catches a shadow - it is only the shadow it casts that is
+    // not there. A flag on the body and not a setting, because which bodies
+    // cast a shadow is a question about the scene.
+    bool castsShadow = true;
     // Starred in the hierarchy. Purely an editor mark - the simulation never reads
     // it - but it lives here and in the scene file next to `visible` and `locked`
     // because those are editor marks too, and a star that forgets itself on reload

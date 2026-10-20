@@ -116,6 +116,18 @@ struct ProjectInfo {
     // the scene became JSON: those keep the text file they have until the first
     // time they are saved.
     std::string sceneFile;
+    // The shadows: how they are drawn, how big the map is, and how many
+    // stretches of the scene get a map of their own.
+    //
+    // They are the project's and not the machine's: a scene that looks the
+    // same on another machine is the same scene, and the shadows are a part
+    // of how it looks.
+    //
+    // The quality is the number the shadow's modes are numbered by: 0 off,
+    // 1 one tap, 2 the filtered one, 3 the soft one.
+    int shadowQuality = 1;
+    int shadowResolution = 2048;
+    int shadowCascades = 1;
     bool valid = false;
 };
 
@@ -172,6 +184,11 @@ public:
     // manifest, sorted case-insensitively by name.
     void scan();
     const std::vector<ProjectInfo>& projects() const { return projects_; }
+    // The project at that place in the list, or nullptr when the index is out
+    // of range. The list is what the launcher shows, and the settings of one
+    // of them are edited through it.
+    ProjectInfo* projectAt(int index);
+    const ProjectInfo* projectAt(int index) const;
 
     // Creates the directory tree plus the manifest. Returns the new project, or
     // an invalid ProjectInfo on failure (with the reason in the log).

@@ -41,6 +41,16 @@ uniform float uAmbient;
 uniform float uSpecular;
 uniform float uShininess;
 
+// The colour of the thing being drawn, when it is not in its vertices.
+//
+// The primitives have no colours of their own - the colour of a body is one
+// number the editor picked - and the meshes that have them are multiplied by
+// it as well, so that a model can be tinted without a new picture.
+uniform vec3 uTint;
+// Whether the colours of the vertices are to be used at all. A mesh without
+// them has nothing to say, and the colour of the picture is the colour.
+uniform int uUseVertexColour;
+
 uniform vec3 uFogColour;
 uniform float uFogDensity;
 
@@ -107,7 +117,7 @@ float shadowFactor(vec2 uv, float distance, float bias) {
         // shadow that spreads.
         float blockerSum = 0.0;
         float blockerCount = 0.0;
-        const float search = uShadowRadius;
+        float search = uShadowRadius;
         for (int i = 0; i < 16; ++i) {
             vec2 offset = kDisk[i] * uShadowTexelSize * search;
             float stored = texture(uShadowMap, vec3(uv + offset, float(vCascade))).r;
@@ -124,7 +134,7 @@ float shadowFactor(vec2 uv, float distance, float bias) {
         // blocker right against the fragment gives a shadow with no width at
         // all, and one far away gives a shadow as wide as the distance
         // between them.
-        const float average = blockerSum / blockerCount;
+        float average = blockerSum / blockerCount;
         float penumbra = (distance - average) / max(average, 1e-4);
         float radius = clamp(penumbra, 0.6, uShadowRadius);
 
@@ -143,20 +153,20 @@ float shadowFactor(vec2 uv, float distance, float bias) {
 }
 
 void main() {
-    const vec3 normal = normalize(vNormal);
-    const vec3 toLight = normalize(uSunDirection);
-    const vec3 toEye = normalize(uCameraPosition - vWorldPosition);
+    vec3 normal = normalize(vNormal);
+    vec3 toLight = normalize(uSunDirection);
+    vec3 toEye = normalize(uCameraPosition - vWorldPosition);
 
     // The map's distance and the fragment's own, both measured from the
     // light and both in the light's units. The clip space of the light, in
     // the range 0..1 with the depth in the same place.
-    const vec3 coord = vShadowCoord.xyz / vShadowCoord.w * 0.5 + 0.5;
-    const float distance = coord.z;
+    vec3 coord = vShadowCoord.xyz / vShadowCoord.w * 0.5 + 0.5;
+    float distance = coord.z;
 
     // How much the surface faces the sun. It is the light itself, and it is
     // needed by the shadow as well: the bias of the comparison grows with the
     // angle between them.
-    const float nDotL = max(dot(normal, toLight), 0.0);
+    float nDotL = max(dot(normal, toLight), 0.0);
 
     // Past the far plane of the light there is nothing to be in the shadow
     // of: the map says nothing about that distance, and the fragment is in
@@ -168,38 +178,39 @@ void main() {
         // texel of the map, and the more the comparison has to be pushed to
         // keep a surface out of its own shadow - the stripes that shadow
         // acne is.
-        const float slope = sqrt(max(0.0, 1.0 - nDotL * nDotL)) / max(nDotL, 0.15);
+        float slope = sqrt(max(0.0, 1.0 - nDotL * nDotL)) / max(nDotL, 0.15);
         shadow = shadowFactor(coord.xy, distance, uShadowBias * (1.0 + slope));
     }
 
     // The sun. The shadow is the part of the light that the ground takes
     // away, and it takes it away from the direct light only: the sky's light
     // reaches everywhere, under a roof as well as in the open.
-    const vec3 direct = uSunColour * (nDotL * shadow);
+    vec3 direct = uSunColour * (nDotL * shadow);
 
     // The sky: what comes down from above, and what comes up off the ground.
     // The two are mixed by the way the surface faces, so a slope that looks
     // at the sky is lit like the sky and a slope that looks at the ground is
     // lit like the ground.
-    const float up = normal.y * 0.5 + 0.5;
-    const vec3 ambient = mix(uGroundColour, uSkyColour, up) * uAmbient;
+    float up = normal.y * 0.5 + 0.5;
+    vec3 ambient = mix(uGroundColour, uSkyColour, up) * uAmbient;
 
     // The shine: a highlight where the surface is half way between the light
     // and the eye. It is the one thing that says "this is a surface" and not
     // a colour, and it is worth having even when it is faint.
-    const vec3 halfway = normalize(toLight + toEye);
-    const float nDotH = max(dot(normal, halfway), 0.0);
-    const float highlight = pow(nDotH, max(uShininess, 1.0)) * uSpecular * shadow;
+    vec3 halfway = normalize(toLight + toEye);
+    float nDotH = max(dot(normal, halfway), 0.0);
+    float highlight = pow(nDotH, max(uShininess, 1.0)) * uSpecular * shadow;
 
     // The colour of the surface: the picture, the colour of the vertex and
-    // the light, in that order.
-    vec3 albedo = texture(uAlbedoMap, vTexCoord).rgb * vColor;
+    // the colour of the thing, in that order.
+    vec3 vertexColour = mix(vec3(1.0), vColor, float(uUseVertexColour));
+    vec3 albedo = texture(uAlbedoMap, vTexCoord).rgb * vertexColour * uTint;
     vec3 colour = albedo * (ambient + direct) + uSunColour * highlight;
 
     // The haze: the distance eats the colour of the far things, and it eats
     // it towards the colour of the sky.
-    const float distanceToEye = length(uCameraPosition - vWorldPosition);
-    const float fog = 1.0 - exp(-distanceToEye * uFogDensity);
+    float distanceToEye = length(uCameraPosition - vWorldPosition);
+    float fog = 1.0 - exp(-distanceToEye * uFogDensity);
     colour = mix(colour, uFogColour, clamp(fog, 0.0, 1.0));
 
     oColour = vec4(colour, 1.0);

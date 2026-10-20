@@ -176,6 +176,9 @@ void Editor::buildMenuRows() {
     // sets it for a game - none of that needs a button in a level editor.
     add(Action::FrameSelection, 0, text("view.frame"));
     add(Action::ResetCamera, 0, text("view.resetCamera"));
+    // The map of the shadows, drawn over the scene: what the sun sees. The one
+    // thing that is worth seeing when the shadows are not what they should be.
+    add(Action::ShadowMap, 0, text("view.shadowMap"), showShadowMap_);
     add(Action::None, 0, nullptr, false, true);
     // Which panels are on screen. Closed with the X in a panel's header, reopened
     // from here - so "I do not need this panel" is one click and not a restart.
@@ -475,6 +478,9 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         break;
     case Action::Vectors:
         showVectors_ = !showVectors_;
+        break;
+    case Action::ShadowMap:
+        showShadowMap_ = !showShadowMap_;
         break;
     case Action::FrameSelection:
         frameSelection(world, camera);

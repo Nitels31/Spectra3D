@@ -205,6 +205,8 @@ public:
 
     bool showVectors() const { return showVectors_; }
     bool showGrid() const { return showGrid_; }
+    // The map of the shadows, drawn over the scene.
+    bool showShadowMap() const { return showShadowMap_; }
     const LayoutRects& layout() const { return layout_; }
 
     void saveScene(const PhysicsWorld& world);
@@ -444,6 +446,8 @@ private:
         ToggleFavorite,
         // View: which panels are on screen at all.
         TogglePanel,
+        // The map of the shadows, drawn over the scene: what the sun sees.
+        ShadowMap,
         // Create: a piece of ground, made of noise. It opens the panel that
         // says how the ground is made.
         Landform,
@@ -710,6 +714,8 @@ private:
     // Snap while dragging: the position lands on a quarter of a unit instead of
     // wherever the ray happened to hit. The magnet in the viewport toolbar.
     bool snapEnabled_ = false;
+    // The map of the shadows, drawn over the scene: what the sun sees.
+    bool showShadowMap_ = false;
     // Console lives under the viewport and the inspector now, so it is always
     // there; these three are its level filters.
     bool consoleWarn_ = true;

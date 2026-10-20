@@ -3,6 +3,7 @@
 #include "core/Log.hpp"
 #include "core/Project.hpp"
 #include "core/Str.hpp"
+#include "platform/GlFunctions.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -330,6 +331,11 @@ bool Window::create(const char* title, int width, int height) {
     glfwMakeContextCurrent(window_);
     glfwSwapInterval(1);
     glfwGetFramebufferSize(window_, &fbW_, &fbH_);
+    // The functions that the 1.1 headers do not have, loaded now while the
+    // context is current: the shaders, the framebuffers the shadow map is
+    // drawn into and the three-dimensional textures all live in the driver's
+    // own library, and the driver is the one that has them.
+    loadGlFunctions();
     return true;
 }
 
