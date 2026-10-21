@@ -137,6 +137,7 @@ public:
         kLandformLowland = 1246,
         kLandformStretch = 1247,
         kLandformVariation = 1248,
+        kLandformGround = 1249,
 
         // 1300 - 1399: the inspector.
         kInspectorDock = 1300,

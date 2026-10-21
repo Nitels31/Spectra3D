@@ -154,6 +154,11 @@ void Editor::drawLandformPanel(UiRenderer& ui, PhysicsWorld& world, const Rect& 
         ui_.propertyFloat(ui, kLandformRoundness, x, y, width, text("landform.roundness"),
                           landformSettings_.roundness, 0.01f, 0.02f, 1.0f);
         y += kFieldHeight;
+        // How much of the ordinary ground is put on the plateau. None of it
+        // leaves the tops flat as they were.
+        ui_.propertyFloat(ui, kLandformGround, x, y, width, text("landform.ground"),
+                          landformSettings_.ground, 0.01f, 0.0f, 1.0f);
+        y += kFieldHeight;
         break;
 
     case LandformShape::Canyon:

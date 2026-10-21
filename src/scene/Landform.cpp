@@ -115,6 +115,11 @@ float rawHeight(const LandformSettings& settings, float x, float z) {
     const float ridge = clamp01(settings.ridge);
     float n = soft * (1.0f - ridge) + sharp * ridge;
 
+    // The ground as the noise makes it, before the shape is put on it. The
+    // shapes that have ground on them need it: a plateau with nothing on it
+    // is a table.
+    const float plain = n;
+
     const float halfWidth = settings.width * 0.5f;
     const float halfDepth = settings.depth * 0.5f;
     // How far the point is from the middle of the ground, 0 at the middle and
@@ -161,7 +166,15 @@ float rawHeight(const LandformSettings& settings, float x, float z) {
         const float frac = scaled - level;
         const float width = std::clamp(settings.roundness, 0.02f, 1.0f);
         const float step = smoothstep(0.5f - width * 0.5f, 0.5f + width * 0.5f, frac);
-        n = (level + step) / levels;
+        const float terraced = (level + step) / levels;
+
+        // And the ordinary ground is put on top of it: the same noise, bent
+        // the way the hills bend it, so the flat tops are ground with steps
+        // in it and not a table. How much of it is put on is asked for, and
+        // none of it leaves the tops as flat as they were.
+        const float rolling = plain * plain * (3.0f - 2.0f * plain);
+        const float ground = clamp01(settings.ground);
+        n = terraced + (rolling - terraced) * ground;
         break;
     }
 

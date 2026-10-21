@@ -80,6 +80,13 @@ struct LandformSettings {
     // step itself. A narrow step is a wall and a wide one is a slope.
     float roundness = 0.16f;
 
+    // How much of the ordinary ground is mixed into the flat shapes, 0..1.
+    //
+    // A plateau with nothing on it is a table, and a table is not a piece of
+    // land: this is the ground that is put on it. Zero leaves the shape bare
+    // and the tops as flat as they were.
+    float ground = 0.35f;
+
     // How deep the canyon is cut into the ground, 0..1.
     float cut = 0.80f;
 
