@@ -20,6 +20,11 @@ struct NumTraits<float> {
     static const char* kScanFormat;
     static float clampValue(float v, float lo, float hi) { return clampf(v, lo, hi); }
     static float step(float from, float delta) { return from + delta; }
+    static float raw(float v) { return v; }
+    static float fromFloat(float f) { return f; }
+    static bool parse(const char* text, float& out) {
+        return std::sscanf(text, kScanFormat, &out) == 1;
+    }
 };
 
 template <>
@@ -28,12 +33,54 @@ struct NumTraits<int> {
     static const char* kScanFormat;
     static int clampValue(int v, int lo, int hi) { return std::clamp(v, lo, hi); }
     static int step(int from, float delta) { return static_cast<int>(from + delta); }
+    static int raw(int v) { return v; }
+    static int fromFloat(float f) { return static_cast<int>(f); }
+    static bool parse(const char* text, int& out) {
+        return std::sscanf(text, kScanFormat, &out) == 1;
+    }
+};
+
+// A FLOAT WITH MORE DECIMALS THAN THE ORDINARY ONE.
+//
+// The small numbers are lost when they are shown with two: a variation of a
+// thousandth and a variation of a hundredth both say "0.01", and the first
+// of them says "0.00". A number that small is a number that has to be shown
+// with more of itself.
+struct FineFloat {
+    float value = 0.0f;
+
+    bool operator==(const FineFloat& other) const { return value == other.value; }
+    bool operator!=(const FineFloat& other) const { return value != other.value; }
+};
+
+template <>
+struct NumTraits<FineFloat> {
+    static const char* kFormat;
+    static const char* kScanFormat;
+    static FineFloat clampValue(FineFloat v, FineFloat lo, FineFloat hi) {
+        v.value = clampf(v.value, lo.value, hi.value);
+        return v;
+    }
+    static FineFloat step(FineFloat from, float delta) {
+        from.value += delta;
+        return from;
+    }
+    static float raw(FineFloat v) { return v.value; }
+    static FineFloat fromFloat(float f) { return FineFloat{f}; }
+    static bool parse(const char* text, FineFloat& out) {
+        float parsed = 0.0f;
+        if (std::sscanf(text, kScanFormat, &parsed) != 1) return false;
+        out.value = parsed;
+        return true;
+    }
 };
 
 const char* NumTraits<float>::kFormat = "%.2f";
 const char* NumTraits<float>::kScanFormat = "%f";
 const char* NumTraits<int>::kFormat = "%d";
 const char* NumTraits<int>::kScanFormat = "%d";
+const char* NumTraits<FineFloat>::kFormat = "%.4f";
+const char* NumTraits<FineFloat>::kScanFormat = "%f";
 
 } // namespace
 
@@ -378,7 +425,7 @@ bool UiContext::propertyNumeric(UiRenderer& ui, int id, float x, float y, float 
         T parsed{};
         const bool parsedOk = result == EditorResult::Committed &&
                               valueEditor_.text()[0] != '\0' &&
-                              std::sscanf(valueEditor_.text(), Traits::kScanFormat, &parsed) == 1;
+                              Traits::parse(valueEditor_.text(), parsed);
         valueEditor_.clear();
         releaseTextFocus();
         if (!parsedOk) return false;
@@ -405,13 +452,15 @@ bool UiContext::propertyNumeric(UiRenderer& ui, int id, float x, float y, float 
     } else if (!captured() && pointerPressed() && fieldHovered) {
         activeId_ = id;
         dragStartX_ = pointerX_;
-        dragStartValue_ = (float)value;
+        dragStartValue_ = Traits::raw(value);
     }
 
     bool changed = false;
     if (activeId_ == id && pointerDown_) {
         const T candidate = Traits::clampValue(
-            Traits::step((T)dragStartValue_, (pointerX_ - dragStartX_) * pixelsPerStep), lo, hi);
+            Traits::step(Traits::fromFloat(dragStartValue_),
+                         (pointerX_ - dragStartX_) * pixelsPerStep),
+            lo, hi);
         if (candidate != value) {
             value = candidate;
             changed = true;
@@ -422,7 +471,7 @@ bool UiContext::propertyNumeric(UiRenderer& ui, int id, float x, float y, float 
             // Formatted straight into the editor buffer: the intermediate copy
             // plus TextField::set() was a second snprintf of the same string.
             std::snprintf(valueEditor_.buffer, sizeof(valueEditor_.buffer),
-                          Traits::kFormat, value);
+                          Traits::kFormat, Traits::raw(value));
             valueEditor_.length = (int)std::strlen(valueEditor_.buffer);
             valueEditor_.id = id;
             // The editor takes the keyboard. It is the field that is being
@@ -435,7 +484,8 @@ bool UiContext::propertyNumeric(UiRenderer& ui, int id, float x, float y, float 
 
     ui.fillRect(fieldX, y, fieldW, theme::fieldHeight,
                 activeId_ == id ? theme::accent.scaled(0.5f) : theme::field);
-    ui.text(fieldX + 6.0f, y + 2.0f, cachedShownText(Traits::kFormat, value, id), theme::text);
+    ui.text(fieldX + 6.0f, y + 2.0f, cachedShownText(Traits::kFormat, Traits::raw(value), id),
+            theme::text);
     return changed;
 }
 
@@ -443,6 +493,18 @@ bool UiContext::propertyFloat(UiRenderer& ui, int id, float x, float y, float w,
                               const char* label, float& value, float pixelsPerStep,
                               float lo, float hi) {
     return propertyNumeric(ui, id, x, y, w, label, value, pixelsPerStep, lo, hi);
+}
+
+bool UiContext::propertyFine(UiRenderer& ui, int id, float x, float y, float w,
+                              const char* label, float& value, float pixelsPerStep,
+                              float lo, float hi) {
+    // The number is a float and the field is a fine one, so it goes in and
+    // comes out through a little box of its own.
+    FineFloat fine{value};
+    const bool changed = propertyNumeric(ui, id, x, y, w, label, fine, pixelsPerStep,
+                                         FineFloat{lo}, FineFloat{hi});
+    if (changed) value = fine.value;
+    return changed;
 }
 
 bool UiContext::propertyInt(UiRenderer& ui, int id, float x, float y, float w,

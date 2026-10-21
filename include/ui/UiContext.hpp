@@ -147,6 +147,13 @@ public:
     // Draggable + typeable numeric property. Returns true when `value` changed.
     bool propertyFloat(UiRenderer& ui, int id, float x, float y, float w, const char* label,
                        float& value, float pixelsPerStep, float lo, float hi);
+    // The same, with more decimals than the ordinary float has.
+    //
+    // The small numbers are lost when they are shown with two: a variation of
+    // a thousandth and a variation of a hundredth both say "0.01", and the
+    // first of them says "0.00".
+    bool propertyFine(UiRenderer& ui, int id, float x, float y, float w, const char* label,
+                      float& value, float pixelsPerStep, float lo, float hi);
     // The same for a whole number. `pixelsPerStep` is how much one pixel of
     // drag is worth; the default suits a small number like a count of sides.
     bool propertyInt(UiRenderer& ui, int id, float x, float y, float w, const char* label,

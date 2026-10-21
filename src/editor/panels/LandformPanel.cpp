@@ -192,14 +192,18 @@ void Editor::drawLandformPanel(UiRenderer& ui, PhysicsWorld& world, const Rect& 
     }
     y += kFieldHeight;
 
-    ui_.propertyFloat(ui, kLandformFrequency, x, y, width, text("landform.frequency"),
-                      landformSettings_.frequency, 0.002f, 0.001f, 1.0f);
+    // The feature size and the variation are small numbers, and a small
+    // number is a number that has to be shown with more of itself: a
+    // variation of a thousandth and one of a hundredth both say "0.01" when
+    // they are shown with two.
+    ui_.propertyFine(ui, kLandformFrequency, x, y, width, text("landform.frequency"),
+                      landformSettings_.frequency, 0.0002f, 0.001f, 1.0f);
     y += kFieldHeight;
     // How much the ground may differ from the one before it. The number in
     // the field is the variation of the ground that is NEXT, and a new one is
     // drawn every time a ground is made: the ground is not the same ground
     // twice, and a number typed here is the number that is used.
-    ui_.propertyFloat(ui, kLandformVariation, x, y, width, text("landform.variation"),
+    ui_.propertyFine(ui, kLandformVariation, x, y, width, text("landform.variation"),
                       landformSettings_.variation, 0.0002f, 0.0f, 0.05f);
     y += kFieldHeight;
     ui_.propertyInt(ui, kLandformOctaves, x, y, width, text("landform.octaves"),
