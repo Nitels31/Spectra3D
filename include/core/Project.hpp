@@ -16,10 +16,38 @@ inline constexpr const char* kEngineVersion = "1.0.0";
 // script layer own their own `scene.json` / `scripts` literals at namespace
 // scope, and two internal-linkage constants of the same name in one translation
 // unit is a trap worth not walking into.
-inline constexpr const char* kProjectManifestFile = "project.spectra";
-inline constexpr const char* kProjectSceneFile = "scene.json";
+//
+// The project is a folder that holds everything a game needs, and it is laid out
+// the way a project is expected to be:
+//
+//   <Project>/
+//     assets/        the content: textures, audio, shaders, materials, fonts,
+//                    models and the rest
+//     lib/           the core of the engine, as the library it is
+//     scripts/       the scripts of the game
+//     scenes/        the scenes of the game
+//     project.Spectra   the manifest: what the project is
+//     icon.ico       the picture of the project
+inline constexpr const char* kProjectManifestFile = "project.Spectra";
+// The name the manifest had before it was given its extension in capitals. It is
+// still read, so a project made before the rename keeps opening - and it is the
+// same file on Windows, where the two spellings are one file.
+inline constexpr const char* kProjectManifestLegacy = "project.spectra";
+inline constexpr const char* kProjectAssetsDir = "assets";
+inline constexpr const char* kProjectLibDir = "lib";
 inline constexpr const char* kProjectScriptsDir = "scripts";
-inline constexpr const char* kProjectModelsDir = "models";
+inline constexpr const char* kProjectScenesDir = "scenes";
+inline constexpr const char* kProjectSceneFile = "scene.json";
+inline constexpr const char* kProjectIconFile = "icon.ico";
+
+// The core of the engine, as the library it is. The name depends on the
+// platform, and it is looked for next to the program and in the `lib/` folder
+// of a project - a project carries the core it was made with.
+inline constexpr const char* kEngineCoreNames[] = {
+    "spectra_core.dll",
+    "libspectra_core.so",
+    "libspectra_core.dylib",
+};
 // Where the editor keeps the workspace it was left in: dock sizes, which panels
 // are open and where each one floats. Per project, like the scene - two projects
 // are two workspaces.
@@ -36,6 +64,34 @@ inline constexpr const char* kSettingsFileName = "settings.ini";
 // there is all it takes to make it appear in the picker.
 inline constexpr const char* kAppIconFile = "icon.ico";
 inline constexpr const char* kAppIconsDir = "assets/image/icons";
+
+// The folders a kind of asset lives in.
+//
+// A project keeps its content in `assets/` under plain names: `textures/`,
+// `audio/`, `shaders/`, `material/`, `fonts/`, `models/` and the rest. The
+// engine ships its own defaults, and those live in the older spelling
+// (`image/textures`, `sounds`, `image/icons`), so both are looked for and the
+// project's wins - a project that has a texture of its own shows it, and the
+// engine's is still there for everything the project did not bring.
+namespace assetdirs {
+
+inline constexpr const char* kTextures[] = {"textures", "image/textures"};
+inline constexpr const char* kAudio[] = {"audio", "sounds"};
+inline constexpr const char* kMusic[] = {"music"};
+inline constexpr const char* kShaders[] = {"shaders"};
+inline constexpr const char* kMaterial[] = {"material"};
+inline constexpr const char* kFonts[] = {"fonts"};
+inline constexpr const char* kModels[] = {"models"};
+inline constexpr const char* kSky[] = {"sky"};
+inline constexpr const char* kLang[] = {"lang"};
+inline constexpr const char* kIcons[] = {"icons", "image/icons"};
+inline constexpr const char* kPrefabs[] = {"prefabs"};
+inline constexpr const char* kUi[] = {"ui"};
+inline constexpr const char* kData[] = {"data"};
+inline constexpr const char* kParticles[] = {"particles"};
+inline constexpr const char* kPhysics[] = {"physics"};
+
+} // namespace assetdirs
 
 // Languages a project can be tagged with. Deliberately not i18n::Language:
 // core must not depend on the localisation layer, so the launcher is the one
@@ -112,6 +168,9 @@ struct ProjectInfo {
     // belongs to the project rather than to this machine's settings.ini.
     bool favorite = false;
     // The scene file the project keeps its scene in, inside the project folder.
+    // A path relative to the project folder ("scenes/scene.json"), because a
+    // project keeps its scenes in `scenes/` and the manifest has to say so.
+    //
     // Empty means the project does not say, which is every project made before
     // the scene became JSON: those keep the text file they have until the first
     // time they are saved.
@@ -212,13 +271,34 @@ public:
     bool readManifest(const std::string& projectPath, ProjectInfo& out) const;
     // Writes `info` verbatim - timestamps are the caller's business.
     bool writeManifest(const ProjectInfo& info) const;
+    // The manifest of the project in that folder: the file it is written under,
+    // and the one it had before the rename if that is what is there.
+    static std::string manifestPath(const std::string& projectPath);
+    // Moves a project that was made before the layout changed into the layout:
+    // the scene into `scenes/`, the models into `assets/models`. A project that
+    // is already in the layout is left exactly as it is.
+    bool migrate(ProjectInfo& info) const;
     // Reads the manifest, flips `favorite` and writes it back. Returns the new
     // state, or the state on disk when the write failed.
     bool setFavorite(const std::string& projectPath, bool favorite);
 
+    // Where the pieces of the project are. All of them are inside the project
+    // folder, and none of them is guessed: a path that is asked for is a path
+    // the project has.
+    //
+    // The scene is the one that is not a plain join: the manifest says which
+    // file it is in, because a project may have more than one scene.
     static std::string scenePath(const ProjectInfo& p);
     static std::string scriptsPath(const ProjectInfo& p);
+    static std::string assetsPath(const ProjectInfo& p);
+    static std::string libPath(const ProjectInfo& p);
     static std::string modelsPath(const ProjectInfo& p);
+    // The picture of the project: icon.ico, or icon.svg when there is one.
+    static std::string iconPath(const ProjectInfo& p);
+    // The path of a file inside the project, relative to the project folder.
+    // The manifest holds paths this way, so a project folder can be moved and
+    // the project still opens.
+    static std::string relativeToProject(const ProjectInfo& p, const std::string& path);
 
     // 3-48 characters, no path separators, no "..", and nothing a filesystem
     // would silently rewrite (`: * ? " < > |`, control characters, a trailing
@@ -232,5 +312,10 @@ private:
 
 // True when `path` is a directory that carries a manifest.
 bool projectExists(const std::string& path);
+
+// The core of the engine as a file: next to the program, or in the `lib/`
+// folder of a project. Empty when there is none - a project that carries no
+// core is a project that runs on the engine it is opened with.
+std::string findEngineCore();
 
 } // namespace s3d

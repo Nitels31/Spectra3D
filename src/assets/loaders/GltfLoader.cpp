@@ -2,6 +2,7 @@
 
 #include "core/Log.hpp"
 #include "assets/MeshUtil.hpp"
+#include "platform/Filesystem.hpp"
 
 #include <filesystem>
 #include <map>
@@ -234,8 +235,11 @@ void walkNode(cgltf_node* node, MeshAsset& asset, int depth, const std::string& 
 bool loadGltf(const std::string& path, MeshAsset& out) {
     cgltf_options options = {};
     cgltf_data* data = nullptr;
-    if (cgltf_parse_file(&options, path.c_str(), &data) != cgltf_result_success) return false;
-    if (cgltf_load_buffers(&options, data, path.c_str()) != cgltf_result_success) {
+    // The reader can only be given a narrow path, so the path is handed over in
+    // the machine's own code page.
+    const std::string system = fs::systemPath(path);
+    if (cgltf_parse_file(&options, system.c_str(), &data) != cgltf_result_success) return false;
+    if (cgltf_load_buffers(&options, data, system.c_str()) != cgltf_result_success) {
         cgltf_free(data);
         return false;
     }

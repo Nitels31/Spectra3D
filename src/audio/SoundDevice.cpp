@@ -123,10 +123,13 @@ bool SoundDevice::load(const std::string& name, const std::string& path) {
     SoundEntry entry;
     entry.path = path;
     entry.voices.resize(kVoicesPerSound);
+
     for (Voice& voice : entry.voices) {
-        const ma_result result =
-            ma_sound_init_from_file(&impl_->engine, path.c_str(), 0, nullptr, nullptr,
-                                    &voice.sound);
+        // The device can only be given a narrow path, so the path is handed over
+        // in the machine's own code page: a sound in a folder the machine
+        // cannot spell is a sound that is not there.
+        const ma_result result = ma_sound_init_from_file(
+            &impl_->engine, fs::systemPath(path).c_str(), 0, nullptr, nullptr, &voice.sound);
         if (result != MA_SUCCESS) {
             Log::warn("Audio: cannot read '%s': %s", path.c_str(),
                       ma_result_description(result));

@@ -5,6 +5,7 @@
 #include "platform/Filesystem.hpp"
 
 #include <fstream>
+#include <sstream>
 
 namespace s3d {
 namespace i18n {
@@ -34,18 +35,35 @@ const Bundle kBundles[] = {
 } // namespace
 
 void Localizer::loadBundles() {
-    const std::string root = str::join(fs::assetRoot(), "lang");
     // Drop the pointer first: the tables it refers to are about to be replaced.
     active_ = nullptr;
     for (const Bundle& bundle : kBundles) {
         TextTable table;
-        const std::string path = str::join(root, bundle.fileName);
 
-        std::ifstream file(path);
-        if (!file) {
+        // The project's own bundle first and the engine's after it: a project
+        // that translates a language differently is the one that is heard.
+        std::string path;
+        for (const std::string& root : fs::assetRoots()) {
+            const std::string candidate = str::join(str::join(root, "lang"), bundle.fileName);
+            if (fs::exists(candidate)) {
+                path = candidate;
+                break;
+            }
+        }
+        if (path.empty()) {
+            Log::warn("i18n: missing %s", bundle.fileName);
+            continue;
+        }
+
+        // The file is read by the engine, which knows how to open a path the
+        // operating system can spell: a project in a folder with a Cyrillic name
+        // is a project whose language is there.
+        std::string text;
+        if (!fs::readFile(path, text)) {
             Log::warn("i18n: missing %s", path.c_str());
             continue;
         }
+        std::istringstream file(text);
         std::string line;
         while (std::getline(file, line)) {
             line = str::trim(line);

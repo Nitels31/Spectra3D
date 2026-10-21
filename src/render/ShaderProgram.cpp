@@ -41,6 +41,14 @@ bool compileStage(unsigned int shader, const std::string& source, const char* wh
 } // namespace
 
 std::string shaderPath(const std::string& relative) {
+    // The project's own shaders first: a project that brings a shader of its
+    // own is drawn with it, and the engine's is there for the rest.
+    const std::string& projectAssets = fs::projectAssetRoot();
+    if (!projectAssets.empty()) {
+        const std::string inProject = str::join(str::join(projectAssets, kShaderFolder), relative);
+        if (fs::exists(inProject)) return inProject;
+    }
+
     // The folder next to the program: where the build puts them.
     const std::string staged = str::join(fs::executableDir(), kShaderFolder);
     const std::string inBuild = str::join(staged, relative);

@@ -1,6 +1,8 @@
 #pragma once
 #include <GLFW/glfw3.h>
 
+#include <string>
+
 #include "platform/InputEvents.hpp"
 
 namespace s3d {
@@ -31,6 +33,10 @@ public:
     // code instead of shipped as a file: one mark, two sizes, no asset to go
     // missing from a build. A no-op where the window system has no use for it.
     void applyIcon(const char* iconName = nullptr);
+    // The icon of the project that is open, from the file the project carries.
+    // A file that is missing or unreadable leaves the window with the icon it
+    // has - a project without an icon is not a project without a window.
+    void applyIconFile(const std::string& iconPath);
     void setSizeLimits(int minW, int minH, int maxW, int maxH);
     bool pumpEvents();
     void present();

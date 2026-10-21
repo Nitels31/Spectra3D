@@ -922,6 +922,84 @@ void testShadowSettings() {
     fs::removeTree(info.path);
 }
 
+// The layout of a project: the folders it has, where its scene is, and what a
+// project made before the layout changed is moved into.
+void testProjectLayout() {
+    heading("a project has the layout");
+
+    ProjectLibrary library;
+    library.setRoot(fs::executableDir());
+    fs::removeTree(str::join(fs::executableDir(), "layouttest"));
+    ProjectInfo info = library.create("layouttest", LanguageTag::English);
+    check(info.valid, "the test project is made");
+
+    // The folders of the project.
+    const char* folders[] = {"assets", "lib", "scripts", "scenes"};
+    for (const char* folder : folders)
+        check(fs::isDirectory(str::join(info.path, folder)),
+              "the project has the folder it is supposed to have");
+
+    // The folders inside the assets.
+    const char* assets[] = {"textures", "audio",  "music", "shaders", "material",
+                            "fonts",   "models", "sky",   "lang",    "icons",
+                            "prefabs", "ui",     "data",  "particles", "physics"};
+    bool allAssets = true;
+    for (const char* folder : assets)
+        if (!fs::isDirectory(str::join(str::join(info.path, "assets"), folder)))
+            allAssets = false;
+    check(allAssets, "the assets of the project have every folder");
+
+    // The scene is in `scenes/`, and the manifest says so.
+    const std::string scene = ProjectLibrary::scenePath(info);
+    check(str::fileName(scene) == "scene.json" && scene.find("scenes") != std::string::npos,
+          "the scene of the project is in scenes/");
+    check(fs::exists(scene), "the scene file is there");
+
+    ProjectInfo read;
+    check(library.readManifest(info.path, read), "the manifest is read back");
+    check(read.sceneFile == "scenes/scene.json", "the manifest says where the scene is");
+    check(ProjectLibrary::scriptsPath(read) ==
+              str::join(info.path, "scripts"),
+          "the scripts of the project are in scripts/");
+    check(ProjectLibrary::assetsPath(read) == str::join(info.path, "assets"),
+          "the assets of the project are in assets/");
+    check(ProjectLibrary::libPath(read) == str::join(info.path, "lib"),
+          "the core of the engine is in lib/");
+
+    // A project made before the layout changed: the scene beside the project
+    // and the models beside it. It is moved into the layout when it is opened.
+    fs::removeTree(str::join(fs::executableDir(), "oldproject"));
+    const std::string oldPath = str::join(fs::executableDir(), "oldproject");
+    fs::ensureDirectory(oldPath);
+    fs::ensureDirectory(str::join(oldPath, "models"));
+    fs::writeFile(str::join(oldPath, "scene.json"), "{}");
+    fs::writeFile(str::join(oldPath, "models/box.fbx"), "not a model");
+    ProjectInfo legacy;
+    legacy.name = "oldproject";
+    legacy.path = oldPath;
+    legacy.manifestPath = str::join(oldPath, "project.spectra");
+    legacy.version = 1;
+    legacy.valid = true;
+    legacy.sceneFile = "scene.json";
+    library.writeManifest(legacy);
+
+    ProjectInfo opened;
+    check(library.readManifest(oldPath, opened), "the old project is read");
+    check(library.migrate(opened), "the old project is moved into the layout");
+    check(fs::exists(str::join(str::join(oldPath, "scenes"), "scene.json")),
+          "the scene moved into scenes/");
+    check(fs::isDirectory(str::join(str::join(oldPath, "assets"), "models")),
+          "the models moved into assets/models");
+    check(!fs::isDirectory(str::join(oldPath, "models")), "the old models folder is gone");
+
+    ProjectInfo after;
+    check(library.readManifest(oldPath, after), "the old project is read back");
+    check(after.sceneFile == "scenes/scene.json", "the manifest of the old project says so");
+
+    fs::removeTree(oldPath);
+    fs::removeTree(info.path);
+}
+
 } // namespace
 
 int main() {
@@ -946,6 +1024,7 @@ int main() {
     testGlyphTable();
     testShadowSettings();
     testFont();
+    testProjectLayout();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

@@ -199,6 +199,23 @@ HICON loadShippedIcon(int width, int height, const char* iconName) {
     return static_cast<HICON>(
         LoadImageW(nullptr, path, IMAGE_ICON, width, height, LR_LOADFROMFILE));
 }
+
+// An icon from a file of its own: the icon of the project that is open.
+//
+// The path is widened by hand rather than converted: the folder a project
+// lives in is not always spelled in ASCII, and a narrow path is a path that
+// fails to load on a folder whose name is not.
+HICON loadIconFile(int width, int height, const std::string& iconPath) {
+    if (iconPath.empty()) return nullptr;
+    const int length = MultiByteToWideChar(CP_UTF8, 0, iconPath.c_str(),
+                                           (int)iconPath.size(), nullptr, 0);
+    if (length <= 0) return nullptr;
+    std::wstring wide((size_t)length, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, iconPath.c_str(), (int)iconPath.size(), wide.data(),
+                        length);
+    return static_cast<HICON>(
+        LoadImageW(nullptr, wide.c_str(), IMAGE_ICON, width, height, LR_LOADFROMFILE));
+}
 #endif  // _WIN32
 
 } // namespace
@@ -381,6 +398,34 @@ void Window::applyIcon(const char* iconName) {
     if (big) SendMessageW(handle, WM_SETICON, ICON_BIG, (LPARAM)big);
 #else
     (void)0;
+#endif
+}
+
+// The icon of the project that is open, from the file the project carries.
+//
+// A file that is missing or unreadable is not an error: the window keeps the
+// icon it has, and the drawn mark is what a project without an icon leaves
+// behind.
+void Window::applyIconFile(const std::string& iconPath) {
+#if defined(_WIN32)
+    if (!window_) return;
+    HWND handle = glfwGetWin32Window(window_);
+    if (!handle) return;
+
+    const int smallSize =
+        GetSystemMetrics(SM_CXSMICON) > 0 ? GetSystemMetrics(SM_CXSMICON) : 16;
+    const int bigSize = GetSystemMetrics(SM_CXICON) > 0 ? GetSystemMetrics(SM_CXICON) : 32;
+
+    HICON small = loadIconFile(smallSize, smallSize, iconPath);
+    HICON big = loadIconFile(bigSize, bigSize, iconPath);
+    if (!small && !big) return;  // the icon that is there stays
+
+    if (!small) small = makeMarkIcon(smallSize);
+    if (!big) big = makeMarkIcon(bigSize);
+    if (small) SendMessageW(handle, WM_SETICON, ICON_SMALL, (LPARAM)small);
+    if (big) SendMessageW(handle, WM_SETICON, ICON_BIG, (LPARAM)big);
+#else
+    (void)iconPath;
 #endif
 }
 

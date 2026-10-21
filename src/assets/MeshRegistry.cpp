@@ -82,9 +82,13 @@ int MeshRegistry::finishImport(MeshAsset asset, bool quiet) {
 
 int MeshRegistry::loadTexture(const std::string& path, bool repeat) {
     if (!textures_) return -1;
-    const std::string& root = fs::assetRoot();
-    if (root.empty()) return -1;
-    return textures_->loadFile(str::join(root, path), /*quiet=*/true, repeat);
+    // The project's own textures first, the engine's after them: a project that
+    // brings a texture of its own shows it.
+    for (const std::string& root : fs::assetRoots()) {
+        const std::string file = str::join(root, path);
+        if (fs::exists(file)) return textures_->loadFile(file, /*quiet=*/true, repeat);
+    }
+    return -1;
 }
 
 const std::vector<std::string>& MeshRegistry::textureFilesOf(int index) const {

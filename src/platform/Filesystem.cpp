@@ -40,6 +40,8 @@ namespace {
 
 std::string g_exeDir;
 std::string g_assetRoot;
+// The assets of the project that is open. Empty when there is none.
+std::string g_projectAssetRoot;
 // The module path as the OS reported it, before the directory was cut off it.
 std::string g_exePath;
 
@@ -53,18 +55,23 @@ std::string wideToUtf8(const wchar_t* w, size_t len) {
     return out;
 }
 
-// The path with the separators the platform's own calls want.
+// A UTF-8 path as the wide string the Windows calls want.
 //
-// Windows takes a forward slash in most of its calls, but not in all of them:
-// FindFirstFileA and RemoveDirectoryA refuse a path that has one in it. The
-// engine builds its paths with whichever separator the name it was given had,
-// so a path can carry both - and a folder that is emptied and not taken away
-// is a folder the user cannot get rid of.
-std::string nativePath(const std::string& path) {
-    std::string out = path;
-    for (char& c : out)
-        if (c == '/') c = '\\';
-    return out;
+// The engine keeps its paths in UTF-8, and the Windows calls that take a path
+// come in two spellings: the narrow one, which reads the bytes in the
+// machine's own code page, and the wide one, which reads them as they are.
+// A folder whose name is not ASCII - a project in Cyrillic, a build in a
+// folder with a letter in it that the machine cannot spell - is a path the
+// narrow calls cannot find: the bytes are read as something else and the path
+// points at nothing. So the wide calls are the ones the engine uses, and the
+// narrow ones are not called at all.
+std::wstring toWide(const std::string& utf8) {
+    if (utf8.empty()) return {};
+    const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), (int)utf8.size(), nullptr, 0);
+    if (n <= 0) return {};
+    std::wstring wide((size_t)n, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), (int)utf8.size(), wide.data(), n);
+    return wide;
 }
 #endif
 
@@ -131,6 +138,39 @@ void discoverAssetRoot() {
 
 const std::string& executableDir() { return g_exeDir; }
 
+// The path as the narrow calls want it: the machine's own code page.
+//
+// A few libraries can only be given a narrow path - the model readers, the
+// sound device, the font loader, the picture writer. The engine keeps its paths
+// in UTF-8, and this is where that becomes what those libraries understand.
+//
+// A name the machine's code page cannot spell is a name those libraries cannot
+// open. Everything the engine does itself goes through the wide calls and does
+// not care, so this is the last resort of a path, not the rule.
+std::string systemPath(const std::string& utf8) {
+#if defined(_WIN32)
+    if (utf8.empty()) return utf8;
+    // UTF-8 to UTF-16 to the machine's code page: the narrow calls read the
+    // bytes in that page and nothing else.
+    const int wideLength =
+        MultiByteToWideChar(CP_UTF8, 0, utf8.data(), (int)utf8.size(), nullptr, 0);
+    if (wideLength <= 0) return utf8;
+    std::wstring wide((size_t)wideLength, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), (int)utf8.size(), wide.data(), wideLength);
+
+    const int narrowLength =
+        WideCharToMultiByte(CP_ACP, 0, wide.data(), wideLength, nullptr, 0, nullptr, nullptr);
+    if (narrowLength <= 0) return utf8;
+    std::string narrow((size_t)narrowLength, '\0');
+    WideCharToMultiByte(CP_ACP, 0, wide.data(), wideLength, &narrow[0], narrowLength, nullptr,
+                        nullptr);
+    return narrow;
+#else
+    // Everywhere else the bytes are the bytes.
+    return utf8;
+#endif
+}
+
 const std::string& executablePath() { return g_exePath; }
 
 void adoptAssetWorkingDir() {
@@ -187,9 +227,32 @@ void adoptAssetWorkingDir() {
 
 const std::string& assetRoot() { return g_assetRoot; }
 
+const std::string& projectAssetRoot() { return g_projectAssetRoot; }
+
+void setProjectAssetRoot(const std::string& root) { g_projectAssetRoot = root; }
+
+std::vector<std::string> assetRoots() {
+    std::vector<std::string> roots;
+    // The project's own assets first: a project that brings a file of its own
+    // shows it, and the engine's is the fallback for everything else.
+    if (!g_projectAssetRoot.empty()) roots.push_back(g_projectAssetRoot);
+    if (!g_assetRoot.empty() && g_assetRoot != g_projectAssetRoot)
+        roots.push_back(g_assetRoot);
+    return roots;
+}
+
+std::string assetFolder(const std::string& root, const char* const* folders, size_t count) {
+    if (root.empty() || !folders) return {};
+    for (size_t i = 0; i < count; ++i) {
+        const std::string path = str::join(root, folders[i]);
+        if (isDirectory(path)) return path;
+    }
+    return {};
+}
+
 bool exists(const std::string& path) {
 #if defined(_WIN32)
-    return GetFileAttributesA(nativePath(path).c_str()) != INVALID_FILE_ATTRIBUTES;
+    return GetFileAttributesW(toWide(path).c_str()) != INVALID_FILE_ATTRIBUTES;
 #else
     struct stat st;
     return stat(path.c_str(), &st) == 0;
@@ -198,7 +261,7 @@ bool exists(const std::string& path) {
 
 bool isDirectory(const std::string& path) {
 #if defined(_WIN32)
-    const DWORD attr = GetFileAttributesA(nativePath(path).c_str());
+    const DWORD attr = GetFileAttributesW(toWide(path).c_str());
     return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
 #else
     struct stat st;
@@ -209,17 +272,19 @@ bool isDirectory(const std::string& path) {
 bool listDirectoryEx(const std::string& dir, std::vector<DirEntry>& out) {
     out.clear();
 #if defined(_WIN32)
-    WIN32_FIND_DATAA fd;
-    const std::string pattern = nativePath(str::join(dir, "*"));
-    HANDLE h = FindFirstFileA(pattern.c_str(), &fd);
+    WIN32_FIND_DATAW fd;
+    const std::wstring pattern = toWide(str::join(dir, "*"));
+    HANDLE h = FindFirstFileW(pattern.c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return false;
     do {
-        const std::string name = fd.cFileName;
+        // The name comes back as UTF-16 and is kept as UTF-8, because that is
+        // what every path in the engine is.
+        const std::string name = wideToUtf8(fd.cFileName, wcslen(fd.cFileName));
         if (name == "." || name == "..") continue;
-        // dwFileAttributes is part of the listing, so no GetFileAttributesA per
+        // dwFileAttributes is part of the listing, so no GetFileAttributesW per
         // entry is needed.
         out.push_back(DirEntry{name, (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0});
-    } while (FindNextFileA(h, &fd));
+    } while (FindNextFileW(h, &fd));
     FindClose(h);
 #else
     DIR* d = opendir(dir.empty() ? "." : dir.c_str());
@@ -294,19 +359,42 @@ std::vector<std::string> listFilesByExtension(
 }
 
 bool readFile(const std::string& path, std::string& out) {
+#if defined(_WIN32)
+    // The wide path, opened as a wide path: the narrow one cannot open a file
+    // whose name the machine's code page cannot spell.
+    FILE* file = _wfopen(toWide(path).c_str(), L"rb");
+    if (!file) return false;
+    std::string text;
+    char buffer[8192];
+    size_t got = 0;
+    while ((got = std::fread(buffer, 1, sizeof(buffer), file)) > 0) text.append(buffer, got);
+    std::fclose(file);
+    out.swap(text);
+    return true;
+#else
     std::ifstream file(path, std::ios::binary);
     if (!file) return false;
     std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     out.swap(text);
     return true;
+#endif
 }
 
 bool writeFile(const std::string& path, const std::string& contents) {
+#if defined(_WIN32)
+    FILE* file = _wfopen(toWide(path).c_str(), L"wb");
+    if (!file) return false;
+    const size_t written =
+        contents.empty() ? 0 : std::fwrite(contents.data(), 1, contents.size(), file);
+    std::fclose(file);
+    return written == contents.size();
+#else
     std::ofstream file(path); // text mode: CRLF on Windows, LF elsewhere
     if (!file) return false;
     file.write(contents.data(), (std::streamsize)contents.size());
     file.flush();
     return (bool)file;
+#endif
 }
 
 namespace {
@@ -318,7 +406,7 @@ namespace {
 // exists - but a typed path does not have to.
 void makeDirectory(const std::string& path) {
 #if defined(_WIN32)
-    CreateDirectoryA(path.c_str(), nullptr);
+    CreateDirectoryW(toWide(path).c_str(), nullptr);
 #else
     mkdir(path.c_str(), 0777);
 #endif
@@ -349,17 +437,19 @@ bool copyEntry(const std::string& src, const std::string& dst, bool isDir) {
         // build target that has never been written to is not there yet.
         makeParents(dst);
 #if defined(_WIN32)
-        // The paths with the separators the platform's own calls want.
-        const std::string source = nativePath(src);
-        const std::string target = nativePath(dst);
-        if (CopyFileA(source.c_str(), target.c_str(), FALSE) != 0) return true;
+        // The wide calls: the narrow ones read the bytes in the machine's own
+        // code page, and a path the machine cannot spell is a path that points
+        // at nothing.
+        const std::wstring source = toWide(src);
+        const std::wstring target = toWide(dst);
+        if (CopyFileW(source.c_str(), target.c_str(), FALSE) != 0) return true;
         // A file already open for writing cannot be overwritten in place. It is
         // copied aside and the original is replaced, which is what a rebuild of a
         // folder that holds the running program needs.
-        const std::string aside = target + ".new";
-        if (CopyFileA(source.c_str(), aside.c_str(), FALSE) == 0) return false;
-        if (!MoveFileExA(aside.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) {
-            DeleteFileA(aside.c_str());
+        const std::wstring aside = target + L".new";
+        if (CopyFileW(source.c_str(), aside.c_str(), FALSE) == 0) return false;
+        if (!MoveFileExW(aside.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+            DeleteFileW(aside.c_str());
             return false;
         }
         return true;
@@ -402,8 +492,9 @@ namespace {
 // platform calls accept.
 bool removeEntry(const std::string& path, bool isDir) {
 #if defined(_WIN32)
-    // The path with the separators the platform's own calls want.
-    const std::string native = nativePath(path);
+    // The wide path: the narrow one reads the bytes in the machine's own code
+    // page, and a path it cannot spell is a path that points at nothing.
+    const std::wstring native = toWide(path);
 #else
     const std::string native = path;
 #endif
@@ -411,19 +502,19 @@ bool removeEntry(const std::string& path, bool isDir) {
 #if defined(_WIN32)
         // A read-only file cannot be deleted on Windows, and DeleteFile fails
         // instead of clearing the attribute for us.
-        const DWORD attr = GetFileAttributesA(native.c_str());
+        const DWORD attr = GetFileAttributesW(native.c_str());
         if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY))
-            SetFileAttributesA(native.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
-        return DeleteFileA(native.c_str()) != 0;
+            SetFileAttributesW(native.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
+        return DeleteFileW(native.c_str()) != 0;
 #else
         return std::remove(path.c_str()) == 0;
 #endif
     }
 #if defined(_WIN32)
-    const DWORD attr = GetFileAttributesA(native.c_str());
+    const DWORD attr = GetFileAttributesW(native.c_str());
     if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY))
-        SetFileAttributesA(native.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
-    return RemoveDirectoryA(native.c_str()) != 0;
+        SetFileAttributesW(native.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
+    return RemoveDirectoryW(native.c_str()) != 0;
 #else
     return rmdir(path.c_str()) == 0;
 #endif
@@ -463,21 +554,6 @@ bool removeTree(const std::string& path) {
     return ok;
 }
 
-#if defined(_WIN32)
-namespace {
-
-std::wstring utf8ToWide(const std::string& utf8) {
-    if (utf8.empty()) return {};
-    const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), (int)utf8.size(), nullptr, 0);
-    if (n <= 0) return {};
-    std::wstring out((size_t)n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), (int)utf8.size(), &out[0], n);
-    return out;
-}
-
-} // namespace
-#endif
-
 PickResult pickFolder(const std::string& startPath, std::string& out) {
 #if defined(_WIN32)
     // The shell dialog is a COM object. Initialising COM here, for the duration
@@ -510,7 +586,7 @@ PickResult pickFolder(const std::string& startPath, std::string& out) {
     const std::string start = isDirectory(startPath) ? startPath : std::string();
     if (!start.empty()) {
         IShellItem* folder = nullptr;
-        if (SUCCEEDED(SHCreateItemFromParsingName(utf8ToWide(start).c_str(), nullptr,
+        if (SUCCEEDED(SHCreateItemFromParsingName(toWide(start).c_str(), nullptr,
                                                   IID_IShellItem, (void**)&folder)) &&
             folder) {
             dialog->SetFolder(folder);

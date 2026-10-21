@@ -121,7 +121,12 @@ bool Application::initialize() {
     // Anchor the process to the binary directory so logs and scenes land in
     // build/, then resolve the asset root relative to it.
     fs::adoptAssetWorkingDir();
-    Log::setFileDirectory(fs::executableDir().empty() ? nullptr : fs::executableDir().c_str());
+    // The log lives next to the program, in the machine's own code page: the
+    // file is opened by the narrow call, and a folder the machine cannot spell
+    // is a folder with no log in it.
+    Log::setFileDirectory(fs::executableDir().empty()
+                              ? nullptr
+                              : fs::systemPath(fs::executableDir()).c_str());
 
     Log::info("Spectra3D starting");
     std::printf("Spectra3D | OpenGL 3.3 compat | GLFW | FreeType\n");
@@ -196,11 +201,11 @@ void Application::loadSkyFrom(const std::string& directory) {
     sceneRenderer_.sky().load(str::join(directory, "sky"));
 }
 
-void Application::loadProjectSky(const std::string& projectDir) {
-    if (projectDir.empty()) return;
+void Application::loadProjectSky(const std::string& projectAssets) {
+    if (projectAssets.empty()) return;
     // A project that has a sky of its own uses it; one that has not keeps
     // whatever the engine is using.
-    loadSkyFrom(projectDir);
+    loadSkyFrom(projectAssets);
 }
 
 void Application::startAudio() {
@@ -213,9 +218,22 @@ void Application::startAudio() {
     // without the extension, so a file dropped into assets/sounds/ is a sound
     // the scripts can play and a body can carry.
     const std::string assets = fs::assetRoot();
-    if (assets.empty()) return;
-    const int loaded = sound_.loadFolder(str::join(assets, "sounds"));
+    int loaded = 0;
+    if (!assets.empty()) loaded += sound_.loadFolder(str::join(assets, "sounds"));
     Log::info("Audio: %d sound(s) loaded", loaded);
+}
+
+// The sounds of the project. They are loaded when the project is opened, after
+// the engine's, and they replace the ones of the same name: a project that
+// brings a sound of its own is heard, and the engine's is still there for the
+// rest.
+void Application::loadProjectSounds() {
+    const std::string& projectAssets = fs::projectAssetRoot();
+    if (projectAssets.empty()) return;
+    int loaded = 0;
+    loaded += sound_.loadFolder(str::join(projectAssets, assetdirs::kAudio[0]));
+    loaded += sound_.loadFolder(str::join(projectAssets, assetdirs::kMusic[0]));
+    if (loaded > 0) Log::info("Audio: %d sound(s) from the project", loaded);
 }
 
 void Application::playImpactSounds() {
@@ -410,6 +428,12 @@ void Application::runLauncherFrame() {
 void Application::loadProjectWorld(const ProjectInfo& project) {
     project_ = project;
     world_.clear();
+
+    // The assets of the project: its own content, and the engine's for
+    // everything it did not bring. Set before anything is read, because the
+    // models, the sky and the sounds are looked for in these two roots.
+    fs::setProjectAssetRoot(ProjectLibrary::assetsPath(project_));
+
     world_.setGravity((GravityAxis)project_.gravity);
     camera_.position = project_.cameraPosition;
     camera_.yaw = project_.cameraYaw;
@@ -440,7 +464,10 @@ void Application::loadProjectWorld(const ProjectInfo& project) {
     meshes_.setLoaderThreads(launcher_.settings().loaderThreads);
 
     // A project may have a sky of its own, and it wins over the engine's.
-    loadProjectSky(project_.path);
+    // The project's sky is in its own `assets/sky`: a picture of the sky in one
+    // piece, or the six faces of a cube.
+    loadProjectSky(fs::projectAssetRoot());
+    loadProjectSounds();
     if (fs::exists(scenePath)) {
         // A missing or empty scene is a fresh project, not an error.
         scenes::load(world_, meshes_, scenePath);
@@ -448,7 +475,14 @@ void Application::loadProjectWorld(const ProjectInfo& project) {
 }
 
 void Application::openProject(const ProjectInfo& project) {
-    loadProjectWorld(project);
+    // A project made before the layout changed is moved into the layout first:
+    // the scene into `scenes/`, the models into `assets/models`. It happens once,
+    // when the project is opened, and it is the only time the engine writes
+    // into a project it did not create.
+    ProjectInfo migrated = project;
+    launcher_.projects().migrate(migrated);
+
+    loadProjectWorld(migrated);
     const std::string scenePath = ProjectLibrary::scenePath(project_);
 
     editor_ = std::make_unique<Editor>(meshes_, localizer_, sound_);
@@ -470,6 +504,10 @@ void Application::openProject(const ProjectInfo& project) {
     window_.dropUnreadInput();
 
     updateTitle();
+    // The icon of the project is the icon of the window: a project that brings
+    // a picture of its own is shown as itself.
+    const std::string icon = ProjectLibrary::iconPath(project_);
+    if (fs::exists(icon)) window_.applyIconFile(icon);
     Log::info("Project '%s' opened: %s", project_.name.c_str(), scenePath.c_str());
     Log::info("Scene: %d bodies", (int)world_.bodies.size());
 }
@@ -562,7 +600,11 @@ void Application::runEditorFrame(float dt) {
         // whose scene is a JSON file has to say so in the manifest, or the next
         // time it is opened it goes back to the text file and the scene that
         // was saved is gone.
-        project_.sceneFile = str::fileName(editor_->scenePath());
+        //
+        // The path is relative to the project folder, because that is what the
+        // manifest holds: "scenes/scene.json", not the whole path on this
+        // machine.
+        project_.sceneFile = ProjectLibrary::relativeToProject(project_, editor_->scenePath());
         // The shadows, as they are set now: they are the project's, and the
         // project is what is written out.
         project_.shadowQuality = shadowSettings_.quality == ShadowQuality::Off     ? 0
@@ -680,11 +722,25 @@ bool Application::stageBuild(const std::string& target, bool alsoRun) {
         return false;
     }
 
+    // The engine goes into `lib/`: the program, the core it loads and the assets
+    // it reads. They belong together - a core the program cannot find is a
+    // program that does not start - and the project sits beside them, the way
+    // it sits beside the engine it was made with.
+    //
+    //   <build>/
+    //     lib/
+    //       spectra3d.exe      the program
+    //       spectra_core.dll   the core of the engine
+    //       assets/            the engine's own assets
+    //       shaders/           the engine's own shaders
+    //     project/<name>/      the project
+    const std::string libDir = str::join(target, kProjectLibDir);
+
     // The program itself. copyTree handles a file as well as a folder, so the
     // same call stages both without a second copy routine.
     int copied = 0;
     const std::string exe = fs::executablePath();
-    if (!exe.empty() && fs::copyTree(exe, str::join(target, str::fileName(exe)))) copied++;
+    if (!exe.empty() && fs::copyTree(exe, str::join(libDir, str::fileName(exe)))) copied++;
 
     // Whatever sits beside the program that is not a folder: the DLLs it loads at
     // startup. Copying the listing rather than a hardcoded list keeps a new
@@ -695,8 +751,16 @@ bool Application::stageBuild(const std::string& target, bool alsoRun) {
     for (const fs::DirEntry& entry : beside) {
         if (entry.isDir) continue;
         if (!str::equalsIgnoreAscii(str::extensionView(entry.name), ".dll")) continue;
-        if (fs::copyTree(str::join(exeDir, entry.name), str::join(target, entry.name))) copied++;
+        if (fs::copyTree(str::join(exeDir, entry.name), str::join(libDir, entry.name))) copied++;
     }
+
+    // The shaders, which are files the engine reads and not files it carries
+    // inside itself. A build that starts and finds no shader is a build that
+    // draws nothing.
+    const std::string shaders = str::join(exeDir, "shaders");
+    if (fs::isDirectory(shaders) &&
+        fs::copyTree(shaders, str::join(libDir, "shaders")))
+        copied++;
 
     // Assets travel with the build: a build that starts and then finds no models
     // and no language is a build that cannot be used.
@@ -712,10 +776,10 @@ bool Application::stageBuild(const std::string& target, bool alsoRun) {
         for (const fs::DirEntry& entry : assetEntries) {
             if (entry.isDir && str::equalsIgnoreAscii(entry.name, "models")) continue;
             if (fs::copyTree(str::join(assets, entry.name),
-                             str::join(str::join(target, "assets"), entry.name)))
+                             str::join(str::join(libDir, "assets"), entry.name)))
                 copied++;
         }
-        copied += stageModels(assets, target, project_);
+        copied += stageModels(assets, libDir, project_);
     }
 
     // The project, entry by entry rather than as one tree, and into
@@ -748,12 +812,12 @@ bool Application::stageBuild(const std::string& target, bool alsoRun) {
     if (!alsoRun) return true;
 
 #if defined(_WIN32)
-    const std::string run = str::join(target, str::fileName(exe));
+    const std::string run = str::join(libDir, str::fileName(exe));
     STARTUPINFOA si{};
     PROCESS_INFORMATION pi{};
     si.cb = sizeof(si);
     std::string command = "\"" + run + "\"";
-    if (CreateProcessA(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, target.c_str(),
+    if (CreateProcessA(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, libDir.c_str(),
                        &si, &pi)) {
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
@@ -764,7 +828,7 @@ bool Application::stageBuild(const std::string& target, bool alsoRun) {
     return false;
 #else
     // Elsewhere a shell does the same job; no window to steal focus from either.
-    const std::string run = str::join(target, str::fileName(exe));
+    const std::string run = str::join(libDir, str::fileName(exe));
     if (std::system(("chmod +x '" + run + "' && '" + run + "' &").c_str()) == 0) return true;
     Log::error("Build: cannot start '%s'", run.c_str());
     return false;

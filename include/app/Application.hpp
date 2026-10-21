@@ -65,13 +65,17 @@ private:
     // none at all.
     void loadSky();
     void loadSkyFrom(const std::string& directory);
-    void loadProjectSky(const std::string& projectDir);
+    // The sky of the project, from its own `assets/sky`.
+    void loadProjectSky(const std::string& projectAssets);
 
     // --- sound ---------------------------------------------------------------
     // Starts the device and loads the sounds that ship with the engine. A
     // machine with no sound card is a machine where everything else still has
     // to work, so a failure here is a line in the log and not a stop.
     void startAudio();
+    // The sounds the project brings: loaded when the project is opened, after
+    // the engine's, and they replace the ones of the same name.
+    void loadProjectSounds();
     // The sounds the bodies make when they hit something, and the sounds the
     // scene's own bodies carry.
     void playImpactSounds();

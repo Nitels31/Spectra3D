@@ -3,6 +3,7 @@
 #include "script/Bindings.hpp"
 #include "core/Log.hpp"
 #include "core/Str.hpp"
+#include "platform/Filesystem.hpp"
 
 #if SPECTRA_SCRIPTING
 #include <angelscript.h>
@@ -107,20 +108,10 @@ std::string moduleNameFor(const std::string& scriptName) {
 
 #if SPECTRA_SCRIPTING
 bool readWholeFile(const std::string& path, std::string& text) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return false;
-
-    file.seekg(0, std::ios::end);
-    const std::streamoff end = file.tellg();
-    if (end <= 0) {
-        text.clear();
-        return true;
-    }
-    file.seekg(0, std::ios::beg);
-    text.resize((size_t)end);
-    file.read(&text[0], end);
-    text.resize((size_t)file.gcount());
-    return true;
+    // The engine's own reader: a path the operating system cannot spell is a
+    // script that is not there, and a project in a folder with a Cyrillic name
+    // is exactly that.
+    return fs::readFile(path, text);
 }
 #endif
 

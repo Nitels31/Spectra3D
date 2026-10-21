@@ -1,6 +1,7 @@
 #include "assets/MeshImport.hpp"
 
 #include "assets/MeshUtil.hpp"
+#include "platform/Filesystem.hpp"
 
 #include <utility>
 #include <vector>
@@ -24,10 +25,14 @@ namespace s3d {
 namespace loaders {
 
 bool loadObj(const std::string& path, MeshAsset& out) {
-    rapidobj::Result result = rapidobj::ParseFile(std::filesystem::path(path));
+    // The reader can only be given a narrow path, so the path is handed over in
+    // the machine's own code page: a model in a folder the machine cannot spell
+    // is a model that is not there.
+    const std::string system = fs::systemPath(path);
+    rapidobj::Result result = rapidobj::ParseFile(std::filesystem::path(system));
     if (result.error) {
         // Missing or unreadable .mtl should not block the geometry import.
-        result = rapidobj::ParseFile(std::filesystem::path(path),
+        result = rapidobj::ParseFile(std::filesystem::path(system),
                                      rapidobj::MaterialLibrary::Ignore());
     }
     if (result.error) return false;

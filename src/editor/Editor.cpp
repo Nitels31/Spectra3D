@@ -21,7 +21,7 @@ constexpr float kConsoleHeight = 156.0f;
 constexpr float kPanelHeaderHeight = 24.0f;
 
 // Fallback when no project is open: next to the binary.
-const char* const kDefaultSceneFile = "scene.json";
+const char* const kDefaultSceneFile = "scenes/scene.json";
 
 // Navigation balls: camera orientation presets, offsets from the widget centre.
 struct NavBall {
@@ -1414,7 +1414,7 @@ void Editor::saveScene(const PhysicsWorld& world) {
         std::string name = str::fileName(target);
         const size_t dot = name.find_last_of('.');
         if (dot != std::string::npos) name = name.substr(0, dot);
-        target = str::join(projectDir(), name + ".json");
+        target = str::join(scenesDir(), name + ".json");
     }
 
     if (!scenes::save(world, meshes_, target)) return;

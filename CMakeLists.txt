@@ -332,7 +332,11 @@ set(SPECTRA_SRC_I18N
 # layer graph: both sit above everything here and both are the shell, not the
 # engine. Nothing below them includes either (checked: only Application.hpp does,
 # and it is the one that owns both).
-add_library(spectra_runtime STATIC
+#
+# The runtime is a shared library: the core of the engine, as the library it is.
+# It is one file next to the program - and the `lib/` folder of a project
+# carries a copy of it, so a project is a unit that says which core it runs on.
+add_library(spectra_runtime SHARED
     ${SPECTRA_SRC_SCENE}
     ${SPECTRA_SRC_UI}
     ${SPECTRA_SRC_RENDER}
@@ -343,6 +347,23 @@ add_library(spectra_runtime STATIC
     ${SPECTRA_SRC_CORE}
     ${SPECTRA_SRC_I18N}
 )
+set_target_properties(spectra_runtime PROPERTIES
+    OUTPUT_NAME spectra_core
+    # Everything the program uses is exported, so the layer headers need no
+    # decoration of their own: a class that is used across the boundary is
+    # exported, and one that is not is not.
+    WINDOWS_EXPORT_ALL_SYMBOLS ON)
+if(WIN32)
+    # No "lib" in front on Windows: the core is "spectra_core.dll", not
+    # "libspectra_core.dll". Everywhere else the prefix is the one the platform
+    # uses, and it stays.
+    set_target_properties(spectra_runtime PROPERTIES PREFIX "")
+endif()
+if(MINGW)
+    # The same thing for the GNU linker: without it a DLL exports nothing but
+    # what is marked, and the program that links it finds nothing to link.
+    target_link_options(spectra_runtime PRIVATE "LINKER:--export-all-symbols")
+endif()
 if(SPECTRA_SCRIPTING)
     target_sources(spectra_runtime PRIVATE ${SPECTRA_SRC_SCRIPT})
 endif()
@@ -577,6 +598,10 @@ endif()
 # ---------------------------------------------------------------------------
 
 install(TARGETS spectra3d RUNTIME DESTINATION bin)
+# The core of the engine is a library of its own, and it lives beside the
+# program that loads it: a DLL the program cannot find is a program that does
+# not start.
+install(TARGETS spectra_runtime RUNTIME DESTINATION bin)
 if(SPECTRA_BUILD_TOOLS)
     install(TARGETS glbinfo fbxtest skygen soundgen shadowtest RUNTIME DESTINATION bin)
     if(SPECTRA_SCRIPTING)
@@ -586,6 +611,8 @@ endif()
 # The engine looks for assets relative to the binary first and share/spectra3d
 # second, so an installed copy runs from anywhere.
 install(DIRECTORY assets/ DESTINATION share/spectra3d)
+# The shaders are files the engine reads, and they live next to the binary.
+install(DIRECTORY src/shaders/ DESTINATION bin/shaders)
 if(WIN32 AND SPECTRA_GLFW_DLL)
     install(FILES "${SPECTRA_GLFW_DLL}" DESTINATION bin)
 endif()

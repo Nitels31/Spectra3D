@@ -149,16 +149,22 @@ bool TextAtlas::build() {
 
     // The bundled font first, then the system ones. Every candidate is tried
     // before the next one is: a font that cannot be read is not a font.
-    const std::string& assets = fs::assetRoot();
-    if (!assets.empty()) {
+    //
+    // The project's own fonts come before the engine's: a project that brings
+    // a font of its own has it baked into the atlas.
+    for (const std::string& root : fs::assetRoots()) {
         for (const char* name : kBundledFonts) {
-            const std::string path = str::join(assets, name);
-            if (FT_New_Face(library, path.c_str(), 0, &face) == 0) {
+            const std::string path = str::join(root, name);
+            // The font library can only be given a narrow path, so the path is
+            // handed over in the machine's own code page.
+            if (FT_New_Face(library, fs::systemPath(path).c_str(), 0, &face) == 0) {
                 used = path;
                 break;
             }
         }
+        if (face) break;
     }
+    const std::string& assets = fs::assetRoot();
     if (!face) {
         for (const char* path : kSystemFontPaths) {
             if (FT_New_Face(library, path, 0, &face) == 0) {

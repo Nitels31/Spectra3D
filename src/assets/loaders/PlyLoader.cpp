@@ -1,6 +1,7 @@
 #include "assets/MeshImport.hpp"
 
 #include "assets/MeshUtil.hpp"
+#include "platform/Filesystem.hpp"
 
 #include <miniply.h>
 
@@ -9,7 +10,9 @@ namespace loaders {
 namespace {
 
 bool readPlyGeometry(const std::string& path, MeshAsset& asset) {
-    miniply::PLYReader reader(path.c_str());
+    // The reader can only be given a narrow path, so the path is handed over in
+    // the machine's own code page.
+    miniply::PLYReader reader(fs::systemPath(path).c_str());
     if (!reader.valid()) return false;
 
     const uint32_t vertexElementIndex = reader.find_element(miniply::kPLYVertexElement);

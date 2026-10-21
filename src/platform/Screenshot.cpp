@@ -61,7 +61,10 @@ bool savePixels(const std::string& path, const std::vector<unsigned char>& pixel
     const size_t slash = path.find_last_of("/\\");
     if (slash != std::string::npos) fs::ensureDirectory(path.substr(0, slash));
 
-    if (!stbi_write_png(path.c_str(), width, height, 3, pixels.data(), width * 3)) {
+    // The writer can only be given a narrow path, so the path is handed over in
+    // the machine's own code page.
+    if (!stbi_write_png(fs::systemPath(path).c_str(), width, height, 3, pixels.data(),
+                        width * 3)) {
         Log::error("Screenshot: cannot write '%s'", path.c_str());
         return false;
     }

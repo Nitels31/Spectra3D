@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -8,6 +9,17 @@ namespace s3d {
 // only OS-specific things the engine needs, so they live here instead of being
 // re-implemented with #ifdefs at every call site.
 namespace fs {
+
+// The path as the narrow calls want it: the machine's own code page.
+//
+// A few libraries can only be given a narrow path - the model readers, the
+// sound device, the font loader, the picture writer. The engine keeps its paths
+// in UTF-8, and this is where that becomes what those libraries understand.
+//
+// A name the machine's code page cannot spell is a name those libraries cannot
+// open. Everything the engine does itself goes through the wide calls and does
+// not care, so this is the last resort of a path, not the rule.
+std::string systemPath(const std::string& utf8);
 
 // Absolute directory containing the running executable ("" when unknown).
 const std::string& executableDir();
@@ -24,6 +36,23 @@ void adoptAssetWorkingDir();
 
 // Absolute directory that holds the bundled assets. Empty when not found.
 const std::string& assetRoot();
+
+// The assets of the project that is open: "<project>/assets". Empty when no
+// project is open.
+//
+// A project has assets of its own, and they win: a project that brings a
+// texture of its own shows it, and the engine's is still there for everything
+// the project did not bring.
+const std::string& projectAssetRoot();
+void setProjectAssetRoot(const std::string& root);
+
+// The roots to look an asset in, the project's own first and the engine's
+// after it. Empty roots are left out.
+std::vector<std::string> assetRoots();
+
+// The folder of one kind of asset inside a root: the first of `folders` that
+// is there. Empty when the root has none of them.
+std::string assetFolder(const std::string& root, const char* const* folders, size_t count);
 
     // Creates the directory and the ones above it. Does nothing when it is
     // already there.

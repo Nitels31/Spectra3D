@@ -730,7 +730,7 @@ void Editor::drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int 
         std::string name = modalField_.text();
         if (name.empty() && listed > 0) name = str::fileName(modalFiles_[(size_t)modalRow_]);
         if (name.empty()) break;
-        scenePath_ = str::join(projectDir(), name);
+        scenePath_ = str::join(scenesDir(), name);
         loadScene(world);
         break;
     }

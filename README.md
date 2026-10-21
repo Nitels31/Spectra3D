@@ -56,12 +56,13 @@ tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp, editortest.cpp, s
                      sounds; ui_language_test.ps1 drives the real
                      window to check that a dropdown does not act on its own
                      opening click
-build/               all output: spectra3d.exe, glfw3.dll, engine.log,
-                     settings.ini, project/, a copy of assets/ and of
-                     src/shaders/ (gitignored)
+build/               all output: spectra3d.exe, spectra_core.dll, glfw3.dll,
+                     engine.log, settings.ini, project/, a copy of assets/
+                     and of src/shaders/ (gitignored)
   lib/               the static libraries the executable links, incl.
-                     libspectra_runtime.a - every engine layer below app/ and
-                     editor/, which is the engine without an editor
+                     libspectra_core.dll - the shared library of every engine
+                     layer below app/ and editor/, which is the engine without
+                     an editor: the core of the engine, as the library it is
 ```
 
 The repository root `include/` goes on the include path, so the same header is
@@ -123,10 +124,11 @@ static library called `spectra_angelscript`. That is expected;
 `-DSPECTRA_SCRIPTING=OFF` removes that time.
 
 After the build, CMake copies `glfw3.dll` (Windows) and `assets/` into `build/`, so
-the exe runs from any directory. Mutable files (`engine.log`, `settings.ini`,
-`build/project/`) are written next to the binary: at startup
-`fs::adoptAssetWorkingDir()` locates the exe directory and makes it the working
-directory.
+the exe runs from any directory. The core of the engine, `spectra_core.dll`, is
+built next to it - it is a shared library, and Windows looks for a library beside
+the program. Mutable files (`engine.log`, `settings.ini`, `build/project/`) are
+written next to the binary: at startup `fs::adoptAssetWorkingDir()` locates the
+exe directory and makes it the working directory.
 
 ## Launcher and projects
 
@@ -203,16 +205,41 @@ project does not silently land in the wrong place.
 
 ### Project files
 
+A project is a folder, and the folder is the architecture of the game:
+
 ```
 <projectsRoot>/MyProject/
-  project.spectra    manifest (see below)
-  scene.txt          the scene document
-  editorlayout.txt   saved editor workspace (written by the editor itself)
+  project.Spectra    manifest (see below)
+  scenes/            the scenes of the game
+    scene.json       the scene document
+  assets/            the content of the game
+    textures/        the pictures
+    audio/           the sounds
+    music/           the long ones
+    shaders/         the shaders the project brings
+    material/        the materials
+    fonts/           the fonts
+    models/          the models
+    sky/             the sky: a picture, or the six faces of a cube
+    lang/            the translations
+    icons/           the pictures of the game
+    prefabs/         the ready-made pieces
+    ui/              the pieces of the interface
+    data/            the tables and the settings
+    particles/       the effects
+    physics/         the physical materials
+  lib/               the core of the engine, as the library it is
   scripts/           *.as - project scripts
-  models/            folder for project models
+  editorlayout.txt   saved editor workspace (written by the editor itself)
+  icon.ico           the picture of the project: the icon of the window
 ```
 
-`project.spectra` is a plain `key=value` file (comments start with `#`), always
+The project's assets win over the engine's, and the engine's are the fallback: a
+project that brings a texture of its own is seen, and the engine's is still there
+for everything the project did not bring. A project made before the folders
+existed is moved into the layout the first time it is opened.
+
+`project.Spectra` is a plain `key=value` file (comments start with `#`), always
 written with the same key order:
 
 ```
@@ -235,10 +262,10 @@ favorite=0
 
 `ProjectLibrary::create()` writes the manifest, `readManifest()` reads it, and
 `Application::openProject()` takes gravity and the camera (position, yaw, pitch,
-fov) from it and loads `scene.txt` if the file exists. **After creation nobody
-rewrites the manifest** (`writeManifest` is no longer called anywhere), so the
-camera and gravity keys stay exactly as `create()` set them. The one exception is
-`favorite`: the ring in the list toggles it via `ProjectLibrary::setFavorite()`.
+fov) from it and loads `scenes/scene.json` if the file exists. **After creation
+nobody rewrites the manifest** (`writeManifest` is no longer called anywhere), so
+the camera and gravity keys stay exactly as `create()` set them. The one exception
+is `favorite`: the ring in the list toggles it via `ProjectLibrary::setFavorite()`.
 
 The project root defaults to `<exe dir>/project`, i.e. `build/project`
 (`Settings::defaultProjectRoot()`). It is configurable in the Settings screen and
@@ -258,11 +285,11 @@ recent=C:\...\build\project\MyForest
 inside `assets/image/icons`, chosen in the settings screen and applied to the window
 straight away.
 
-The project's `models/` folder is created together with the project, but the
-editor does not scan it: `AssetBrowser::refresh()` reads `assets/models` of the
-shared asset root (falling back to the working directory), and the list shows in
-the **Create** menu. Models are added to the scene from the menu or from a script
-via `engine::importModel`.
+The project's `assets/models` folder is created together with the project, and the
+editor looks in it and in the engine's `assets/models`: `AssetBrowser::refresh()`
+reads the project's own models first and the engine's after them (falling back to
+the working directory), and the list shows in the **Create** menu. Models are added
+to the scene from the menu or from a script via `engine::importModel`.
 
 ### Languages
 
@@ -1105,7 +1132,7 @@ In the launcher (`Launcher::handleKeys`):
 
 Scene saving and loading: `Editor::saveScene()` / `Editor::loadScene()` live in the
 **File** menu (Save / Load / Reload from disk) and write to the current project's
-`scene.json`.
+`scenes/scene.json`.
 
 **Save As** asks *where* the scene goes, not what it is called: the platform's
 own folder chooser opens, and the name stays what it was. A name typed into a
@@ -1113,9 +1140,9 @@ dialog is a spelling test; a folder chosen in Explorer is a place.
 
 ## Scene format
 
-`scene.json` in the project directory is a JSON document: named fields, named
-shapes, and a position on one line rather than four. It is the only format a
-scene is written in.
+`scenes/scene.json` in the project directory is a JSON document: named fields,
+named shapes, and a position on one line rather than four. It is the only format
+a scene is written in.
 
 ```json
 {

@@ -328,10 +328,26 @@ void Editor::frameSelection(PhysicsWorld& world, Camera& camera) {
 }
 
 std::string Editor::projectDir() const {
-    // The scene path is "<projectDir>/scene.json", so the directory is known without
-    // asking the application for the project.
+    // The scene is "<project>/scenes/scene.json", so the project is the folder
+    // above the one the scene is in. A scene that was saved somewhere else -
+    // "Save As" - keeps the folder it was saved in.
+    const std::string dir = scenesDir();
+    const size_t slash = dir.find_last_of("/\\");
+    if (slash == std::string::npos) return std::string(".");
+    const std::string parent = dir.substr(0, slash);
+    const std::string name = dir.substr(slash + 1);
+    if (name == kProjectScenesDir) return parent;
+    return dir;
+}
+
+std::string Editor::scenesDir() const {
+    // The folder the scene file is in. Without a scene there is nothing to
+    // derive it from, and the folder of the binary is the answer: that is
+    // where the editor keeps the scene of a project it was not given.
+    if (scenePath_.empty()) return str::join(fs::executableDir(), kProjectScenesDir);
     const size_t slash = scenePath_.find_last_of("/\\");
-    return slash == std::string::npos ? std::string(".") : scenePath_.substr(0, slash);
+    if (slash == std::string::npos) return std::string(".");
+    return scenePath_.substr(0, slash);
 }
 
 void Editor::openModal(Modal dialog) {
@@ -344,9 +360,10 @@ void Editor::openModal(Modal dialog) {
         break;
     case Modal::OpenScene:
         // Every scene file in the project, so the dialog is a choice rather than
-        // a spelling test. A scene is a JSON file.
-        modalFiles_ = fs::listFilesByExtension(projectDir(), {".json"});
-        modalField_.set("scene.json");
+        // a spelling test. A scene is a JSON file, and the scenes of a project
+        // live in its `scenes` folder.
+        modalFiles_ = fs::listFilesByExtension(scenesDir(), {".json"});
+        modalField_.set(kProjectSceneFile);
         break;
 
     case Modal::BuildSettings:

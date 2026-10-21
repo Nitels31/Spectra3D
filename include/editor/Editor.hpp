@@ -193,8 +193,8 @@ public:
     bool consumePlayStopped() { return std::exchange(playStopped_, false); }
 
     // Scene file this editor saves to and loads from. Empty falls back to
-    // "scene.json" next to the binary, which is what happens when the editor runs
-    // without a project.
+    // "scenes/scene.json" next to the binary, which is what happens when the
+    // editor runs without a project.
     void setScenePath(std::string path) { scenePath_ = std::move(path); }
     // Shown in the window title, the way the sketch has it: engine, dash, project.
     void setProjectName(std::string name) { projectName_ = std::move(name); }
@@ -204,7 +204,7 @@ public:
     void setHomeCamera(const Camera& camera) { homeCamera_ = camera; }
 
     const char* scenePath() const {
-        return scenePath_.empty() ? "scene.json" : scenePath_.c_str();
+        return scenePath_.empty() ? "scenes/scene.json" : scenePath_.c_str();
     }
 
     // Saved the scene since it was last loaded or written. New Scene, Open Scene
@@ -540,6 +540,8 @@ private:
     // The directory a Build writes to and the name a scene file gets, both derived
     // from the open project so the defaults are right before the user types.
     std::string projectDir() const;
+    // The folder the scenes of the project live in: "<project>/scenes".
+    std::string scenesDir() const;
     // Points the camera at the selection, far enough back that it fits.
     void frameSelection(PhysicsWorld& world, Camera& camera);
 

@@ -2,6 +2,7 @@
 
 #include "core/Log.hpp"
 #include "assets/MeshUtil.hpp"
+#include "platform/Filesystem.hpp"
 
 #include <cstring>
 
@@ -183,7 +184,9 @@ bool loadFbx(const std::string& path, MeshAsset& out) {
     options.space_conversion = UFBX_SPACE_CONVERSION_ADJUST_TRANSFORMS;
 
     ufbx_error error;
-    ufbx_scene* scene = ufbx_load_file(path.c_str(), &options, &error);
+    // The reader can only be given a narrow path, so the path is handed over in
+    // the machine's own code page.
+    ufbx_scene* scene = ufbx_load_file(fs::systemPath(path).c_str(), &options, &error);
     if (!scene) {
         Log::error("FBX: %s (%s)", path.c_str(),
                    error.description.data ? error.description.data : "load failed");

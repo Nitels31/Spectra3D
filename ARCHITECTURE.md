@@ -105,14 +105,25 @@ sound and the device decides what that name means.
    The project version and the icon directory are *read out of
    `include/core/Project.hpp`* rather than written a second time.
 
-7. **Two targets, and the boundary is the layer graph.** `spectra_runtime` is a
-   static library holding every layer below `app/` and `editor/`. `spectra3d` is
-   the shell: `Application`, `Launcher`, `main` and the editor, linking the
-   runtime. The split is not cosmetic - it is what lets a second executable be
-   "the same engine, an empty window and a loop", which is what Build already
-   promises, and it is what stops the editor and that executable from drifting
-   apart. Nothing below `app/` or `editor/` includes either of them (the one
-   exception is `Application.hpp`, which owns both).
+7. **Two targets, and the boundary is the layer graph.** `spectra_runtime` is a shared
+   library holding every layer below `app/` and `editor/`; `spectra3d` is the shell:
+   `Application`, `Launcher`, `main` and the editor, linking the runtime. The split is
+   not cosmetic - it is what lets a second executable be "the same engine, an empty
+   window and a loop", which is what Build already promises, and it is what stops the
+   editor and that executable from drifting apart. Nothing below `app/` or `editor/`
+   includes either of them (the one exception is `Application.hpp`, which owns both).
+
+   **The runtime is a library and not an archive.** It is built as a shared library -
+   `spectra_core.dll` on Windows, `libspectra_core.so` elsewhere - and it is the core
+   of the engine as a file: the program loads it, and a project carries a copy of it
+   in its `lib/` folder, so a project says which core it runs on. Everything the
+   program uses is exported (`WINDOWS_EXPORT_ALL_SYMBOLS`, and `--export-all-symbols`
+   for the GNU linker), so the layer headers carry no decoration of their own.
+
+   A shared library cannot sit in a folder of its own on Windows: the loader looks
+   for it beside the program, in the system folders, and on `PATH`. The built game
+   therefore keeps the program and the core together in `lib/` - the two of them, the
+   assets and the shaders - and the project sits beside that.
 
    `tools/scripttest` used to name eighteen engine sources by hand. It now links
    `spectra_runtime`, because a source list is not a dependency list: the old one
@@ -167,6 +178,23 @@ CMake as a resource when a resource compiler exists (MinGW: `windres`, MSVC:
 listing, the executable path, finding the asset root, `adoptAssetWorkingDir()`, and
 the shell folder dialog. There is no separate GL loader — the engine targets the
 fixed-function pipeline and includes `<GL/gl.h>` directly.
+
+**THE PATHS ARE IN UTF-8, AND THE WINDOWS CALLS ARE THE WIDE ONES.** The engine keeps
+its paths in UTF-8, because that is what the files it writes say (`project.Spectra`,
+the scene, the translations), and Windows has two spellings of every call that takes
+a path: the narrow one, which reads the bytes in the machine's own code page, and the
+wide one, which reads them as they are. A project in a folder with a Cyrillic name is
+a path the narrow calls cannot find: the bytes are read as something else, and the
+folder is not there.
+
+So `Filesystem` uses the wide calls - `GetFileAttributesW`, `FindFirstFileW`,
+`CopyFileW`, `_wfopen` - and the names the listing gives back are converted to UTF-8
+as they come in. The libraries that can only be given a narrow path - the model
+readers, the sound device, the font library, the picture writer - are given the path
+through `fs::systemPath()`, which converts it to the machine's code page at the last
+moment. A name the machine's code page cannot spell is a name those libraries cannot
+open; everything the engine does itself goes through the wide calls and does not
+care.
 
 **THE PICTURE OF THE SCREEN IS A FILE.** `Screenshot.hpp` writes what is on
 the screen into a PNG, and **F12** takes one — in the editor and in the
@@ -541,7 +569,66 @@ which makes it a second value that has to agree with the first.
 
 ---
 
-## The UI frame contract
+## The project layout
+
+A project is a folder, and the folder is the architecture of the game:
+
+```
+<Project>/
+  assets/            the content of the game
+    textures/        the pictures
+    audio/           the sounds
+    music/           the long ones
+    shaders/         the shaders the project brings
+    material/        the materials
+    fonts/           the fonts
+    models/          the models
+    sky/             the sky: a picture, or the six faces of a cube
+    lang/            the translations
+    icons/           the pictures of the game
+    prefabs/         the ready-made pieces
+    ui/              the pieces of the interface
+    data/            the tables and the settings
+    particles/       the effects
+    physics/         the physical materials
+  lib/               the core of the engine, as the library it is
+  scripts/           the scripts of the game
+  scenes/            the scenes of the game
+    scene.json
+  project.Spectra    the manifest: what the project is
+  icon.ico           the picture of the project
+```
+
+**The scene lives in `scenes/` and the manifest says which file it is.** The
+manifest holds the path relative to the project folder (`scene=scenes/scene.json`),
+because a project keeps its scenes in one folder and a project that may have more
+than one has to say which one it is. The old name - a bare file name, with the
+scene beside the project - is still read: a project made before the folders
+existed keeps opening, and it is moved into the layout the first time it is
+opened (`ProjectLibrary::migrate()`). The move is the only time the engine writes
+into a project it did not create, and it never moves a file over a file that is
+already there.
+
+**The project's assets win, and the engine's are the fallback.** `fs::assetRoots()`
+is the list of roots to look in: the project's own `assets/` first, the engine's
+after it. Every kind of resource asks that list - the models, the textures, the
+sounds, the shaders, the sky, the languages, the fonts, the icons - so a project
+that brings a file of its own is seen and the engine's is still there for
+everything the project did not bring. The engine's own assets keep their older
+names (`image/textures`, `sounds`, `image/icons`), so both spellings are looked
+for; `core/Project.hpp` holds the list of both (`assetdirs::`).
+
+**`lib/` is the core of the engine.** A project is created with a copy of
+`spectra_core` in it, so a project folder says which core it was made with, and
+the built game puts the program and the core together in `lib/` - the two of them
+have to be together, because that is where Windows looks for a library.
+
+**The icon of the project is the icon of the window.** `icon.ico` beside the
+project is applied to the window when the project is opened
+(`Window::applyIconFile()`), and a project without one keeps the mark the engine
+draws.
+
+---
 
 This is the part of the editor that is easiest to break, because the batcher and the
 input snapshot are both shared, one-shot, and silent when misused.
@@ -878,12 +965,26 @@ reading their names.
   a fixed `world_.step()` → render.
 
 **"Build" is `stageBuild()`.** There is no separate player: the player *is* this
-executable, so a build is the program, the DLLs beside it, `assets/` and the project
-itself. The project is copied to `<build>/project/<name>`, because that is where the
-built program will look for projects when it starts, exactly as the editor does. It
-is copied **entry by entry**, not as a tree: the usual build folder lives *inside*
-the project, and a tree copy would copy the build into itself, doubling it on every
-rebuild.
+executable, so a build is the program, the core it loads, the assets it reads
+and the project itself:
+
+```
+<build>/
+  lib/
+    spectra3d.exe        the program
+    spectra_core.dll     the core of the engine
+    assets/              the engine's own assets
+    shaders/             the engine's own shaders
+  project/<name>/        the project
+```
+
+The program and the core are in the same folder because that is where Windows
+looks for a library, and a program that cannot find its core is a program that
+does not start. The project is copied to `<build>/project/<name>`, because that
+is where the built program will look for projects when it starts, exactly as the
+editor does. It is copied **entry by entry**, not as a tree: the usual build
+folder lives *inside* the project, and a tree copy would copy the build into
+itself, doubling it on every rebuild.
 
 `fs::copyTree()` creates the directories that are missing — including every parent,
 because Windows' `CreateDirectoryA` makes only the last level — and replaces a file
@@ -985,17 +1086,21 @@ their own literals.
 
 | Path | What it is |
 |---|---|
-| `<projectsRoot>/<Project>/project.spectra` | the manifest: `name`, `version`, `engine`, `created`, `modified`, `language`, `gravity`, `favorite`, `cameraX/Y/Z`, `cameraYaw`, `cameraPitch`, `cameraFov`, `shadowQuality`, `shadowResolution`, `shadowCascades`, `shadowSunAzimuth`, `shadowSunElevation`, `shadowBias`, `shadowNormalOffset`, `shadowRadius` |
-| `<projectsRoot>/<Project>/scene.txt` | the scene document (an empty file is created with the project) |
+| `<projectsRoot>/<Project>/project.Spectra` | the manifest: `name`, `version`, `engine`, `created`, `modified`, `language`, `gravity`, `favorite`, `cameraX/Y/Z`, `cameraYaw`, `cameraPitch`, `cameraFov`, `shadowQuality`, `shadowResolution`, `shadowCascades`, `shadowSunAzimuth`, `shadowSunElevation`, `shadowBias`, `shadowNormalOffset`, `shadowRadius`, `scene` |
+| `<projectsRoot>/<Project>/scenes/scene.json` | the scene document (an empty file is created with the project) |
 | `<projectsRoot>/<Project>/editorlayout.txt` | the saved editor workspace (written by `EditorLayout.cpp`) |
 | `<projectsRoot>/<Project>/scripts/` | `*.as`, run when Play begins |
-| `<projectsRoot>/<Project>/models/` | the project's own model folder |
+| `<projectsRoot>/<Project>/assets/` | the content of the project: `textures/`, `audio/`, `music/`, `shaders/`, `material/`, `fonts/`, `models/`, `sky/`, `lang/`, `icons/`, `prefabs/`, `ui/`, `data/`, `particles/`, `physics/` |
+| `<projectsRoot>/<Project>/lib/` | the core of the engine, as the library it is |
+| `<projectsRoot>/<Project>/icon.ico` | the picture of the project: the icon of the window while the project is open |
 | `<exeDir>/assets/sounds/*.wav` | the sounds the engine ships: the name of each is its file's stem, so a file dropped in the folder is a sound the scripts can play and a body can carry |
 | `<exeDir>/assets/fonts/JetBrainsMono-Regular.ttf` | the font the interface is drawn with, with its licence beside it. It is shipped rather than borrowed so the engine has the same letters on every machine it runs on |
 | `<exeDir>/assets/image/icons/*.ico` | the application icons the settings screen offers |
 | `<exeDir>/settings.ini` | machine-level settings: `projectRoot`, `language`, `theme`, `frameRateCap`, `appIcon`, up to 8 `recent` |
 
-The projects root is `Settings::projectRoot`, by default `<exeDir>/project`.
+The projects root is `Settings::projectRoot`, by default `<exeDir>/project` - and
+`<exeDir>/../project` when that is the one that is there, because a built game
+keeps its program in `lib/` and its projects beside that.
 
 Facts worth keeping in mind, because they mildly contradict intuition:
 
@@ -1003,7 +1108,8 @@ Facts worth keeping in mind, because they mildly contradict intuition:
   `ProjectLibrary::create()`, so the camera and gravity keys stay as they were set
   at creation even after the camera has been moved in the editor.
 - **A project's `models/` is not scanned.** `AssetBrowser::refresh()` reads the
-  shared `assets/models`; the folder is created but filled only by hand or through
+  shared `assets/models` - the project's own `assets/models` first and the
+  engine's after it; the folder is created but filled only by hand or through
   `engine::importModel`. The list feeds the Create menu, is refreshed by the `⟳`
   button in the bar, or by File → Reload.
 - **The title bar is icon, engine name, dash, project name**, and nothing else: no

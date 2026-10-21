@@ -2,6 +2,7 @@
 
 #include "assets/MeshImport.hpp"
 #include "core/Log.hpp"
+#include "core/Project.hpp"
 #include "core/Str.hpp"
 #include "platform/Filesystem.hpp"
 
@@ -20,6 +21,19 @@ namespace scenes {
 namespace {
 
 constexpr const char* kNoMesh = "-";
+
+// The models of the project that is open. Empty when there is no project.
+std::string projectModelsDir() {
+    static std::string cachedRoot;
+    static std::string dir;
+    const std::string& root = fs::projectAssetRoot();
+    if (cachedRoot != root) {
+        cachedRoot = root;
+        dir = fs::assetFolder(root, assetdirs::kModels,
+                              sizeof(assetdirs::kModels) / sizeof(assetdirs::kModels[0]));
+    }
+    return dir;
+}
 
 // Restores the per-shape dimension fields that are only stored as half extents.
 void syncShapeDimensions(RigidBody& body) {
@@ -50,21 +64,15 @@ void syncShapeDimensions(RigidBody& body) {
 // --- reading ----------------------------------------------------------------
 
 // Reads the whole file in one call.
+//
+// The engine's own file reader, not a stream: a path the operating system
+// cannot spell is a scene that is not there, and a project in a folder with a
+// Cyrillic name is exactly that.
 bool readWholeFile(const std::string& path, std::string& text, size_t& size) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return false;
-    file.seekg(0, std::ios::end);
-    const std::streamoff end = file.tellg();
-    if (end <= 0) {
-        size = 0;
-        text.assign(1, '\0');
-        return true;
-    }
-    file.seekg(0, std::ios::beg);
-    text.resize((size_t)end);
-    file.read(&text[0], end);
-    if (file.gcount() < end) text.resize((size_t)file.gcount());
-    size = text.size();
+    std::string bytes;
+    if (!fs::readFile(path, bytes)) return false;
+    size = bytes.size();
+    text = std::move(bytes);
     text.resize(size + 1);
     text[size] = '\0';
     return true;
@@ -90,9 +98,12 @@ void appendJoined(std::string& out, const std::string& dir, const std::string& n
 
 } // namespace
 
-// The file a model name is in. The asset root only changes while the working
-// directory is being adopted, so the models directory is resolved once and
-// reused for every body.
+// The file a model name is in.
+//
+// The project's own models first, the engine's after them, and the working
+// directory last. A model that a project brings is found in the project's
+// `assets/models`, and the engine's models are still there for the ones the
+// project did not bring.
 std::string findMeshFile(const std::string& name) {
     static std::string cachedRoot;
     static std::string modelsDir;
@@ -107,10 +118,20 @@ std::string findMeshFile(const std::string& name) {
     bundledPath.reserve(modelsDir.size() + name.size() + 8);
     localPath.reserve(name.size() + 8);
     for (const std::string& ext : meshExtensions()) {
+        // The project's own models.
+        const std::string projectModels = projectModelsDir();
+        if (!projectModels.empty()) {
+            bundledPath = str::join(projectModels, name);
+            bundledPath += ext;
+            if (fs::exists(bundledPath)) return bundledPath;
+        }
+
+        // The engine's models.
         appendJoined(bundledPath, modelsDir, name);
         bundledPath += ext;
         if (fs::exists(bundledPath)) return bundledPath;
 
+        // And the working directory, for a model that was dropped there.
         localPath.clear();
         localPath += name;
         localPath += ext;
@@ -430,19 +451,17 @@ bool saveJson(const PhysicsWorld& world, const MeshRegistry& meshes, const std::
     }
     root["bodies"] = std::move(bodies);
 
-    std::ofstream file(path);
-    if (!file) {
-        Log::error("Scene: cannot write %s", path.c_str());
-        return false;
-    }
     // Laid out by hand rather than by the library's dumper, so a position is
     // one line instead of four. A trailing newline so the file is a well-behaved
     // text file.
     std::string text;
     writeJson(text, root, 0);
     text += "\n";
-    file << text;
-    return (bool)file;
+    if (!fs::writeFile(path, text)) {
+        Log::error("Scene: cannot write %s", path.c_str());
+        return false;
+    }
+    return true;
 }
 
 bool loadJson(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path, int threads) {

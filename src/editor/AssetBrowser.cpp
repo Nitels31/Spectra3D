@@ -2,6 +2,7 @@
 
 #include "assets/MeshImport.hpp"
 #include "core/Log.hpp"
+#include "core/Project.hpp"
 #include "core/Str.hpp"
 #include "platform/Filesystem.hpp"
 
@@ -18,8 +19,17 @@ float massFromHull(const Vec3& half) { return 200.0f * 8.0f * half.x * half.y * 
 
 int AssetBrowser::refresh() {
     files_.clear();
-    const std::string modelsDir = str::join(fs::assetRoot(), "models");
-    files_ = fs::listFilesByExtension(modelsDir, meshExtensions());
+    // The project's own models first, the engine's after them: a project that
+    // brings a model of its own shows it, and the engine's models are still
+    // there for the ones the project did not bring.
+    for (const std::string& root : fs::assetRoots()) {
+        const std::string modelsDir = fs::assetFolder(root, assetdirs::kModels,
+                                                       sizeof(assetdirs::kModels) /
+                                                           sizeof(assetdirs::kModels[0]));
+        if (modelsDir.empty()) continue;
+        const std::vector<std::string> found = fs::listFilesByExtension(modelsDir, meshExtensions());
+        files_.insert(files_.end(), found.begin(), found.end());
+    }
 
     // Fall back to the working directory so a hand-dropped model still shows up.
     if (files_.empty()) files_ = fs::listFilesByExtension(".", meshExtensions());

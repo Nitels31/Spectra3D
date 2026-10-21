@@ -122,6 +122,46 @@ std::string projectDirectoryOf(const ProjectInfo& info) {
     return {};
 }
 
+// Whether two names are one file on this platform. On Windows the filesystem
+// does not tell "project.spectra" and "project.Spectra" apart, and everywhere
+// else it does.
+bool sameFileName(const std::string& a, const std::string& b) {
+#if defined(_WIN32)
+    return str::equalsIgnoreAscii(a, b);
+#else
+    return a == b;
+#endif
+}
+
+// A path that stays inside the project: relative, no "..", no drive letter and
+// no root. A manifest is a file a person edits, and a scene path in it is a
+// path inside the project - never one that points somewhere else on the disk.
+bool isSafeRelativePath(const std::string& path) {
+    if (path.empty()) return false;
+    if (path.find("..") != std::string::npos) return false;
+    if (path[0] == '/' || path[0] == '\\') return false;
+    if (path.size() > 1 && path[1] == ':') return false;
+    for (const char c : path)
+        if (c == '\n' || c == '\r') return false;
+    return true;
+}
+
+// The scene of the project as a path relative to the project folder: the
+// manifest says where the scene is, so the folder it is in is part of the
+// answer.
+std::string sceneRelativePath(const ProjectInfo& info) {
+    const std::string absolutePath = ProjectLibrary::scenePath(info);
+    const std::string dir = projectDirectoryOf(info);
+    if (!dir.empty() && absolutePath.size() > dir.size() &&
+        absolutePath.compare(0, dir.size(), dir) == 0) {
+        std::string relative = absolutePath.substr(dir.size());
+        while (!relative.empty() && (relative[0] == '/' || relative[0] == '\\'))
+            relative.erase(relative.begin());
+        if (!relative.empty()) return relative;
+    }
+    return kProjectSceneFile;
+}
+
 std::string formatFloat(float value) {
     char buffer[32];
     const int written = std::snprintf(buffer, sizeof(buffer), "%.4f", (double)value);
@@ -192,19 +232,64 @@ bool ProjectLibrary::isValidName(const std::string& name) {
 
 std::string ProjectLibrary::scenePath(const ProjectInfo& p) {
     const std::string dir = projectDirectoryOf(p);
+    const std::string scenes = str::join(dir, kProjectScenesDir);
+
     // A project that says which file its scene is in, uses that file. One that
     // says nothing is a project that has never been saved, and it gets the
     // scene file the engine writes.
-    if (!p.sceneFile.empty()) return str::join(dir, p.sceneFile);
-    return str::join(dir, kProjectSceneFile);
+    if (p.sceneFile.empty()) return str::join(scenes, kProjectSceneFile);
+
+    // A path with a separator in it is used as it is - it says where the scene
+    // is inside the project.
+    if (p.sceneFile.find('/') != std::string::npos ||
+        p.sceneFile.find('\\') != std::string::npos)
+        return str::join(dir, p.sceneFile);
+
+    // A bare name is looked for in `scenes/` first, because that is where a
+    // scene lives now, and next to the project after that - which is where the
+    // projects that predate the folder keep theirs.
+    const std::string inScenes = str::join(scenes, p.sceneFile);
+    if (fileExists(inScenes)) return inScenes;
+    const std::string beside = str::join(dir, p.sceneFile);
+    if (fileExists(beside)) return beside;
+    return inScenes;
 }
 
 std::string ProjectLibrary::scriptsPath(const ProjectInfo& p) {
     return str::join(projectDirectoryOf(p), kProjectScriptsDir);
 }
 
+std::string ProjectLibrary::assetsPath(const ProjectInfo& p) {
+    return str::join(projectDirectoryOf(p), kProjectAssetsDir);
+}
+
+std::string ProjectLibrary::libPath(const ProjectInfo& p) {
+    return str::join(projectDirectoryOf(p), kProjectLibDir);
+}
+
 std::string ProjectLibrary::modelsPath(const ProjectInfo& p) {
-    return str::join(projectDirectoryOf(p), kProjectModelsDir);
+    return str::join(assetsPath(p), assetdirs::kModels[0]);
+}
+
+std::string ProjectLibrary::iconPath(const ProjectInfo& p) {
+    const std::string dir = projectDirectoryOf(p);
+    const std::string ico = str::join(dir, "icon.ico");
+    if (fileExists(ico)) return ico;
+    const std::string svg = str::join(dir, "icon.svg");
+    if (fileExists(svg)) return svg;
+    return ico;
+}
+
+std::string ProjectLibrary::relativeToProject(const ProjectInfo& p, const std::string& path) {
+    const std::string dir = projectDirectoryOf(p);
+    if (dir.empty() || path.empty()) return path;
+    if (path.size() <= dir.size()) return path;
+    if (path.compare(0, dir.size(), dir) != 0) return path;
+
+    std::string relative = path.substr(dir.size());
+    while (!relative.empty() && (relative[0] == '/' || relative[0] == '\\'))
+        relative.erase(relative.begin());
+    return relative.empty() ? path : relative;
 }
 
 void ProjectLibrary::scan() {
@@ -220,7 +305,7 @@ void ProjectLibrary::scan() {
     for (const fs::DirEntry& entry : entries) {
         if (!entry.isDir) continue;
         const std::string path = str::join(root_, entry.name);
-        if (!fileExists(str::join(path, kProjectManifestFile))) continue;
+        if (!fileExists(manifestPath(path))) continue;
 
         ProjectInfo info;
         if (!readManifest(path, info)) continue;
@@ -270,13 +355,34 @@ ProjectInfo ProjectLibrary::create(const std::string& name, LanguageTag language
             }
     }
 
-    // The default root (<exeDir>/project) does not exist on a fresh checkout, so
-    // create it rather than making the first Create button click fail.
-    if (!makeDirectory(root_) || !makeDirectory(path) ||
+    // The tree of a project:
+    //
+    //   assets/{textures,audio,music,shaders,material,fonts,models,sky,lang,
+    //           icons,prefabs,ui,data,particles,physics}
+    //   lib/            the core of the engine
+    //   scripts/        the scripts of the game
+    //   scenes/         the scenes of the game
+    //   project.Spectra
+    //   icon.ico
+    //
+    // The folders are made empty rather than not made at all: a project that
+    // has no `assets/textures` folder is a project whose textures go
+    // somewhere else, and where that is depends on who is looking.
+    const std::string assets = str::join(path, kProjectAssetsDir);
+    if (!makeDirectory(path) || !makeDirectory(assets) ||
+        !makeDirectory(str::join(path, kProjectLibDir)) ||
         !makeDirectory(str::join(path, kProjectScriptsDir)) ||
-        !makeDirectory(str::join(path, kProjectModelsDir))) {
+        !makeDirectory(str::join(path, kProjectScenesDir))) {
         Log::error("Project: cannot create directory tree under '%s'", path.c_str());
         return {};
+    }
+    for (const char* folder : {"textures", "audio", "music", "shaders", "material",
+                               "fonts", "models", "sky", "lang", "icons", "prefabs",
+                               "ui", "data", "particles", "physics"}) {
+        if (!makeDirectory(str::join(assets, folder))) {
+            Log::error("Project: cannot create '%s' under '%s'", folder, path.c_str());
+            return {};
+        }
     }
 
     ProjectInfo info;
@@ -302,6 +408,19 @@ ProjectInfo ProjectLibrary::create(const std::string& name, LanguageTag language
         return info;
     }
 
+    // The picture of the project: the engine's own icon, so the launcher has
+    // something to show and the project is not the only one without a face.
+    const std::string engineIcon = str::join(str::join(fs::assetRoot(), "image/icons"),
+                                              kAppIconFile);
+    if (fileExists(engineIcon))
+        fs::copyTree(engineIcon, str::join(path, kProjectIconFile));
+
+    // The core of the engine, so the project carries what it runs on. A project
+    // without one is not broken: it runs on the engine it is opened with.
+    const std::string core = findEngineCore();
+    if (!core.empty()) fs::copyTree(core, str::join(str::join(path, kProjectLibDir),
+                                                   str::fileName(core)));
+
     if (!writeManifest(info)) {
         info.valid = false;
         return info;
@@ -317,7 +436,7 @@ bool ProjectLibrary::readManifest(const std::string& projectPath, ProjectInfo& o
     // reading the manifest without touching the filesystem.
     info.name = str::fileName(projectPath);
     info.path = projectPath;
-    info.manifestPath = str::join(projectPath, kProjectManifestFile);
+    info.manifestPath = manifestPath(projectPath);
 
     std::string text;
     if (!fs::readFile(info.manifestPath, text)) {
@@ -381,14 +500,18 @@ bool ProjectLibrary::readManifest(const std::string& projectPath, ProjectInfo& o
         } else if (key == "shadowRadius") {
             if (parseFloat(value, number)) info.shadowRadius = clampf(number, 0.5f, 32.0f);
         } else if (key == "scene") {
-            // The name of the scene file inside the project. A project that
-            // keeps its scene in JSON says so here, and a project that says
-            // nothing keeps the text format.
+            // The scene file inside the project, as a path relative to the
+            // project folder. A project that keeps its scene in JSON says so
+            // here, and a project that says nothing keeps the text format.
             const std::string name = str::trim(value);
-            if (!name.empty() && name.find('/') == std::string::npos &&
-                name.find('\\') == std::string::npos && name != ".." &&
-                name.find("..") == std::string::npos)
+            if (name.empty()) {
+                // Nothing to say.
+            } else if (isSafeRelativePath(name)) {
                 info.sceneFile = name;
+            } else {
+                Log::warn("Project: ignoring a scene path that leaves the project ('%s')",
+                          name.c_str());
+            }
         }
         // Unknown keys are ignored: a newer build may add some.
     });
@@ -446,17 +569,95 @@ text += "cameraFov=" + formatFloat(info.cameraFov) + "\n";
     text += "shadowBias=" + formatFloat(info.shadowBias) + "\n";
     text += "shadowNormalOffset=" + formatFloat(info.shadowNormalOffset) + "\n";
     text += "shadowRadius=" + formatFloat(info.shadowRadius) + "\n";
-    // The scene file the project keeps its scene in. A name, not a path: the
-    // scene lives inside the project folder and nowhere else. The resolved name,
-    // so a project that has not migrated yet keeps saying what it is using.
-    text += "scene=" + str::fileName(scenePath(info)) + "\n";
+    // The scene file the project keeps its scene in, as a path relative to the
+    // project folder. The resolved name, so a project that has not migrated yet
+    // keeps saying what it is using.
+    text += "scene=" + sceneRelativePath(info) + "\n";
 
     const std::string path = str::join(info.path, kProjectManifestFile);
     if (!fs::writeFile(path, text)) {
         Log::error("Project: cannot write '%s'", path.c_str());
         return false;
     }
+
+    // The manifest under its old name is the same file with an older spelling.
+    // On Windows writing the new one has already replaced it - the filesystem
+    // does not tell the two names apart - and elsewhere it is still there, and
+    // two manifests in one folder is one too many.
+    const std::string legacy = str::join(info.path, kProjectManifestLegacy);
+    if (!sameFileName(kProjectManifestLegacy, kProjectManifestFile) && fileExists(legacy)) {
+        fs::removeTree(legacy);
+        Log::info("Project: the manifest is now '%s'", kProjectManifestFile);
+    }
     return true;
+}
+
+std::string ProjectLibrary::manifestPath(const std::string& projectPath) {
+    const std::string now = str::join(projectPath, kProjectManifestFile);
+    if (fileExists(now)) return now;
+    const std::string legacy = str::join(projectPath, kProjectManifestLegacy);
+    if (fileExists(legacy)) return legacy;
+    return now;
+}
+
+// Moves a project that was made before the layout changed into the layout.
+//
+// The scene moves into `scenes/` and the models into `assets/models`, and the
+// manifest is rewritten to say where the scene is. A project that is already in
+// the layout is left exactly as it is, and nothing is ever moved over a file
+// that is already there: a project with two scenes keeps both.
+bool ProjectLibrary::migrate(ProjectInfo& info) const {
+    const std::string dir = projectDirectoryOf(info);
+    if (dir.empty()) return false;
+
+    bool changed = false;
+
+    // The manifest under its old name is the same file with an older spelling.
+    // It is written again under the new one, so the rename happens once and not
+    // on every opening.
+    if (manifestPath(dir) != str::join(dir, kProjectManifestFile)) changed = true;
+
+    // The folders the layout has. Made whether or not anything is moved: an
+    // empty `scenes/` is a folder that says where the scenes are.
+    const std::string scenes = str::join(dir, kProjectScenesDir);
+    const std::string assets = str::join(dir, kProjectAssetsDir);
+    makeDirectory(scenes);
+    makeDirectory(assets);
+
+    // The scene: a file beside the project moves into the scenes folder.
+    const std::string sceneFile = info.sceneFile;
+    if (!sceneFile.empty() && sceneFile.find('/') == std::string::npos &&
+        sceneFile.find('\\') == std::string::npos) {
+        const std::string beside = str::join(dir, sceneFile);
+        const std::string inScenes = str::join(scenes, sceneFile);
+        if (fileExists(beside) && !fileExists(inScenes) && fs::copyTree(beside, inScenes)) {
+            info.sceneFile = str::join(kProjectScenesDir, sceneFile);
+            changed = true;
+            Log::info("Project: the scene moved into '%s'", kProjectScenesDir);
+        }
+    }
+
+    // The models: a folder beside the project moves into the assets.
+    const std::string legacyModels = str::join(dir, "models");
+    const std::string newModels = str::join(assets, "models");
+    if (fs::isDirectory(legacyModels) && !fs::isDirectory(newModels)) {
+        makeDirectory(newModels);
+        std::vector<fs::DirEntry> entries;
+        bool ok = true;
+        if (fs::listDirectoryEx(legacyModels, entries)) {
+            for (const fs::DirEntry& entry : entries)
+                ok = fs::copyTree(str::join(legacyModels, entry.name),
+                                  str::join(newModels, entry.name)) &&
+                     ok;
+        }
+        if (ok) {
+            fs::removeTree(legacyModels);
+            Log::info("Project: the models moved into '%s/%s'", kProjectAssetsDir, "models");
+        }
+    }
+
+    if (changed) writeManifest(info);
+    return changed;
 }
 
 bool ProjectLibrary::setFavorite(const std::string& projectPath, bool favorite) {
@@ -479,7 +680,16 @@ bool ProjectLibrary::setFavorite(const std::string& projectPath, bool favorite) 
 
 std::string Settings::defaultProjectRoot() {
     const std::string& exeDir = fs::executableDir();
-    return exeDir.empty() ? std::string("project") : str::join(exeDir, "project");
+    if (exeDir.empty()) return std::string("project");
+
+    // The folder of the projects is next to the program - and, in a built game,
+    // one level above it: the program itself lives in `lib/`, next to the core
+    // of the engine, and the project sits beside that.
+    const std::string beside = str::join(exeDir, "project");
+    if (fs::isDirectory(beside)) return beside;
+    const std::string above = str::join(str::join(exeDir, ".."), "project");
+    if (fs::isDirectory(above)) return above;
+    return beside;
 }
 
 std::string Settings::settingsPath() {
@@ -572,7 +782,27 @@ void Settings::forgetProject(const std::string& path) {
 
 bool projectExists(const std::string& path) {
     if (path.empty() || !fs::isDirectory(path)) return false;
-    return fileExists(str::join(path, kProjectManifestFile));
+    return fileExists(ProjectLibrary::manifestPath(path));
+}
+
+// The core of the engine as a file.
+//
+// It is looked for next to the program first - that is where the engine keeps
+// the core it runs on - and in the `lib/` folder of the program after that,
+// which is the layout of a built game.
+std::string findEngineCore() {
+    const std::string& exeDir = fs::executableDir();
+    if (exeDir.empty()) return {};
+
+    for (const char* name : kEngineCoreNames) {
+        const std::string path = str::join(exeDir, name);
+        if (fileExists(path)) return path;
+    }
+    for (const char* name : kEngineCoreNames) {
+        const std::string path = str::join(str::join(exeDir, kProjectLibDir), name);
+        if (fileExists(path)) return path;
+    }
+    return {};
 }
 
 } // namespace s3d

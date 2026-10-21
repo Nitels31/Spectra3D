@@ -1,6 +1,7 @@
 #include "assets/TextureRegistry.hpp"
 
 #include "core/Log.hpp"
+#include "platform/Filesystem.hpp"
 
 #include <GL/gl.h>
 
@@ -151,14 +152,28 @@ int TextureRegistry::loadFile(const std::string& path, bool quiet, bool repeat) 
     if (existing >= 0) return existing;
 
     unsigned tex = 0;
-    int width = 0, height = 0, channels = 0;
-    unsigned char* pixels = stbi_load(path.c_str(), &width, &height, &channels, 4);
-    if (pixels) {
-        tex = upload(pixels, width, height, repeat);
-        stbi_image_free(pixels);
-        if (!tex && !quiet) Log::error("Texture: GL refused '%s'", path.c_str());
+    // The file is read by the engine and decoded from the bytes, rather than
+    // handed to the decoder as a path: a path the operating system cannot
+    // spell - a project in Cyrillic - is a picture that is not there.
+    std::string bytes;
+    if (!fs::readFile(path, bytes)) {
+        if (!quiet) Log::error("Texture: cannot read '%s'", path.c_str());
+        bytes.clear();
+    }
+    if (!bytes.empty()) {
+        int width = 0, height = 0, channels = 0;
+        unsigned char* pixels = stbi_load_from_memory(
+            reinterpret_cast<const unsigned char*>(bytes.data()), (int)bytes.size(), &width,
+            &height, &channels, 4);
+        if (pixels) {
+            tex = upload(pixels, width, height, repeat);
+            stbi_image_free(pixels);
+            if (!tex && !quiet) Log::error("Texture: GL refused '%s'", path.c_str());
+        } else if (!quiet) {
+            Log::error("Texture: cannot decode '%s': %s", path.c_str(), stbi_failure_reason());
+        }
     } else if (!quiet) {
-        Log::error("Texture: cannot decode '%s': %s", path.c_str(), stbi_failure_reason());
+        Log::error("Texture: cannot decode '%s': no such file", path.c_str());
     }
 
     // Recorded even when the load failed, rather than left out: a model that asks
