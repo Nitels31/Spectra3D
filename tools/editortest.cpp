@@ -470,6 +470,34 @@ void testLandform() {
     many.build(stepped);
     check(std::fabs(few.heightAt(3.0f, 4.0f) - many.heightAt(3.0f, 4.0f)) > 0.0f,
           "a plateau of three steps is not a plateau of twelve");
+
+    // The variation is a number of its own, and it makes the ground differ
+    // from the ground that was made before it - without making it a
+    // different kind of ground.
+    LandformSettings varied = settings;
+    varied.variation = 0.0f;
+    Landform plain;
+    plain.build(varied);
+    varied.variation = 0.02f;
+    Landform different;
+    different.build(varied);
+    float variation = 0.0f;
+    for (int row = 0; row < side; row += 5) {
+        for (int col = 0; col < side; col += 5) {
+            variation += std::fabs(plain.heightAt((float)col, (float)row) -
+                                   different.heightAt((float)col, (float)row));
+        }
+    }
+    check(variation > 0.0f, "a ground with a variation is not the ground without it");
+
+    // The number that is drawn is a number of its own, and it is not the
+    // same one every time: two grounds made one after the other are not the
+    // same ground twice.
+    const float first = landformVariation();
+    const float second = landformVariation();
+    check(first >= 0.0005f && first <= 0.02f, "the number is the small one it should be");
+    check(second >= 0.0005f && second <= 0.02f, "and so is the next one");
+    check(first != second, "and the next one is not the same one");
 }
 
 // THE CHARACTERS A FIELD CAN HOLD ARE THE CHARACTERS THE ENGINE CAN DRAW
@@ -552,7 +580,7 @@ void testWidgetIds() {
         {Editor::kLandformColor, Editor::kLandformColor + 5, "the landform's colours"},
         {Editor::kLandformShape, Editor::kLandformShape + 5, "the landform's shapes"},
         {Editor::kLandformSeed, Editor::kLandformRandom, "the landform's fields"},
-        {Editor::kLandformLevels, Editor::kLandformStretch, "the landform's shape numbers"},
+        {Editor::kLandformLevels, Editor::kLandformVariation, "the landform's shape numbers"},
         {Editor::kInspectorDock, Editor::kInspectorDock, "the inspector"},
         {Editor::kInspectorProperty, Editor::kInspectorProperty + 39,
          "the inspector's numbers"},

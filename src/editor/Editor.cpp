@@ -83,6 +83,10 @@ Editor::Editor(MeshRegistry& meshes, i18n::Localizer& localizer, SoundDevice& so
     : meshes_(meshes), loc_(localizer), sound_(sound) {
     filter_.id = kFilterField;
     toolbarSearch_.id = kToolbarSearch;
+    // The first ground is a little different from the ones after it: a number
+    // is drawn for the variation of the ground that is next, and the panel
+    // draws a new one every time a ground is made.
+    landformSettings_.variation = landformVariation();
     // Seeded from the theme metrics; the edges are the only thing that changes
     // them afterwards.
     leftWidth_ = theme::leftDockWidth;

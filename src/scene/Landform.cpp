@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <random>
 #include <thread>
 #include <vector>
 
@@ -97,8 +98,14 @@ void biomeColor(float height, float slope, float out[3]) {
 // The shape is what is done to the noise, and each of them is a different
 // answer to the same question: what does a piece of ground look like.
 float rawHeight(const LandformSettings& settings, float x, float z) {
-    const float fx = x * settings.frequency;
-    const float fz = z * settings.frequency;
+    // The frequency of the noise, with the variation of this ground added to
+    // it. The variation is a random number, and it is added to the frequency
+    // so that the features of the ground come out a little bigger or a little
+    // smaller than they were the last time: two grounds made one after the
+    // other are not the same ground twice.
+    const float frequency = settings.frequency + std::fmax(0.0f, settings.variation);
+    const float fx = x * frequency;
+    const float fz = z * frequency;
 
     // The two noises the ground is made of: round shapes and sharp ones. The
     // ridge setting says how much of the sharp one there is.
@@ -281,6 +288,16 @@ const char* landformShapeName(LandformShape shape) {
     case LandformShape::Dunes: return "landform.shape.dunes";
     }
     return "landform.shape.hills";
+}
+
+float landformVariation() {
+    // The number is drawn from the machine's own random source, and the
+    // engine that draws it is seeded once: two grounds made in a row are not
+    // the same ground twice, and a ground made with the number that is drawn
+    // is the same ground wherever it is made.
+    static std::mt19937 engine{std::random_device{}()};
+    static std::uniform_real_distribution<float> pick(0.0005f, 0.02f);
+    return pick(engine);
 }
 
 void Landform::build(const LandformSettings& settings) {

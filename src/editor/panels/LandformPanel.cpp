@@ -190,6 +190,13 @@ void Editor::drawLandformPanel(UiRenderer& ui, PhysicsWorld& world, const Rect& 
     ui_.propertyFloat(ui, kLandformFrequency, x, y, width, text("landform.frequency"),
                       landformSettings_.frequency, 0.002f, 0.001f, 1.0f);
     y += kFieldHeight;
+    // How much the ground may differ from the one before it. The number in
+    // the field is the variation of the ground that is NEXT, and a new one is
+    // drawn every time a ground is made: the ground is not the same ground
+    // twice, and a number typed here is the number that is used.
+    ui_.propertyFloat(ui, kLandformVariation, x, y, width, text("landform.variation"),
+                      landformSettings_.variation, 0.0002f, 0.0f, 0.05f);
+    y += kFieldHeight;
     ui_.propertyInt(ui, kLandformOctaves, x, y, width, text("landform.octaves"),
                     landformSettings_.octaves, 1, 12, 0.25f);
     y += kFieldHeight;
@@ -277,6 +284,11 @@ void Editor::drawLandformPanel(UiRenderer& ui, PhysicsWorld& world, const Rect& 
         // seed of the ground that was just made is the number that was in the
         // field a moment ago, and typing it back makes the same ground again.
         landformSeed_ = nextSeed(landformSeed_);
+        // And so does the variation: the ground that was just made used the
+        // number that was in the field, and the next one gets a new number
+        // drawn for it. Two grounds made one after the other are not the same
+        // ground twice.
+        landformSettings_.variation = landformVariation();
     }
     ui.textFit(dock.x + 8.0f, button.y + kButtonHeight + 4.0f, dock.width - 16.0f,
                text("landform.hint"), theme::textDim);

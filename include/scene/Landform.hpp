@@ -26,6 +26,15 @@ enum class LandformShape {
 inline constexpr int kLandformShapeCount = 6;
 const char* landformShapeName(LandformShape shape);
 
+// A RANDOM NUMBER FOR THE VARIATION OF A GROUND.
+//
+// The number is small - between a half of a thousandth and two hundredths -
+// and it is added to the frequency of the noise, so the features of the
+// ground come out a little bigger or a little smaller than they were the
+// last time. Two grounds made one after the other are not the same ground
+// twice, and a ground made with the same number is the same ground.
+float landformVariation();
+
 // A LANDFORM
 //
 // The shape of the ground, made of noise.
@@ -90,6 +99,15 @@ struct LandformSettings {
 
     // How much the dunes are stretched along one axis.
     float stretch = 1.30f;
+
+    // How much the ground is allowed to differ from the ground that was made
+    // before it.
+    //
+    // The number is a random one and it is added to the frequency of the
+    // noise: the features of the ground come out a little bigger or a little
+    // smaller, and two grounds made one after the other are not the same
+    // ground twice. Zero is the same ground every time.
+    float variation = 0.0f;
 
     // How large the features are: the size in world units of the biggest
     // shape on the ground. A hill is a few metres across, a mountain range
