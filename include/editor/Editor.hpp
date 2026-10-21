@@ -126,6 +126,16 @@ public:
         kLandformSmoothing = 1236,
         kLandformBiomes = 1237,
         kLandformRandom = 1238,
+        // The numbers the shapes are made of, and the one that lets a ground
+        // differ from the ground that was made before it.
+        kLandformLevels = 1240,
+        kLandformRoundness = 1241,
+        kLandformCut = 1242,
+        kLandformRiver = 1243,
+        kLandformMeander = 1244,
+        kLandformShore = 1245,
+        kLandformLowland = 1246,
+        kLandformStretch = 1247,
 
         // 1300 - 1399: the inspector.
         kInspectorDock = 1300,

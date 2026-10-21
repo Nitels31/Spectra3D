@@ -417,6 +417,59 @@ void testLandform() {
         shapeDifference += std::fabs(piece.heightAt(3.0f, 4.0f) - landform.heightAt(3.0f, 4.0f));
     }
     check(shapeDifference > 0.0f, "the shapes are not the same ground");
+
+    // And the numbers the shapes are made of are the ones of the one who
+    // asks for the ground. A number that is written down once and is the
+    // same for every ground is a way of saying that every ground looks the
+    // same, and a ground that ignores the number it is given is a ground
+    // nobody asked for.
+    using Member = float LandformSettings::*;
+    struct Number {
+        LandformShape shape;
+        Member value;
+        float one;
+        float another;
+    };
+    const Number numbers[] = {
+        {LandformShape::Mountains, &LandformSettings::lowland, 0.0f, 0.9f},
+        {LandformShape::Island, &LandformSettings::shore, 0.1f, 0.9f},
+        {LandformShape::Plateau, &LandformSettings::roundness, 0.05f, 0.9f},
+        {LandformShape::Canyon, &LandformSettings::cut, 0.1f, 1.0f},
+        {LandformShape::Dunes, &LandformSettings::stretch, 0.5f, 3.0f},
+    };
+    int ignored = 0;
+    for (const Number& number : numbers) {
+        LandformSettings shaped = settings;
+        shaped.shape = number.shape;
+        shaped.*(number.value) = number.one;
+        Landform first;
+        first.build(shaped);
+        shaped.*(number.value) = number.another;
+        Landform second;
+        second.build(shaped);
+
+        float difference = 0.0f;
+        for (int row = 0; row < side; row += 5) {
+            for (int col = 0; col < side; col += 5) {
+                difference += std::fabs(first.heightAt((float)col, (float)row) -
+                                        second.heightAt((float)col, (float)row));
+            }
+        }
+        if (difference <= 0.0f) ++ignored;
+    }
+    check(ignored == 0, "the ground comes out the way the numbers of the shape say");
+
+    // And the number of steps a plateau is cut into is a number too.
+    LandformSettings stepped = settings;
+    stepped.shape = LandformShape::Plateau;
+    stepped.levels = 3;
+    Landform few;
+    few.build(stepped);
+    stepped.levels = 12;
+    Landform many;
+    many.build(stepped);
+    check(std::fabs(few.heightAt(3.0f, 4.0f) - many.heightAt(3.0f, 4.0f)) > 0.0f,
+          "a plateau of three steps is not a plateau of twelve");
 }
 
 // THE CHARACTERS A FIELD CAN HOLD ARE THE CHARACTERS THE ENGINE CAN DRAW
@@ -499,6 +552,7 @@ void testWidgetIds() {
         {Editor::kLandformColor, Editor::kLandformColor + 5, "the landform's colours"},
         {Editor::kLandformShape, Editor::kLandformShape + 5, "the landform's shapes"},
         {Editor::kLandformSeed, Editor::kLandformRandom, "the landform's fields"},
+        {Editor::kLandformLevels, Editor::kLandformStretch, "the landform's shape numbers"},
         {Editor::kInspectorDock, Editor::kInspectorDock, "the inspector"},
         {Editor::kInspectorProperty, Editor::kInspectorProperty + 39,
          "the inspector's numbers"},

@@ -131,24 +131,29 @@ float rawHeight(const LandformSettings& settings, float x, float z) {
         n = std::pow(clamp01(n), 1.35f);
         {
             const float mask = fbm(fx * 0.22f, fz * 0.22f, settings.seed + 31337u, 3);
-            n *= 0.30f + 0.70f * mask;
+            // How much of the range is lowland: the rest of it is mountain.
+            const float lowland = clamp01(settings.lowland);
+            n *= lowland + (1.0f - lowland) * mask;
         }
         break;
 
     case LandformShape::Island:
-        // The ground falls away into the water at the edges.
-        n *= 1.0f - smoothstep(0.35f, 1.0f, distance);
+        // The ground falls away into the water at the edges. How far from the
+        // middle it starts to fall is asked for.
+        n *= 1.0f - smoothstep(clamp01(settings.shore), 1.0f, distance);
         break;
 
     case LandformShape::Plateau: {
         // Flat tops with steps between them: the height is cut into levels,
         // and the step from one level to the next is rounded just enough to
-        // walk on.
-        const float levels = 6.0f;
+        // walk on. How many levels there are and how wide the step is are
+        // asked for.
+        const float levels = std::fmax(1.0f, (float)settings.levels);
         const float scaled = clamp01(n) * levels;
         const float level = std::floor(scaled);
         const float frac = scaled - level;
-        const float step = smoothstep(0.42f, 0.58f, frac);
+        const float width = std::clamp(settings.roundness, 0.02f, 1.0f);
+        const float step = smoothstep(0.5f - width * 0.5f, 0.5f + width * 0.5f, frac);
         n = (level + step) / levels;
         break;
     }
@@ -157,22 +162,24 @@ float rawHeight(const LandformSettings& settings, float x, float z) {
         // A river cut through the ground. The path meanders, because a river
         // that runs straight is a ditch.
         const float meander = fbm(fx * 0.30f, 7.3f, settings.seed + 977u, 2) - 0.5f;
-        const float pathZ = meander * settings.depth * 0.9f;
+        const float pathZ = meander * settings.depth * std::fmax(0.0f, settings.meander);
         const float across = std::fabs(z - pathZ);
-        const float width = std::fmax(0.5f, settings.width * 0.07f);
+        const float width = std::fmax(0.5f, settings.width * clamp01(settings.river));
         const float carve = 1.0f - smoothstep(0.0f, width, across);
         // The ground is cut down to the bed of the river, and the sides of the
-        // cut are steeper than the ground around it.
-        n = n * (1.0f - 0.80f * carve) - 0.10f * carve;
+        // cut are steeper than the ground around it. How deep the cut is is
+        // asked for.
+        const float cut = clamp01(settings.cut);
+        n = n * (1.0f - cut * carve) - cut * 0.125f * carve;
         n = clamp01(n);
         break;
     }
 
     case LandformShape::Dunes:
         // Round hills, stretched along one axis, and the sand between them is
-        // flat.
-        n = billowFbm(fx * 0.30f, fz * 1.30f, settings.seed, settings.octaves,
-                      settings.lacunarity, settings.gain);
+        // flat. How far they are stretched is asked for.
+        n = billowFbm(fx * 0.30f, fz * std::fmax(0.05f, settings.stretch), settings.seed,
+                      settings.octaves, settings.lacunarity, settings.gain);
         break;
     }
 

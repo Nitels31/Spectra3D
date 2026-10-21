@@ -57,6 +57,40 @@ struct LandformSettings {
     // What shape the ground takes.
     LandformShape shape = LandformShape::Hills;
 
+    // --- the shape ---------------------------------------------------------
+    //
+    // The numbers the shapes are made of. They were written down once and
+    // were the same for every ground, which is a way of saying that every
+    // ground looked the same; they are asked for now, and the ground comes
+    // out the way the one who asks for it wants it.
+    //
+    // How many steps the plateau is cut into.
+    int levels = 6;
+
+    // How wide the step between one step and the next is, as a part of the
+    // step itself. A narrow step is a wall and a wide one is a slope.
+    float roundness = 0.16f;
+
+    // How deep the canyon is cut into the ground, 0..1.
+    float cut = 0.80f;
+
+    // How wide the bed of the river is, as a part of the width of the ground.
+    float river = 0.07f;
+
+    // How far the river wanders from the middle, as a part of the depth of
+    // the ground. A river that runs straight is a ditch.
+    float meander = 0.90f;
+
+    // How far from the middle the island starts to sink into the water, as a
+    // part of the way to the corner.
+    float shore = 0.35f;
+
+    // How much of the mountain range is lowland rather than mountain, 0..1.
+    float lowland = 0.30f;
+
+    // How much the dunes are stretched along one axis.
+    float stretch = 1.30f;
+
     // How large the features are: the size in world units of the biggest
     // shape on the ground. A hill is a few metres across, a mountain range
     // is a few hundred.

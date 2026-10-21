@@ -127,6 +127,54 @@ void Editor::drawLandformPanel(UiRenderer& ui, PhysicsWorld& world, const Rect& 
              (kShapeRowHeight + 4.0f) +
          2.0f;
 
+    // --- the numbers of the shape -------------------------------------------
+    // The numbers the shape that is chosen is made of. A hill has nothing to
+    // say about the number of steps a plateau is cut into, and the fields of
+    // the shapes that are not chosen are not shown.
+    switch (landformSettings_.shape) {
+    case LandformShape::Hills:
+        break;
+
+    case LandformShape::Mountains:
+        ui_.propertyFloat(ui, kLandformLowland, x, y, width, text("landform.lowland"),
+                          landformSettings_.lowland, 0.01f, 0.0f, 1.0f);
+        y += kFieldHeight;
+        break;
+
+    case LandformShape::Island:
+        ui_.propertyFloat(ui, kLandformShore, x, y, width, text("landform.shore"),
+                          landformSettings_.shore, 0.01f, 0.0f, 0.95f);
+        y += kFieldHeight;
+        break;
+
+    case LandformShape::Plateau:
+        ui_.propertyInt(ui, kLandformLevels, x, y, width, text("landform.levels"),
+                        landformSettings_.levels, 1, 16, 0.25f);
+        y += kFieldHeight;
+        ui_.propertyFloat(ui, kLandformRoundness, x, y, width, text("landform.roundness"),
+                          landformSettings_.roundness, 0.01f, 0.02f, 1.0f);
+        y += kFieldHeight;
+        break;
+
+    case LandformShape::Canyon:
+        ui_.propertyFloat(ui, kLandformCut, x, y, width, text("landform.cut"),
+                          landformSettings_.cut, 0.01f, 0.0f, 1.0f);
+        y += kFieldHeight;
+        ui_.propertyFloat(ui, kLandformRiver, x, y, width, text("landform.river"),
+                          landformSettings_.river, 0.002f, 0.01f, 0.50f);
+        y += kFieldHeight;
+        ui_.propertyFloat(ui, kLandformMeander, x, y, width, text("landform.meander"),
+                          landformSettings_.meander, 0.02f, 0.0f, 2.0f);
+        y += kFieldHeight;
+        break;
+
+    case LandformShape::Dunes:
+        ui_.propertyFloat(ui, kLandformStretch, x, y, width, text("landform.stretch"),
+                          landformSettings_.stretch, 0.05f, 0.20f, 4.0f);
+        y += kFieldHeight;
+        break;
+    }
+
     // --- the noise ---------------------------------------------------------
     // The seed and the button that gives a new one. The same seed is the same
     // ground everywhere, so the number is worth showing and worth keeping.
