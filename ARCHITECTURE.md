@@ -114,16 +114,17 @@ sound and the device decides what that name means.
    includes either of them (the one exception is `Application.hpp`, which owns both).
 
    **The runtime is a library and not an archive.** It is built as a shared library -
-   `spectra_core.dll` on Windows, `libspectra_core.so` elsewhere - and it is the core
-   of the engine as a file: the program loads it, and a project carries a copy of it
-   in its `lib/` folder, so a project says which core it runs on. Everything the
-   program uses is exported (`WINDOWS_EXPORT_ALL_SYMBOLS`, and `--export-all-symbols`
-   for the GNU linker), so the layer headers carry no decoration of their own.
+   `SpectraPlayer.dll` on Windows, `libSpectraPlayer.so` elsewhere - and it is the
+   core of the engine as a file: the program loads it, and a project carries a copy
+   of it in its `lib/` folder, so a project says which core it runs on. Everything
+   the program uses is exported (`WINDOWS_EXPORT_ALL_SYMBOLS`, and
+   `--export-all-symbols` for the GNU linker), so the layer headers carry no
+   decoration of their own.
 
    A shared library cannot sit in a folder of its own on Windows: the loader looks
    for it beside the program, in the system folders, and on `PATH`. The built game
-   therefore keeps the program and the core together in `lib/` - the two of them, the
-   assets and the shaders - and the project sits beside that.
+   therefore keeps the program and the core together - and the two of them are in
+   `lib/` of the game folder, which is where the program is.
 
    `tools/scripttest` used to name eighteen engine sources by hand. It now links
    `spectra_runtime`, because a source list is not a dependency list: the old one
@@ -619,9 +620,9 @@ names (`image/textures`, `sounds`, `image/icons`), so both spellings are looked
 for; `core/Project.hpp` holds the list of both (`assetdirs::`).
 
 **`lib/` is the core of the engine.** A project is created with a copy of
-`spectra_core` in it, so a project folder says which core it was made with, and
-the built game puts the program and the core together in `lib/` - the two of them
-have to be together, because that is where Windows looks for a library.
+`SpectraPlayer` in it, so a project folder says which core it was made with, and
+the built game puts the program and the core together - the two of them have to
+be together, because that is where Windows looks for a library.
 
 **The icon of the project is the icon of the window.** `icon.ico` beside the
 project is applied to the window when the project is opened
@@ -965,26 +966,42 @@ reading their names.
   a fixed `world_.step()` → render.
 
 **"Build" is `stageBuild()`.** There is no separate player: the player *is* this
-executable, so a build is the program, the core it loads, the assets it reads
-and the project itself:
+executable, so a build is a folder that can be copied to another machine and run
+from there:
 
 ```
 <build>/
-  lib/
-    spectra3d.exe        the program
-    spectra_core.dll     the core of the engine
-    assets/              the engine's own assets
-    shaders/             the engine's own shaders
-  project/<name>/        the project
+  <Game>/
+    <Game>.exe          the program, named after the game
+    SpectraPlayer.dll   the core of the engine
+    <Game>_Data/
+      boot.spectra      the manifest: where the game is
+      icon.ico          the picture of the game
+      scenes/           the scenes of the game
+      scripts/          the scripts of the game
+      assets/           the assets of the game
+      plugins/          what the engine brings: its languages, its font, its
+                        sounds, its sky and its shaders
 ```
 
-The program and the core are in the same folder because that is where Windows
-looks for a library, and a program that cannot find its core is a program that
-does not start. The project is copied to `<build>/project/<name>`, because that
-is where the built program will look for projects when it starts, exactly as the
-editor does. It is copied **entry by entry**, not as a tree: the usual build
-folder lives *inside* the project, and a tree copy would copy the build into
-itself, doubling it on every rebuild.
+**The program and the core are together** because that is where Windows looks
+for a library, and a program that cannot find its core is a program that does
+not start. **The data is in a folder of its own** because that is where the
+program looks for it: `<name>_Data` beside the program, and the name of the
+folder is the name of the program without the extension.
+
+**`boot.spectra` is the manifest of the game.** It is the project's own manifest
+under another name, and it says where the scenes are - `scene=scenes/scene.json`,
+relative to the data folder. A built game opens it without asking: the boot file
+says which game it is, so the launcher is not in the way (`Application::initialize()`
+looks for `<exeDir>/<name>_Data/boot.spectra` and opens what it finds).
+
+**`plugins/` is what the engine brings**, and `assets/` is what the game is: the
+same two roots the engine knows everywhere else - the game's own assets first,
+the engine's after them. The models are the exception in the plugins: a folder of
+them is the biggest thing in the assets, and a build that carries all of them
+carries the ones nobody will ever open - so only the ones the scene names are
+staged, with their pictures. The game's own models travel with the game.
 
 `fs::copyTree()` creates the directories that are missing — including every parent,
 because Windows' `CreateDirectoryA` makes only the last level — and replaces a file
@@ -1091,8 +1108,9 @@ their own literals.
 | `<projectsRoot>/<Project>/editorlayout.txt` | the saved editor workspace (written by `EditorLayout.cpp`) |
 | `<projectsRoot>/<Project>/scripts/` | `*.as`, run when Play begins |
 | `<projectsRoot>/<Project>/assets/` | the content of the project: `textures/`, `audio/`, `music/`, `shaders/`, `material/`, `fonts/`, `models/`, `sky/`, `lang/`, `icons/`, `prefabs/`, `ui/`, `data/`, `particles/`, `physics/` |
-| `<projectsRoot>/<Project>/lib/` | the core of the engine, as the library it is |
+| `<projectsRoot>/<Project>/lib/` | the core of the engine, as the library it is: `SpectraPlayer.dll` |
 | `<projectsRoot>/<Project>/icon.ico` | the picture of the project: the icon of the window while the project is open |
+| `<gameDir>/<Game>_Data/boot.spectra` | the manifest of a built game: the same keys, and the scene of the game beside it |
 | `<exeDir>/assets/sounds/*.wav` | the sounds the engine ships: the name of each is its file's stem, so a file dropped in the folder is a sound the scripts can play and a body can carry |
 | `<exeDir>/assets/fonts/JetBrainsMono-Regular.ttf` | the font the interface is drawn with, with its licence beside it. It is shipped rather than borrowed so the engine has the same letters on every machine it runs on |
 | `<exeDir>/assets/image/icons/*.ico` | the application icons the settings screen offers |

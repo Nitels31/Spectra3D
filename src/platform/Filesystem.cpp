@@ -1,6 +1,7 @@
 #include "platform/Filesystem.hpp"
 
 #include "core/Log.hpp"
+#include "core/Project.hpp"
 #include "core/Str.hpp"
 
 #include <algorithm>
@@ -112,6 +113,11 @@ void discoverAssetRoot() {
     std::vector<std::string> candidates;
     if (!g_exeDir.empty()) {
         candidates.push_back(str::join(g_exeDir, "assets"));
+        // A built game keeps what the engine brings in the data folder, in
+        // `plugins/`: the languages, the font, the sounds and the sky.
+        const std::string data = builtGameDataDir();
+        if (!data.empty())
+            candidates.push_back(str::join(data, kBuiltGamePluginsDir));
         const std::string prefix = parentOf(g_exeDir);
         candidates.push_back(str::join(prefix, "share/spectra3d"));
         candidates.push_back(str::join(prefix, "assets"));

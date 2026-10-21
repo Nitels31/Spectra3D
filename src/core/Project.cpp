@@ -12,14 +12,6 @@
 #include <fstream>
 #include <iterator>
 
-#if defined(_WIN32)
-#include <direct.h>
-#define SPECTRA_MKDIR(path) _mkdir(path)
-#else
-#include <sys/stat.h>
-#define SPECTRA_MKDIR(path) mkdir(path, 0775)
-#endif
-
 namespace s3d {
 namespace {
 
@@ -43,10 +35,15 @@ constexpr float kFovMin = 10.0f, kFovMax = 150.0f;
 
 // Creates one directory level. Success is "it exists now", so a pre-created
 // scripts/ folder is not an error.
+//
+// The engine's own file system, not the C library's mkdir: it makes every
+// level that is missing, and it reads the path the way Windows does - a
+// project whose folder has a name the machine's code page cannot spell is a
+// folder that is not there otherwise.
 bool makeDirectory(const std::string& path) {
+    if (path.empty()) return false;
     if (fs::isDirectory(path)) return true;
-    if (SPECTRA_MKDIR(path.c_str()) == 0) return true;
-    return fs::isDirectory(path);
+    return fs::ensureDirectory(path);
 }
 
 bool fileExists(const std::string& path) {
@@ -133,7 +130,15 @@ bool sameFileName(const std::string& a, const std::string& b) {
 #endif
 }
 
-// A path that stays inside the project: relative, no "..", no drive letter and
+// Whether a folder is the data folder of a built game: "MyGame_Data" beside
+// the program "MyGame.exe".
+bool isBuiltGameFolder(const std::string& folder) {
+    const std::string suffix = kBuiltGameDataSuffix;
+    if (folder.size() <= suffix.size()) return false;
+    return folder.compare(folder.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// Whether a path that stays inside the project: relative, no "..", no drive letter and
 // no root. A manifest is a file a person edits, and a scene path in it is a
 // path inside the project - never one that points somewhere else on the disk.
 bool isSafeRelativePath(const std::string& path) {
@@ -451,9 +456,20 @@ bool ProjectLibrary::readManifest(const std::string& projectPath, ProjectInfo& o
         if (key == "name") {
             // The directory name is the identity: the `name=` key exists for
             // tools reading the manifest without touching the filesystem.
-            if (!value.empty() && value != info.name)
+            //
+            // A built game is the exception: its data is in a folder named
+            // after the program - "MyGame_Data" - and the name in the manifest
+            // is the name of the game. That name is the one that is used, and
+            // it is not a mistake.
+            const std::string wanted = str::trim(value);
+            if (wanted.empty() || wanted == info.name) {
+                // The same name: nothing to say.
+            } else if (isBuiltGameFolder(info.name)) {
+                info.name = wanted;
+            } else {
                 Log::warn("Project: manifest name '%s' does not match its folder",
                           value.c_str());
+            }
         } else if (key == "version") {
             if (parseInt(value, integer) && integer > 0) {
                 info.version = integer;
@@ -597,6 +613,9 @@ std::string ProjectLibrary::manifestPath(const std::string& projectPath) {
     if (fileExists(now)) return now;
     const std::string legacy = str::join(projectPath, kProjectManifestLegacy);
     if (fileExists(legacy)) return legacy;
+    // A built game calls its manifest the boot file.
+    const std::string boot = str::join(projectPath, kProjectBootFile);
+    if (fileExists(boot)) return boot;
     return now;
 }
 
@@ -609,6 +628,11 @@ std::string ProjectLibrary::manifestPath(const std::string& projectPath) {
 bool ProjectLibrary::migrate(ProjectInfo& info) const {
     const std::string dir = projectDirectoryOf(info);
     if (dir.empty()) return false;
+
+    // A built game is not a project to be moved: its data is already in the
+    // layout, and the manifest in it is the boot file. Moving it would leave a
+    // second manifest beside the boot file, and the game would read that one.
+    if (manifestPath(dir) == str::join(dir, kProjectBootFile)) return false;
 
     bool changed = false;
 
@@ -681,6 +705,11 @@ bool ProjectLibrary::setFavorite(const std::string& projectPath, bool favorite) 
 std::string Settings::defaultProjectRoot() {
     const std::string& exeDir = fs::executableDir();
     if (exeDir.empty()) return std::string("project");
+
+    // A built game keeps its project beside the program, in the data folder:
+    // `<name>_Data`, where the manifest is `boot.spectra`.
+    const std::string data = builtGameDataDir();
+    if (!data.empty() && fs::isDirectory(data)) return data;
 
     // The folder of the projects is next to the program - and, in a built game,
     // one level above it: the program itself lives in `lib/`, next to the core
@@ -803,6 +832,17 @@ std::string findEngineCore() {
         if (fileExists(path)) return path;
     }
     return {};
+}
+
+// The data folder of a built game: "<exeDir>/<name>_Data".
+std::string builtGameDataDir() {
+    const std::string& exe = fs::executablePath();
+    if (exe.empty()) return {};
+    std::string name = str::fileName(exe);
+    const size_t dot = name.find_last_of('.');
+    if (dot != std::string::npos) name = name.substr(0, dot);
+    if (name.empty()) return {};
+    return str::join(fs::executableDir(), name + kBuiltGameDataSuffix);
 }
 
 } // namespace s3d

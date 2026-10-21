@@ -348,7 +348,7 @@ add_library(spectra_runtime SHARED
     ${SPECTRA_SRC_I18N}
 )
 set_target_properties(spectra_runtime PROPERTIES
-    OUTPUT_NAME spectra_core
+    OUTPUT_NAME SpectraPlayer
     # Everything the program uses is exported, so the layer headers need no
     # decoration of their own: a class that is used across the boundary is
     # exported, and one that is not is not.

@@ -474,6 +474,10 @@ bool loadJson(PhysicsWorld& world, MeshRegistry& meshes, const std::string& path
         return false;
     }
 
+    // An empty file is a fresh project and not an error: the file is made when
+    // the project is, so that the folder says what it is before the first save.
+    if (size == 0) return true;
+
     json root;
     try {
         root = json::parse(text);

@@ -165,6 +165,11 @@ void Skybox::release() {
 bool Skybox::load(const std::string& directory) {
     if (!fs::isDirectory(directory)) return false;
 
+    // A folder with no faces in it is not a sky that is broken - it is a
+    // folder that has nothing in it yet, and the sky that is there stays.
+    const std::string first = findFace(directory, kFaces[0].name);
+    if (first.empty()) return false;
+
     // Every face has to be there. A skybox with five faces is not a skybox, and
     // half of one is worse than none: the missing side would be black.
     std::string paths[6];

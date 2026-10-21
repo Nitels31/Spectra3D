@@ -1560,13 +1560,15 @@ void Launcher::setTheme(theme::ThemeId id) {
 
 void Launcher::scanIcons() {
     icons_.clear();
-    // The one directory Window::applyIcon() reads, spelled the same way: relative
-    // to the binary, through kAppIconsDir. Not through the asset root, which
-    // already points AT assets/ and would make this assets/assets/image/icons.
+    // The icons are in the assets of the engine - in a built game that is the
+    // `plugins` folder of the data - and the asset root is where they are.
     // .ico only: the shell loads those natively at every size the title bar and the
     // task bar ask for, and a PNG here would be a choice the picker offers and the
     // window cannot show.
-    const std::string dir = str::join(fs::executableDir(), kAppIconsDir);
+    const std::string assets = fs::assetRoot();
+    const std::string dir =
+        assets.empty() ? str::join(fs::executableDir(), kAppIconsDir)
+                        : str::join(assets, "image/icons");
     for (const std::string& path : fs::listFilesByExtension(dir, {".ico"}))
         icons_.push_back(str::fileName(path));
 

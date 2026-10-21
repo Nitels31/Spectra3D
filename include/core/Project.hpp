@@ -33,6 +33,16 @@ inline constexpr const char* kProjectManifestFile = "project.Spectra";
 // still read, so a project made before the rename keeps opening - and it is the
 // same file on Windows, where the two spellings are one file.
 inline constexpr const char* kProjectManifestLegacy = "project.spectra";
+// The manifest of a built game. A built game is one program and one folder of
+// data, and the folder is `<name>_Data` beside the program: the manifest in it
+// is the boot file, and it says where the scenes and the scripts are.
+inline constexpr const char* kProjectBootFile = "boot.spectra";
+// The folder of a built game that holds the data of the game, beside the
+// program that reads it.
+inline constexpr const char* kBuiltGameDataSuffix = "_Data";
+// The folder of a built game that holds what the engine brings: its
+// languages, its font, its sounds and its sky.
+inline constexpr const char* kBuiltGamePluginsDir = "plugins";
 inline constexpr const char* kProjectAssetsDir = "assets";
 inline constexpr const char* kProjectLibDir = "lib";
 inline constexpr const char* kProjectScriptsDir = "scripts";
@@ -44,9 +54,9 @@ inline constexpr const char* kProjectIconFile = "icon.ico";
 // platform, and it is looked for next to the program and in the `lib/` folder
 // of a project - a project carries the core it was made with.
 inline constexpr const char* kEngineCoreNames[] = {
-    "spectra_core.dll",
-    "libspectra_core.so",
-    "libspectra_core.dylib",
+    "SpectraPlayer.dll",
+    "libSpectraPlayer.so",
+    "libSpectraPlayer.dylib",
 };
 // Where the editor keeps the workspace it was left in: dock sizes, which panels
 // are open and where each one floats. Per project, like the scene - two projects
@@ -317,5 +327,13 @@ bool projectExists(const std::string& path);
 // folder of a project. Empty when there is none - a project that carries no
 // core is a project that runs on the engine it is opened with.
 std::string findEngineCore();
+
+// The data folder of a built game: "<exeDir>/<name>_Data", where <name> is the
+// name of the program without the extension.
+//
+// A built game is one program and one folder of data: `boot.spectra` is the
+// manifest in it, `scenes/` holds the scenes, `scripts/` the scripts, `assets/`
+// the game's own and `plugins/` what the engine brings.
+std::string builtGameDataDir();
 
 } // namespace s3d

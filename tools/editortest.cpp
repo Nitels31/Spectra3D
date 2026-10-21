@@ -996,6 +996,20 @@ void testProjectLayout() {
     check(library.readManifest(oldPath, after), "the old project is read back");
     check(after.sceneFile == "scenes/scene.json", "the manifest of the old project says so");
 
+    // A built game: its data is in a folder named after the program, and the
+    // manifest in it is the boot file.
+    const std::string dataPath = str::join(fs::executableDir(), "GameTest_Data");
+    fs::removeTree(dataPath);
+    fs::ensureDirectory(dataPath);
+    fs::writeFile(str::join(dataPath, kProjectBootFile),
+                  "name=GameTest\nversion=1\nengine=Spectra3D 1.0.0\n");
+    ProjectInfo game;
+    check(library.readManifest(dataPath, game), "the boot file of a built game is read");
+    check(game.name == "GameTest", "the name of a built game is the name in the manifest");
+    check(fs::exists(str::join(dataPath, kProjectBootFile)),
+          "the boot file is where the manifest is");
+
+    fs::removeTree(dataPath);
     fs::removeTree(oldPath);
     fs::removeTree(info.path);
 }

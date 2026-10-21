@@ -56,11 +56,11 @@ tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp, editortest.cpp, s
                      sounds; ui_language_test.ps1 drives the real
                      window to check that a dropdown does not act on its own
                      opening click
-build/               all output: spectra3d.exe, spectra_core.dll, glfw3.dll,
+build/               all output: spectra3d.exe, SpectraPlayer.dll, glfw3.dll,
                      engine.log, settings.ini, project/, a copy of assets/
                      and of src/shaders/ (gitignored)
-  lib/               the static libraries the executable links, incl.
-                     libspectra_core.dll - the shared library of every engine
+  lib/               the static libraries the executable links, and
+                     SpectraPlayer.dll - the shared library of every engine
                      layer below app/ and editor/, which is the engine without
                      an editor: the core of the engine, as the library it is
 ```
@@ -124,11 +124,33 @@ static library called `spectra_angelscript`. That is expected;
 `-DSPECTRA_SCRIPTING=OFF` removes that time.
 
 After the build, CMake copies `glfw3.dll` (Windows) and `assets/` into `build/`, so
-the exe runs from any directory. The core of the engine, `spectra_core.dll`, is
+the exe runs from any directory. The core of the engine, `SpectraPlayer.dll`, is
 built next to it - it is a shared library, and Windows looks for a library beside
 the program. Mutable files (`engine.log`, `settings.ini`, `build/project/`) are
 written next to the binary: at startup `fs::adoptAssetWorkingDir()` locates the
 exe directory and makes it the working directory.
+
+**A build is one folder**, named after the game:
+
+```
+<build>/
+  MyGame/
+    MyGame.exe          the program, named after the game
+    SpectraPlayer.dll   the core of the engine
+    MyGame_Data/
+      boot.spectra      the manifest: where the game is
+      icon.ico          the picture of the game
+      scenes/           the scenes of the game
+      scripts/          the scripts of the game
+      assets/           the assets of the game
+      plugins/          what the engine brings: its languages, its font, its
+                        sounds, its sky and its shaders
+```
+
+The program and the core are together because that is where Windows looks for a
+library, and the data is in a folder of its own because that is where the program
+looks for it: `<name>_Data` beside the program. A built game opens its boot file
+without asking - the launcher is not in the way of a game that knows what it is.
 
 ## Launcher and projects
 

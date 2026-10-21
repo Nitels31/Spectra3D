@@ -3,6 +3,7 @@
 #include "core/Log.hpp"
 #include "core/Project.hpp"
 #include "core/Str.hpp"
+#include "platform/Filesystem.hpp"
 #include "platform/GlFunctions.hpp"
 
 #include <algorithm>
@@ -164,32 +165,21 @@ HICON loadShippedIcon(int width, int height, const char* iconName) {
         name.find("..") != std::string::npos)
         return nullptr;
 
-    wchar_t path[MAX_PATH] = {};
-    const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
-    if (length == 0 || length >= MAX_PATH) return nullptr;
+    // The icons are in the assets of the engine - in a built game that is the
+    // `plugins` folder of the data - and the asset root is where they are.
+    const std::string& assets = fs::assetRoot();
+    if (assets.empty()) return nullptr;
+    const std::string file = str::join(str::join(assets, "image/icons"), name);
+    if (!fs::exists(file)) return nullptr;
 
-    // Cut the file name off the module path, then append the icons folder and the
-    // file. Both literals are ASCII, which is what makes the widening below a cast
-    // instead of a conversion.
-    size_t at = 0;
-    for (size_t i = length; i > 0; --i) {
-        const wchar_t c = path[i - 1];
-        if (c != L'\\' && c != L'/') continue;
-        at = i;
-        break;
-    }
-    if (at == 0) return nullptr;  // no directory to put the icon in
-
-    for (const char* c = kAppIconsDir; *c; ++c) {
-        if (at >= MAX_PATH - 2) return nullptr;
-        path[at++] = (*c == '/') ? L'\\' : (wchar_t)(unsigned char)*c;
-    }
-    path[at++] = L'\\';
-    for (const char* c = name.c_str(); *c; ++c) {
-        if (at >= MAX_PATH - 1) return nullptr;
-        path[at++] = (wchar_t)(unsigned char)*c;
-    }
-    path[at] = L'\0';
+    // The path is widened by hand rather than converted: the folder the assets
+    // are in is not always spelled in ASCII, and a narrow path is a path that
+    // fails to load on a folder whose name is not.
+    const int length = MultiByteToWideChar(CP_UTF8, 0, file.c_str(), (int)file.size(),
+                                           nullptr, 0);
+    if (length <= 0) return nullptr;
+    std::wstring wide((size_t)length, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, file.c_str(), (int)file.size(), wide.data(), length);
 
     // width and height are the size being asked for, and the loader hands back the
     // entry closest to it - a shipped .ico carries 16, 32, 64, 128 and 256, and the
@@ -197,7 +187,7 @@ HICON loadShippedIcon(int width, int height, const char* iconName) {
     // unreadable, or not an icon, which is not an error: makeMarkIcon() above is
     // the fallback and is what a missing file leaves behind.
     return static_cast<HICON>(
-        LoadImageW(nullptr, path, IMAGE_ICON, width, height, LR_LOADFROMFILE));
+        LoadImageW(nullptr, wide.c_str(), IMAGE_ICON, width, height, LR_LOADFROMFILE));
 }
 
 // An icon from a file of its own: the icon of the project that is open.

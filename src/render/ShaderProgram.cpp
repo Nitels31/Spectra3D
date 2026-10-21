@@ -49,6 +49,14 @@ std::string shaderPath(const std::string& relative) {
         if (fs::exists(inProject)) return inProject;
     }
 
+    // The engine's own shaders, which live in the assets of the engine - in a
+    // built game that is the `plugins` folder of the data.
+    const std::string& assets = fs::assetRoot();
+    if (!assets.empty()) {
+        const std::string inAssets = str::join(str::join(assets, kShaderFolder), relative);
+        if (fs::exists(inAssets)) return inAssets;
+    }
+
     // The folder next to the program: where the build puts them.
     const std::string staged = str::join(fs::executableDir(), kShaderFolder);
     const std::string inBuild = str::join(staged, relative);

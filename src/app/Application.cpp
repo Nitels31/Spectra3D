@@ -160,6 +160,19 @@ bool Application::initialize() {
     window_.applyIcon(launcher_.settings().appIcon.c_str());
     inEditor_ = false;
 
+    // A built game is one program and one folder of data, and it opens its own
+    // project without asking: the boot file in the data folder says which one
+    // it is. The editor, which is the same program, asks instead.
+    const std::string data = builtGameDataDir();
+    if (!data.empty() && fs::exists(str::join(data, kProjectBootFile))) {
+        ProjectInfo built;
+        if (launcher_.projects().readManifest(data, built)) {
+            Log::info("Build: the game is '%s', in '%s'", built.name.c_str(), data.c_str());
+            openProject(built);
+        } else {
+            Log::error("Build: cannot read '%s'", str::join(data, kProjectBootFile).c_str());
+        }
+    }
 
 
     scripts_.setDiagnosticSink([](const script::Host::Diagnostic& d) {
@@ -690,7 +703,7 @@ int Application::stageModels(const std::string& assets, const std::string& targe
     const std::vector<std::string> names = scenes::sceneMeshNames(scenePath);
     if (names.empty()) return 0;
 
-    const std::string modelsOut = str::join(str::join(target, "assets"), "models");
+    const std::string modelsOut = str::join(str::join(target, "models"), "models");
     int copied = 0;
     for (const std::string& name : names) {
         const std::string path = scenes::findMeshFile(name);
@@ -722,102 +735,113 @@ bool Application::stageBuild(const std::string& target, bool alsoRun) {
         return false;
     }
 
-    // The engine goes into `lib/`: the program, the core it loads and the assets
-    // it reads. They belong together - a core the program cannot find is a
-    // program that does not start - and the project sits beside them, the way
-    // it sits beside the engine it was made with.
+    // A build is one folder: the program, the core it loads and the data of
+    // the game beside it.
     //
     //   <build>/
-    //     lib/
-    //       spectra3d.exe      the program
-    //       spectra_core.dll   the core of the engine
-    //       assets/            the engine's own assets
-    //       shaders/           the engine's own shaders
-    //     project/<name>/      the project
-    const std::string libDir = str::join(target, kProjectLibDir);
+    //     <Game>/
+    //       <Game>.exe          the program
+    //       SpectraPlayer.dll   the core of the engine
+    //       <Game>_Data/
+    //         boot.spectra      the manifest: where the game is
+    //         scenes/           the scenes of the game
+    //         scripts/          the scripts of the game
+    //         assets/           the assets of the game
+    //         plugins/          what the engine brings
+    //
+    // The program and the core are together because that is where Windows looks
+    // for a library, and the data is in a folder of its own because that is
+    // where the program looks for it: `<name>_Data` beside the program.
+    const std::string gameName = project_.name.empty() ? "Game" : project_.name;
+    const std::string gameDir = str::join(target, gameName);
+    const std::string dataDir = str::join(gameDir, gameName + kBuiltGameDataSuffix);
 
-    // The program itself. copyTree handles a file as well as a folder, so the
-    // same call stages both without a second copy routine.
+    // The program itself, named after the game. copyTree handles a file as
+    // well as a folder, so the same call stages both without a second copy
+    // routine.
     int copied = 0;
     const std::string exe = fs::executablePath();
-    if (!exe.empty() && fs::copyTree(exe, str::join(libDir, str::fileName(exe)))) copied++;
+    const std::string extension(str::extensionView(str::fileName(exe)));
+    const std::string gameExe = str::join(gameDir, gameName + extension);
+    if (!exe.empty() && fs::copyTree(exe, gameExe)) copied++;
 
-    // Whatever sits beside the program that is not a folder: the DLLs it loads at
-    // startup. Copying the listing rather than a hardcoded list keeps a new
-    // dependency from silently missing from the build. Only DLLs - a .txt next to
-    // the binary belongs to the build system, not to a build.
+    // The core of the engine, next to the program.
+    const std::string core = findEngineCore();
+    if (!core.empty() && fs::copyTree(core, str::join(gameDir, str::fileName(core)))) copied++;
+
+    // Whatever else sits beside the program that is not a folder: the DLLs it
+    // loads at startup. Copying the listing rather than a hardcoded list keeps a
+    // new dependency from silently missing from the build. Only DLLs - a .txt
+    // next to the binary belongs to the build system, not to a build.
     std::vector<fs::DirEntry> beside;
     fs::listDirectoryEx(exeDir, beside);
     for (const fs::DirEntry& entry : beside) {
         if (entry.isDir) continue;
         if (!str::equalsIgnoreAscii(str::extensionView(entry.name), ".dll")) continue;
-        if (fs::copyTree(str::join(exeDir, entry.name), str::join(libDir, entry.name))) copied++;
+        if (fs::copyTree(str::join(exeDir, entry.name), str::join(gameDir, entry.name))) copied++;
     }
 
-    // The shaders, which are files the engine reads and not files it carries
-    // inside itself. A build that starts and finds no shader is a build that
-    // draws nothing.
-    const std::string shaders = str::join(exeDir, "shaders");
-    if (fs::isDirectory(shaders) &&
-        fs::copyTree(shaders, str::join(libDir, "shaders")))
-        copied++;
+    // The data of the game, entry by entry: the manifest, the scenes, the
+    // scripts, the assets of the game and the icon.
+    //
+    // Entry by entry because the default build folder is inside the project, so
+    // copying the project wholesale would copy the build into itself - and each
+    // rebuild would double the size of the last one.
+    if (!project_.path.empty()) {
+        const std::string manifest = ProjectLibrary::manifestPath(project_.path);
+        if (fs::exists(manifest))
+            copied += fs::copyTree(manifest, str::join(dataDir, kProjectBootFile)) ? 1 : 0;
 
-    // Assets travel with the build: a build that starts and then finds no models
-    // and no language is a build that cannot be used.
+        const std::string icon = ProjectLibrary::iconPath(project_);
+        if (fs::exists(icon))
+            copied += fs::copyTree(icon, str::join(dataDir, kProjectIconFile)) ? 1 : 0;
+
+        for (const char* folder : {kProjectScenesDir, kProjectScriptsDir, kProjectAssetsDir}) {
+            const std::string from = str::join(project_.path, folder);
+            if (!fs::isDirectory(from)) continue;
+            if (fs::copyTree(from, str::join(dataDir, folder))) copied++;
+        }
+    }
+
+    // What the engine brings: its languages, its font, its sounds, its sky and
+    // its shaders. They are the plugins of the game - the parts that are the
+    // engine's and not the game's.
     //
     // The models are the exception. A folder of them is the biggest thing in
     // the assets, and a build that carries all of them carries the ones nobody
     // will ever open - so only the ones the scene names are staged, with their
     // pictures. The project's own models travel with the project.
     const std::string assets = str::join(exeDir, "assets");
+    const std::string plugins = str::join(dataDir, kBuiltGamePluginsDir);
     if (fs::isDirectory(assets)) {
         std::vector<fs::DirEntry> assetEntries;
         fs::listDirectoryEx(assets, assetEntries);
         for (const fs::DirEntry& entry : assetEntries) {
             if (entry.isDir && str::equalsIgnoreAscii(entry.name, "models")) continue;
-            if (fs::copyTree(str::join(assets, entry.name),
-                             str::join(str::join(libDir, "assets"), entry.name)))
+            if (fs::copyTree(str::join(assets, entry.name), str::join(plugins, entry.name)))
                 copied++;
         }
-        copied += stageModels(assets, libDir, project_);
+        copied += stageModels(assets, plugins, project_);
     }
 
-    // The project, entry by entry rather than as one tree, and into
-    // "<build>/project/<name>". The folder name is not decoration: a built program
-    // starts by asking the same "where are my projects" question the editor asks,
-    // and the answer it expects is "project" next to the binary. Copy the project
-    // anywhere else and the build runs to an empty launcher.
-    //
-    // Entry by entry because the default build folder is inside the project, so
-    // copying it wholesale would copy the build into itself - and each rebuild
-    // would double the size of the last one.
-    if (!project_.path.empty()) {
-        const std::string into = str::join(str::join(target, "project"), project_.name);
-        const std::string buildName = str::fileName(target);
-        std::vector<fs::DirEntry> entries;
-        if (fs::listDirectoryEx(project_.path, entries)) {
-            bool ok = true;
-            for (const fs::DirEntry& entry : entries) {
-                if (str::equalsIgnoreAscii(entry.name, buildName)) continue;
-                ok = fs::copyTree(str::join(project_.path, entry.name),
-                                  str::join(into, entry.name)) &&
-                     ok;
-            }
-            if (ok) copied++;
-        }
-    }
+    // The shaders, which are files the engine reads and not files it carries
+    // inside itself. A build that starts and finds no shader is a build that
+    // draws nothing.
+    const std::string shaders = str::join(exeDir, "shaders");
+    if (fs::isDirectory(shaders) && fs::copyTree(shaders, str::join(plugins, "shaders")))
+        copied++;
 
-    Log::info("Build: %d item(s) staged in '%s'", copied, target.c_str());
+    Log::info("Build: %d item(s) staged in '%s'", copied, str::join(target, gameName).c_str());
 
     if (!alsoRun) return true;
 
 #if defined(_WIN32)
-    const std::string run = str::join(libDir, str::fileName(exe));
+    const std::string run = gameExe;
     STARTUPINFOA si{};
     PROCESS_INFORMATION pi{};
     si.cb = sizeof(si);
     std::string command = "\"" + run + "\"";
-    if (CreateProcessA(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, libDir.c_str(),
+    if (CreateProcessA(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, gameDir.c_str(),
                        &si, &pi)) {
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
@@ -828,7 +852,7 @@ bool Application::stageBuild(const std::string& target, bool alsoRun) {
     return false;
 #else
     // Elsewhere a shell does the same job; no window to steal focus from either.
-    const std::string run = str::join(libDir, str::fileName(exe));
+    const std::string run = gameExe;
     if (std::system(("chmod +x '" + run + "' && '" + run + "' &").c_str()) == 0) return true;
     Log::error("Build: cannot start '%s'", run.c_str());
     return false;
