@@ -46,20 +46,28 @@ public:
     // Sets a uniform. The name is looked up the first time and remembered
     // after that; a uniform the program does not have is a name that is
     // simply not found, and setting it does nothing.
-    void setInt(const char* name, int value);
-    void setFloat(const char* name, float value);
-    void setVec3(const char* name, float x, float y, float z);
-    void setMat4(const char* name, const float* matrix);
+    //
+    // Const, because setting a uniform changes nothing about the program: the
+    // value goes to the driver and the only thing kept here is the place the
+    // name was found, and that cache is mutable. So a program can be drawn
+    // with through a const reference - which is how the sky and the bodies are
+    // drawn, from a program the renderer owns and does not change.
+    void setInt(const char* name, int value) const;
+    void setFloat(const char* name, float value) const;
+    void setVec2(const char* name, float x, float y) const;
+    void setVec3(const char* name, float x, float y, float z) const;
+    void setVec4(const char* name, float x, float y, float z, float w) const;
+    void setMat4(const char* name, const float* matrix) const;
     // An array of them: the shadow's matrices and the stretches of the scene
     // are arrays, and the name of an array's first element is the name the
     // program knows it by.
     //
     // The count is the number of *elements*: four for a float[4], four for a
-    // mat4[4], and four for a vec4[4] - which is sixteen numbers, because
-    // the driver is told how many vectors there are and not how many numbers.
-    void setFloatArray(const char* name, const float* values, int count);
-    void setVec4Array(const char* name, const float* values, int count);
-    void setMat4Array(const char* name, const float* values, int count);
+    // mat4[4], and four for a vec4[4] - which is sixteen numbers, because the
+    // driver is told how many vectors there are and not how many numbers.
+    void setFloatArray(const char* name, const float* values, int count) const;
+    void setVec4Array(const char* name, const float* values, int count) const;
+    void setMat4Array(const char* name, const float* values, int count) const;
 
     // Where an attribute lives, or -1 when the program does not have it.
     int attribute(const char* name) const;

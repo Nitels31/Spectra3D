@@ -4,6 +4,7 @@
 #include "core/Math.hpp"
 #include "core/Str.hpp"
 #include "platform/Filesystem.hpp"
+#include "platform/GlFunctions.hpp"
 
 #include <GL/gl.h>
 
@@ -159,6 +160,10 @@ void Skybox::release() {
     for (unsigned& texture : faces_)
         if (texture) glDeleteTextures(1, &texture);
     for (unsigned& texture : faces_) texture = 0;
+    if (vertexBuffer_) {
+        if (gl::DeleteBuffers) gl::DeleteBuffers(1, &vertexBuffer_);
+        vertexBuffer_ = 0;
+    }
     source_.clear();
 }
 
@@ -317,7 +322,7 @@ bool Skybox::buildFromEquirect(const unsigned char* pixels, int width, int heigh
     return true;
 }
 
-void Skybox::draw(const Camera& camera) const {
+void Skybox::draw(const Camera& camera, const ShaderProgram& program) const {
     if (!valid()) return;
 
     // The state the sky touches is put back the way it was found, because the
@@ -335,32 +340,37 @@ void Skybox::draw(const Camera& camera) const {
     // The texture is modulated by the current colour, and the current colour is
     // whatever the last thing in the frame left behind - which is usually a
     // label's colour. The sky is the picture, not a tint of it.
-    glColor3f(1.0f, 1.0f, 1.0f);
     glEnable(GL_TEXTURE_2D);
 
-    glPushMatrix();
+    // The scene's program, when there is one. The sky is mode 2 of it: the
+    // picture of the sky with the fog over it, and no light and no shadow.
+    //
+    // Without a program the fixed pipeline draws it, which is the picture
+    // without the fog - worse, and not nothing.
+    const bool shader = program.ready();
+
     // The cube is put where the camera is and scaled up, and it is not turned:
-    // the model matrix is a translation and a scale and nothing else, so the
-    // cube's own frame is the world's frame. That is what makes the sky stand
-    // still while the camera turns - the direction a texel is looked up in is a
-    // world direction, not a direction relative to the camera.
-    glTranslatef(camera.position.x, camera.position.y, camera.position.z);
+    // the cube's own frame is the world's frame. That is what makes the sky
+    // stand still while the camera turns - the direction a texel is looked up
+    // in is a world direction, not a direction relative to the camera.
+    //
     // Big enough to be past everything in the arena, small enough to stay
     // inside the far plane: the far plane is at 900 and the corner of the cube
     // is at 400 * sqrt(3).
-    const float size = 400.0f;
-    glScalef(size, size, size);
+    constexpr float kSkySize = 400.0f;
 
+    // The corners of the six faces, with the texture coordinates the cube map
+    // rules would have produced for them: (0,0) at -right -down, then right,
+    // then down. The hardware interpolates them across the quad with the
+    // perspective, which is exactly the mapping a cube map lookup does - only
+    // that one does not need the texture coordinate generation to be there.
+    //
+    // Five numbers to a vertex: the position and then the texture coordinate.
+    // One buffer for both, because the program reads the position from the
+    // first and the coordinate from the last.
+    float vertices[6 * 6 * 5];
     for (int f = 0; f < 6; ++f) {
-        if (!faces_[f]) continue;
         const Face& spec = kFaces[f];
-
-        // The four corners of the face, with the texture coordinates the cube
-        // map rules would have produced for them: (0,0) at -right -down, then
-        // right, then down. The hardware interpolates them across the quad
-        // with the perspective, which is exactly the mapping a cube map lookup
-        // does - only that one does not need the texture coordinate generation
-        // to be there.
         const Vec3 corners[4] = {
             spec.forward - spec.right - spec.down,
             spec.forward + spec.right - spec.down,
@@ -370,6 +380,138 @@ void Skybox::draw(const Camera& camera) const {
         const float us[4] = {0.0f, 1.0f, 1.0f, 0.0f};
         const float vs[4] = {0.0f, 0.0f, 1.0f, 1.0f};
 
+        // Six vertices and not four: two triangles, written out.
+        //
+        // A quad of four vertices is two triangles as well, and drawn as a
+        // strip it is not the same two triangles: the strip joins the
+        // triangles along an edge of the quad instead of along its diagonal,
+        // and a face drawn that way has a bite out of it.
+        const int order[6] = {0, 1, 2, 0, 2, 3};
+        for (int i = 0; i < 6; ++i) {
+            const int c = order[i];
+            // The four corners in the world: the cube's frame is the world's
+            // frame, so the position of a corner is the camera's position plus
+            // the corner of the cube scaled up.
+            const Vec3 p = camera.position + corners[c] * kSkySize;
+            float* out = vertices + ((size_t)f * 6 + (size_t)i) * 5;
+            out[0] = p.x;
+            out[1] = p.y;
+            out[2] = p.z;
+            out[3] = us[c];
+            out[4] = vs[c];
+        }
+    }
+
+    // The attributes of the program, and where they are read from.
+    //
+    // THE GENERIC ARRAYS AND NOT THE FIXED-FUNCTION ONES. The program reads
+    // its texture coordinate from the generic attribute 2, and that attribute
+    // is fed from the buffer here. A texture coordinate handed over with
+    // glTexCoordPointer does not arrive: the array is enabled, the pointer is
+    // set, the draw goes through - and the program sees the default value,
+    // which is (0,0). Every face of the sky is then one texel of the picture
+    // spread over the whole face, and the sky is a flat wall in three shades
+    // of blue that follows the camera around.
+    //
+    // A driver without the buffers is drawn with the fixed pipeline: the sky
+    // without the fog, which is worse, and not nothing.
+    const bool onCard = shader && gl::GenBuffers && gl::BindBuffer && gl::BufferData &&
+                        gl::BufferSubData && gl::VertexAttribPointer &&
+                        gl::EnableVertexAttribArray && gl::DisableVertexAttribArray;
+
+    if (onCard) {
+        if (!vertexBuffer_) {
+            gl::GenBuffers(1, &vertexBuffer_);
+            if (vertexBuffer_) {
+                gl::BindBuffer(GL_ARRAY_BUFFER, vertexBuffer_);
+                gl::BufferData(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof(vertices), nullptr,
+                               GL_DYNAMIC_DRAW);
+            }
+        } else {
+            gl::BindBuffer(GL_ARRAY_BUFFER, vertexBuffer_);
+        }
+        // The driver refused the buffer: the sky is drawn with the fixed
+        // pipeline instead - the picture without the fog, which is worse, and
+        // not nothing.
+        if (!vertexBuffer_) {
+            gl::UseProgram(0);
+            drawWithFixedPipeline(camera, kSkySize);
+        } else {
+            // The cube follows the camera, so the corners are written again
+            // every frame. Thirty-six vertices is nothing.
+            gl::BufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)sizeof(vertices), vertices);
+
+            program.use();
+            program.setInt("uSurfaceMode", 2);
+            program.setMat4("uModel", Mat4::identity().m);
+
+            const GLsizei stride = 5 * (GLsizei)sizeof(float);
+            gl::VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (const void*)0);
+            gl::EnableVertexAttribArray(0);
+            gl::VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
+                                    (const void*)(3 * sizeof(float)));
+            gl::EnableVertexAttribArray(2);
+            // The normal and the colour of the vertex are of no use to a sky,
+            // and the scene's program asks for both: what is left of them in
+            // the arrays is the last thing a body drew, and a sky drawn with
+            // another body's normal is a sky nobody can explain.
+            gl::DisableVertexAttribArray(1);
+            gl::DisableVertexAttribArray(3);
+
+            for (int f = 0; f < 6; ++f) {
+                if (!faces_[f]) continue;
+                gl::ActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, faces_[f]);
+                program.setInt("uAlbedoMap", 0);
+                glDrawArrays(GL_TRIANGLES, f * 6, 6);
+            }
+
+            gl::DisableVertexAttribArray(0);
+            gl::DisableVertexAttribArray(2);
+            gl::BindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+    } else {
+        gl::UseProgram(0);
+        drawWithFixedPipeline(camera, kSkySize);
+    }
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+    if (!texture2d) glDisable(GL_TEXTURE_2D);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    if (lighting) glEnable(GL_LIGHTING);
+    if (culling) glEnable(GL_CULL_FACE);
+
+    // And the surface mode back to the ordinary one: the bodies are drawn
+    // with the same program, and a body drawn as a sky is a body with no
+    // light on it.
+    if (shader) program.setInt("uSurfaceMode", 0);
+}
+
+// The sky without a program: six quads through the fixed pipeline.
+//
+// The cube is put where the camera is and scaled up, and it is not turned, so
+// the direction a texel is looked up in is a world direction and the sky
+// stands still while the camera turns.
+void Skybox::drawWithFixedPipeline(const Camera& camera, float size) const {
+    // The texture is modulated by the current colour, and the current colour
+    // is whatever the last thing in the frame left behind - which is usually a
+    // label's colour. The sky is the picture, not a tint of it.
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glPushMatrix();
+    glTranslatef(camera.position.x, camera.position.y, camera.position.z);
+    glScalef(size, size, size);
+    for (int f = 0; f < 6; ++f) {
+        if (!faces_[f]) continue;
+        const Face& spec = kFaces[f];
+        const Vec3 corners[4] = {
+            spec.forward - spec.right - spec.down,
+            spec.forward + spec.right - spec.down,
+            spec.forward + spec.right + spec.down,
+            spec.forward - spec.right + spec.down,
+        };
+        const float us[4] = {0.0f, 1.0f, 1.0f, 0.0f};
+        const float vs[4] = {0.0f, 0.0f, 1.0f, 1.0f};
         glBindTexture(GL_TEXTURE_2D, faces_[f]);
         glBegin(GL_QUADS);
         for (int c = 0; c < 4; ++c) {
@@ -379,13 +521,6 @@ void Skybox::draw(const Camera& camera) const {
         glEnd();
     }
     glPopMatrix();
-
-    glBindTexture(GL_TEXTURE_2D, 0);
-    if (!texture2d) glDisable(GL_TEXTURE_2D);
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_TRUE);
-    if (lighting) glEnable(GL_LIGHTING);
-    if (culling) glEnable(GL_CULL_FACE);
 }
 
 } // namespace s3d

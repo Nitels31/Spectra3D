@@ -572,6 +572,11 @@ void Editor::drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int 
         title = text("modal.shadowSettings");
         height += hintHeight("modal.shadowSettingsHint") + 5.0f * kShadowRowHeight;
         break;
+    case Modal::Fog:
+        // Four numbers and a line of explanation, measured the same way.
+        title = text("modal.fog");
+        height += hintHeight("modal.fogHint") + 4.0f * kShadowRowHeight;
+        break;
     case Modal::None:
         return;
     }
@@ -691,6 +696,50 @@ void Editor::drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int 
         oneButtonOnly = true;
         break;
     }
+    case Modal::Fog: {
+        // The air between the eye and the thing.
+        //
+        // The numbers are changed while the dialog is open, and the picture
+        // behind it changes with them: the fog thickens and the far things
+        // lose their colour in front of the user, which is the only way to
+        // tell what a density of 0.004 means.
+        y += drawWrapped(ui, panel.x + 14.0f, y, textWidth, text("modal.fogHint"),
+                         theme::textDim);
+        y += 6.0f;
+        if (fogSettings_) {
+            // How thick the fog is where it is thickest. The small numbers are
+            // lost when they are shown with two decimals, so this one is a
+            // fine field: 0.004 and 0.0004 both say "0.00" otherwise.
+            ui_.propertyFine(ui, kFogDensity, panel.x + 14.0f, y, panel.width - 28.0f,
+                             text("settings.fogDensity"), fogSettings_->density,
+                             0.002f, 0.0f, 0.05f);
+            y += kShadowRowHeight;
+            // How fast it thins as it goes up.
+            ui_.propertyFine(ui, kFogFalloff, panel.x + 14.0f, y, panel.width - 28.0f,
+                             text("settings.fogFalloff"), fogSettings_->falloff,
+                             0.004f, 0.0f, 0.2f);
+            y += kShadowRowHeight;
+            // The height at which it is thickest.
+            ui_.propertyFloat(ui, kFogHeight, panel.x + 14.0f, y, panel.width - 28.0f,
+                              text("settings.fogHeight"), fogSettings_->height,
+                              0.25f, -50.0f, 200.0f);
+            y += kShadowRowHeight;
+            // How much of the sun's light it carries.
+            ui_.propertyFloat(ui, kFogScatter, panel.x + 14.0f, y, panel.width - 28.0f,
+                              text("settings.fogScatter"), fogSettings_->scatter,
+                              0.01f, 0.0f, 2.0f);
+            y += kShadowRowHeight;
+            // How forward it throws that light: the shape of the glow around
+            // the sun.
+            ui_.propertyFloat(ui, kFogForward, panel.x + 14.0f, y, panel.width - 28.0f,
+                              text("settings.fogForward"), fogSettings_->forward,
+                              0.01f, 0.0f, 0.95f);
+            y += kShadowRowHeight;
+        }
+        primary = text("btn.close");
+        oneButtonOnly = true;
+        break;
+    }
     case Modal::None:
         return;
     }
@@ -742,6 +791,10 @@ void Editor::drawModal(UiRenderer& ui, PhysicsWorld& world, Window& window, int 
     case Modal::ShadowSettings:
         // Nothing to do: the numbers were changed while the dialog was open,
         // and the picture behind it changed with them.
+        break;
+    case Modal::Fog:
+        // The same: the fog was changed while the dialog was open, and the
+        // picture behind it changed with it.
         break;
 case Modal::SaveFirst: {
         // Save and "Don't save" both mean "go ahead with what you asked"; they

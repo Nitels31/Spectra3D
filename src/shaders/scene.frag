@@ -54,9 +54,20 @@ uniform vec3 uTint;
 // Whether the colours of the vertices are to be used at all. A mesh without
 // them has nothing to say, and the colour of the picture is the colour.
 uniform int uUseVertexColour;
+// How much of what is behind shows through. One is an ordinary surface, and
+// less than one is a surface you can see into - the water is the one thing in
+// the scene that is not opaque.
+uniform float uAlpha;
 
-uniform vec3 uFogColour;
-uniform float uFogDensity;
+// THE FOG
+//
+// The air between the eye and the thing. It is in a file of its own - fog/
+// fog.glsl - and it is here because every shader that has air in front of it
+// has the same air in front of it.
+//
+// What is left of it here is the uniforms it is given and the two calls:
+// the sky is the picture of the sky with the fog over it, and everything
+// else is the picture of the thing with the fog over it.
 
 uniform int uShadowMode;         // 0 off, 1 hard, 2 filtered, 3 soft
 uniform float uShadowTexelSize;  // one over the size of the map
@@ -78,12 +89,16 @@ uniform vec4 uCascadeParams[4];
 uniform vec3 uSceneCentre;
 uniform int uCascadeCount;
 // What is being drawn: 0 a surface that is lit, 1 a sheet that is not drawn at
-// all and only takes the shadow.
+// all and only takes the shadow, 2 the sky.
 //
 // The sheet is the ground of the editor. The ground of the editor is a grid
 // of lines, and a shadow on a line is a shadow nobody can see - so the model
 // stands on nothing and looks like it is flying. The sheet is a plain quad
 // that takes the shadow and nothing else, and the grid is drawn over it.
+//
+// The sky is the far distance, and the fog in front of it is what turns the
+// horizon into a soft edge instead of a line. It is not lit and it has no
+// shadow: it is the picture of the sky with the fog over it.
 uniform int uSurfaceMode;
 uniform float uShadowStrength;
 // Which picture the scene is drawn with when the shadows are being looked at.
@@ -99,6 +114,17 @@ uniform float uShadowStrength;
 // A shadow that is not what it should be is a question about these numbers and
 // not about the picture, and the picture cannot answer it.
 uniform int uShadowDebug;
+
+// The air between the eye and the thing, and the shader that has it in it.
+//
+// The fog is in a file of its own, because the world, the particles and the
+// water all have the same air in front of them and it has to be the same air
+// in all of them. The loader puts the file where this line is.
+//
+// It is put in here and not at the top of the file because GLSL wants a thing
+// to be declared before it is used, and the fog is lit by the sun: the sun is
+// declared above.
+#include "fog/fog.glsl"
 
 in vec3 vWorldPosition;
 in vec3 vNormal;
@@ -157,12 +183,18 @@ float diskRotation() {
 // further from the middle of the scene than every stretch reaches belongs to
 // the last one - the first one is a box in the middle of the scene, and
 // reading the map there gives the picture of something else entirely.
-int cascadeOf(float fromCentre) {
+//
+// The distance comes in squared: the question is "is this inside the
+// sphere", and the answer is the same without the square root.
+int cascadeOf(float fromCentreSquared) {
     int cascade = max(uCascadeCount - 1, 0);
     for (int i = 0; i < 4; ++i) {
-        if (i < uCascadeCount && fromCentre <= uCascadeParams[i].x) {
-            cascade = i;
-            break;
+        if (i < uCascadeCount) {
+            float reach = uCascadeParams[i].x;
+            if (fromCentreSquared <= reach * reach) {
+                cascade = i;
+                break;
+            }
         }
     }
     return cascade;
@@ -250,7 +282,34 @@ float shadowFactor(vec2 uv, float distance, float bias, int cascade) {
     return 1.0;
 }
 
+// THE FOG IS NOT HERE.
+//
+// The amount of it on the way, the colour of it and the mix are all in
+// fog/fog.glsl - the file that the particles and the water have too, so that
+// the air in front of the world and the air in front of the smoke and the air
+// in front of the water are one air and not three.
+//
+// What is left of the fog here is two calls: the sky is the picture of the
+// sky with the fog over it, and everything else is the picture of the thing
+// with the fog over it.
+
 void main() {
+    // The sky.
+    //
+    // The sky is the far distance, and the fog in front of it is what turns
+    // the horizon into a soft edge instead of a line: the air between the eye
+    // and the sky is the same air as the air between the eye and everything
+    // else, and a sky that is drawn without it stands in front of the fog
+    // like a wall.
+    //
+    // The sky is not lit and it has no shadow: it is the picture of the sky,
+    // with the fog over it, and nothing else.
+    if (uSurfaceMode == 2) {
+        vec3 sky = texture(uAlbedoMap, vTexCoord).rgb;
+        oColour = vec4(applyFog(sky, vWorldPosition), 1.0);
+        return;
+    }
+
     vec3 normal = normalize(vNormal);
     vec3 toLight = normalize(uSunDirection);
     vec3 toEye = normalize(uCameraPosition - vWorldPosition);
@@ -263,8 +322,11 @@ void main() {
     // for every fragment is a thing a driver has to copy into a place of its
     // own, and this way the four matrices are four constants and the tests
     // are four branches that most of the time all take the same way.
-    float fromCentre = distance(vWorldPosition, uSceneCentre);
-    int cascade = cascadeOf(fromCentre);
+    // The distance to the middle of the scene, squared: the question the
+    // stretch is chosen by is "is this inside the sphere", and the square
+    // root of the answer is of no use to anybody.
+    vec3 fromCentre = vWorldPosition - uSceneCentre;
+    int cascade = cascadeOf(dot(fromCentre, fromCentre));
     mat4 light = uLightViewProjection[0];
     vec4 params = uCascadeParams[0];
     if (cascade == 1) {
@@ -290,6 +352,13 @@ void main() {
     // angle between them.
     float nDotL = max(dot(normal, toLight), 0.0);
 
+    // The shine, worked out before the shadow: the shadow is only asked for
+    // where the sun's light can reach the fragment at all, and the shine is
+    // the sun's light too.
+    vec3 halfway = normalize(toLight + toEye);
+    float nDotH = max(dot(normal, halfway), 0.0);
+    float shine = pow(nDotH, max(uShininess, 1.0)) * uSpecular;
+
     // The shadow, and what it is when the map says nothing: the fragment is
     // in the light.
     float shadow = 1.0;
@@ -300,7 +369,18 @@ void main() {
     bool inside = coord.z <= 1.0 && coord.z >= 0.0 && coord.x >= 0.0 && coord.x <= 1.0 &&
                   coord.y >= 0.0 && coord.y <= 1.0;
 
-    if (inside) {
+    // **THE SHADOW IS NOT ASKED FOR WHERE THE SUN CANNOT REACH.**
+    //
+    // A surface that faces away from the sun has no direct light and no
+    // shine, and it is dark whether the sun is behind a mountain or not - so
+    // the map is not read there. The back of every object in the picture is a
+    // piece of the picture that stops paying for the shadow, and with the
+    // soft shadows that is sixteen reads and thirty-two.
+    //
+    // The pictures of the shadow are exempt: they are about the shadow and
+    // not about the light, and a picture of the shadow that is missing half
+    // of it is worse than no picture.
+    if (inside && (uShadowDebug != 0 || nDotL > 0.0 || shine > 0.0001)) {
         // The bias, in the map's own units.
         //
         // The bias is a distance in metres and the map holds a distance as a
@@ -331,19 +411,25 @@ void main() {
         shadow = shadowFactor(coord.xy, distance, bias, cascade);
     }
 
-    if (uShadowDebug == 1) { oColour = vec4(vec3(shadow), 1.0); return; }
-    if (uShadowDebug == 2) { oColour = vec4(vec3(inside ? 1.0 : 0.0), 1.0); return; }
-    if (uShadowDebug == 3) { oColour = vec4(coord, 1.0); return; }
-    if (uShadowDebug == 4) { oColour = vec4(vec3(float(cascade) / 3.0), 1.0); return; }
-    if (uShadowDebug == 5) { oColour = vec4(vec3(distance), 1.0); return; }
-    if (uShadowDebug == 6) {
-        oColour = vec4(vec3(texture(uShadowMap, vec3(coord.xy, float(cascade))).r), 1.0);
-        return;
-    }
-    if (uShadowDebug == 7) {
-        float s = texture(uShadowMap, vec3(coord.xy, float(cascade))).r;
-        oColour = vec4(vec3(clamp((distance - s) * 40.0 + 0.5, 0.0, 1.0)), 1.0);
-        return;
+    // The pictures of the shadow. One test and not seven: the pictures are
+    // for looking at the shadow, and every fragment of every frame that is
+    // not a picture of the shadow should not be reading seven numbers to
+    // find out that it is not one.
+    if (uShadowDebug != 0) {
+        if (uShadowDebug == 1) { oColour = vec4(vec3(shadow), 1.0); return; }
+        if (uShadowDebug == 2) { oColour = vec4(vec3(inside ? 1.0 : 0.0), 1.0); return; }
+        if (uShadowDebug == 3) { oColour = vec4(coord, 1.0); return; }
+        if (uShadowDebug == 4) { oColour = vec4(vec3(float(cascade) / 3.0), 1.0); return; }
+        if (uShadowDebug == 5) { oColour = vec4(vec3(distance), 1.0); return; }
+        if (uShadowDebug == 6) {
+            oColour = vec4(vec3(texture(uShadowMap, vec3(coord.xy, float(cascade))).r), 1.0);
+            return;
+        }
+        if (uShadowDebug == 7) {
+            float s = texture(uShadowMap, vec3(coord.xy, float(cascade))).r;
+            oColour = vec4(vec3(clamp((distance - s) * 40.0 + 0.5, 0.0, 1.0)), 1.0);
+            return;
+        }
     }
     // A sheet that is not drawn and only takes the shadow. Nothing of it is
     // seen: what is seen is the shadow on it.
@@ -367,9 +453,11 @@ void main() {
     // The shine: a highlight where the surface is half way between the light
     // and the eye. It is the one thing that says "this is a surface" and not
     // a colour, and it is worth having even when it is faint.
-    vec3 halfway = normalize(toLight + toEye);
-    float nDotH = max(dot(normal, halfway), 0.0);
-    float highlight = pow(nDotH, max(uShininess, 1.0)) * uSpecular * shadow;
+    //
+    // It was worked out above, before the shadow: the shadow is only asked
+    // for where the sun's light can reach the fragment, and this is the sun's
+    // light.
+    float highlight = shine * shadow;
 
     // The colour of the surface: the picture, the colour of the vertex and
     // the colour of the thing, in that order.
@@ -377,11 +465,9 @@ void main() {
     vec3 albedo = texture(uAlbedoMap, vTexCoord).rgb * vertexColour * uTint;
     vec3 colour = albedo * (ambient + direct) + uSunColour * highlight;
 
-    // The haze: the distance eats the colour of the far things, and it eats
-    // it towards the colour of the sky.
-    float distanceToEye = length(uCameraPosition - vWorldPosition);
-    float fog = 1.0 - exp(-distanceToEye * uFogDensity);
-    colour = mix(colour, uFogColour, clamp(fog, 0.0, 1.0));
+    // The haze: the air between the eye and the thing eats the colour of the
+    // far things, and it eats it towards the colour of the air.
+    colour = applyFog(colour, vWorldPosition);
 
-    oColour = vec4(colour, 1.0);
+    oColour = vec4(colour, uAlpha);
 }

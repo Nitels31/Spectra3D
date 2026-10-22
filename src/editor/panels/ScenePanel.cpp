@@ -18,7 +18,7 @@ constexpr float kBarGap = 3.0f;
 // the UI renderer has. Each one is a different shape on purpose: letters on a
 // toolbar say nothing about what the button does and look the same whether it is
 // active or not.
-enum class ViewIcon { Grid, Vectors, Snap, Frame, Reset, Layers };
+enum class ViewIcon { Grid, Vectors, Snap, Frame, Reset, Layers, Mode2D, Gui };
 
 void drawViewIcon(UiRenderer& ui, const Rect& r, ViewIcon icon, const Color& tint) {
     const float cx = r.x + r.width * 0.5f;
@@ -81,6 +81,21 @@ void drawViewIcon(UiRenderer& ui, const Rect& r, ViewIcon icon, const Color& tin
         for (int i = 0; i < 3; ++i)
             bar(cx - 6.0f, cy - 4.0f + (float)i * 3.0f, 12.0f - (float)i * 2.0f, 1.5f);
         break;
+    case ViewIcon::Mode2D:
+        // A flat plane seen from the front: a wide rectangle with a line down
+        // it, and the two axes lying in it.
+        bar(cx - 6.0f, cy - 4.0f, 12.0f, 1.5f);
+        bar(cx - 6.0f, cy + 2.5f, 12.0f, 1.5f);
+        bar(cx - 0.75f, cy - 4.0f, 1.5f, 8.0f);
+        break;
+    case ViewIcon::Gui:
+        // A window with a title bar: the interface of the game.
+        bar(cx - 6.0f, cy - 5.0f, 12.0f, 1.5f);
+        bar(cx - 6.0f, cy - 5.0f, 1.5f, 10.0f);
+        bar(cx + 4.5f, cy - 5.0f, 1.5f, 10.0f);
+        bar(cx - 6.0f, cy + 3.5f, 12.0f, 1.5f);
+        bar(cx - 3.5f, cy - 1.5f, 7.0f, 1.5f);
+        break;
     }
 }
 
@@ -93,6 +108,10 @@ const char* const kAxisLabels[3] = {"X", "Y", "Z"};
 } // namespace
 
 void Editor::drawNavigationBalls(UiRenderer& ui) const {
+    // The 2D view looks down the Z axis and does not turn: the balls would
+    // turn a view that has only one direction to look from.
+    if (mode2D_) return;
+
     const Rect viewport = layout_.viewport;
     const float cx = viewport.x + viewport.width - kNavBallInset;
     const float cy = viewport.y + kNavBallInset;
@@ -184,6 +203,23 @@ void Editor::drawSceneHeader(UiRenderer& ui, PhysicsWorld& world, Camera& camera
                        showGrid_))
             showGrid_ = !showGrid_;
         drawViewIcon(ui, rect, ViewIcon::Grid, showGrid_ ? theme::accent : theme::textDim);
+    }
+    // The two modes of the editor, at the right of the row where the eye
+    // already is: the world measured and not seen, and the interface of the
+    // game laid out instead of the world.
+    {
+        const Rect rect = button(kSceneHeader + 47, kBarSize);
+        if (ui_.button(ui, kSceneHeader + 47, rect.x, rect.y, rect.width, rect.height, "",
+                       mode2D_))
+            runAction(Action::Mode2D, 0, world, camera, window);
+        drawViewIcon(ui, rect, ViewIcon::Mode2D, mode2D_ ? theme::accent : theme::textDim);
+    }
+    {
+        const Rect rect = button(kSceneHeader + 48, kBarSize);
+        if (ui_.button(ui, kSceneHeader + 48, rect.x, rect.y, rect.width, rect.height, "",
+                       guiMode_))
+            runAction(Action::GuiMode, 0, world, camera, window);
+        drawViewIcon(ui, rect, ViewIcon::Gui, guiMode_ ? theme::accent : theme::textDim);
     }
 }
 

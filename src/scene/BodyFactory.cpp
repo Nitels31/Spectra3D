@@ -1,6 +1,7 @@
 #include "scene/BodyFactory.hpp"
 
 #include "core/Log.hpp"
+#include "core/Math.hpp"
 
 namespace s3d {
 namespace {
@@ -39,6 +40,8 @@ Vec3 defaultHalfExtents(Shape shape) {
         case Shape::Cone: return {0.5f, 0.75f, 0.5f};
         case Shape::Pyramid: return {0.6f, 0.75f, 0.6f};
         case Shape::Prism: return {0.5f, 0.75f, 0.5f};
+        // A square in the XY plane. The thickness is the shape's own business.
+        case Shape::Quad: return {0.5f, 0.5f, 0.5f};
         default: return {1.0f, 1.0f, 1.0f};
     }
 }
@@ -93,6 +96,34 @@ RigidBody BodyFactory::makeInFrontOf(Shape shape, const Camera& camera, float de
     Vec3 position = camera.position + camera.forward().normalized() * 6.0f;
     position.y = std::round(position.y);
     return make(shape, position, Vec3{}, defaultHalfExtents(shape), density, Vec3{}, Quat{});
+}
+
+RigidBody BodyFactory::makeWater(const Vec3& position, float width, float depth,
+                                const Vec3& color, float alpha) {
+    RigidBody body = make(Shape::Water, position, Vec3{}, Vec3{width * 0.5f, 0.02f, depth * 0.5f},
+                           1.0f, Vec3{}, Quat{});
+    body.material.color = color;
+    body.waterAlpha = clampf(alpha, 0.0f, 1.0f);
+    // The colour of the water is the colour of the body, and it is a colour
+    // and not a single one: the water is bright where it is thin and dark
+    // where it is deep, and the colour of the body is the colour of the
+    // shallow water. The deep water is the same colour with the light of it
+    // taken away.
+    body.water.shallowColour = Vec3{clampf(color.x * 1.7f, 0.0f, 1.0f),
+                                    clampf(color.y * 1.7f, 0.0f, 1.0f),
+                                    clampf(color.z * 1.7f, 0.0f, 1.0f)};
+    body.water.deepColour = Vec3{color.x * 0.3f, color.y * 0.3f, color.z * 0.45f};
+    // Water does not fall and it does not drift, and it is not something the
+    // simulation has an opinion about.
+    body.material.isStatic = true;
+    // And it casts no shadow. A flat sheet in the map of the shadows is a flat
+    // sheet that shadows itself - every dip of a wave under the plane - and
+    // what the water shows of the sun is not a shadow of the water but the
+    // track of the sun on it.
+    body.castsShadow = false;
+    body.configure(1.0f);
+    body.syncPrevTransform();
+    return body;
 }
 
 int BodyFactory::spawn(PhysicsWorld& world, Shape shape, const Vec3& position,

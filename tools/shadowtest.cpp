@@ -207,7 +207,7 @@ int main(int argc, char** argv) {
 
     renderer.beginFrame(width, height);
     renderer.renderWorld(world, meshes, textures, camera, viewport, /*showGrid=*/true,
-                         /*showVectors=*/false, 0.0f, -1);
+                         /*showVectors=*/false, 0.0f, 0.0f, -1);
 
     std::vector<unsigned char> pixels((size_t)width * (size_t)height * 3);
     glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
@@ -255,7 +255,7 @@ int main(int argc, char** argv) {
     // first one again.
     auto render = [&](const std::string& name) {
         renderer.beginFrame(width, height);
-        renderer.renderWorld(world, meshes, textures, camera, viewport, false, false, 0.0f, -1);
+        renderer.renderWorld(world, meshes, textures, camera, viewport, false, false, 0.0f, 0.0f, -1);
         std::vector<unsigned char> shot((size_t)width * (size_t)height * 3);
         glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, shot.data());
         std::vector<unsigned char> up(shot.size());

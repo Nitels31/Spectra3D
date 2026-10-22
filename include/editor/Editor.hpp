@@ -6,6 +6,7 @@
 
 #include "assets/MeshRegistry.hpp"
 #include "audio/SoundDevice.hpp"
+#include "gui/GuiCanvas.hpp"
 #include "i18n/Localizer.hpp"
 #include "physics/PhysicsWorld.hpp"
 #include "render/Camera.hpp"
@@ -14,6 +15,7 @@
 #include "ui/UiContext.hpp"
 #include "editor/AssetBrowser.hpp"
 #include "editor/Gizmo.hpp"
+#include "scene/Cloud.hpp"
 #include "scene/Landform.hpp"
 #include "editor/Gizmo.hpp"
 #include "scene/Landform.hpp"
@@ -41,6 +43,8 @@ enum class PanelId {
     Favorites,
     Sounds,
     Landform,
+    Cloud,
+    Particles,
     PanelCount
 };
 // Where a panel can be, and the geometry that follows from it, live in
@@ -138,10 +142,57 @@ public:
         kLandformStretch = 1247,
         kLandformVariation = 1248,
         kLandformGround = 1249,
+        // The biomes: a swatch of each, and the name of the one that is
+        // chosen.
+        kLandformBiome = 1250,  // + the biome
+        // The little bumps on the ground, the darkness of the valleys, and
+        // where the new ground lands.
+        kLandformDetail = 1258,
+        kLandformShading = 1259,
+        kLandformPlaceX = 1260,
+        kLandformPlaceZ = 1261,
+        // The brush: what a stroke does, how wide it is, how much it does,
+        // and the button that puts it in the hand.
+        kLandformBrush = 1262,  // + the brush
+        kLandformBrushRadius = 1266,
+        kLandformBrushStrength = 1267,
+        kLandformPaint = 1268,
 
         // 1300 - 1399: the inspector.
         kInspectorDock = 1300,
         kInspectorProperty = 1310,  // + the property
+
+        // The water: the settings of a body that is water. They are a
+        // stretch of their own because there are a great many of them, and
+        // they are the numbers of the waves and of the light and of the
+        // colour.
+        kWaterDepthColour = 1350,
+        kWaterShallow = 1351,       // + the three channels
+        kWaterDeep = 1355,          // + the three channels
+        kWaterFoamColour = 1359,    // + the three channels
+        kWaterDepthFade = 1363,
+        kWaterDepth = 1364,
+        kWaterClarity = 1365,
+        kWaterOpacity = 1366,
+        kWaterShoreFade = 1367,
+        kWaterWaveHeight = 1368,
+        kWaterWaveLength = 1369,
+        kWaterWaveSpeed = 1370,
+        kWaterWaveSteepness = 1371,
+        kWaterDetailStrength = 1372,
+        kWaterDetailScale = 1373,
+        kWaterDetailSpeed = 1374,
+        kWaterWindX = 1375,
+        kWaterWindZ = 1376,
+        kWaterReflectivity = 1377,
+        kWaterFresnelPower = 1378,
+        kWaterFresnelIntensity = 1379,
+        kWaterSpecular = 1380,
+        kWaterShininess = 1381,
+        kWaterFoam = 1382,
+        kWaterRefraction = 1383,
+        kWaterRefractionStrength = 1384,
+        kWaterDarkening = 1385,
 
         // 1400 - 1499: the fields that filter something.
         kFilterField = 1400,
@@ -160,6 +211,74 @@ public:
         kShadowBias = 1602,
         kShadowNormal = 1603,
         kShadowRadius = 1604,
+
+        // 1650 - 1699: the fog dialog.
+        //
+        // The air between the eye and the thing: how thick it is, how fast it
+        // thins as it goes up, the height at which it is thickest, how much
+        // of the sun's light it carries and how forward it throws it.
+        kFogDensity = 1650,
+        kFogFalloff = 1651,
+        kFogHeight = 1652,
+        kFogScatter = 1653,
+        kFogForward = 1654,
+
+        // 1800 - 1899: the interface of the game.
+        //
+        // The rows of the tree of elements, and the fields of the inspector
+        // that edits the one that is selected.
+        kGuiRow = 1800,       // + the element index
+        kGuiProperty = 1820,  // + the property
+        kGuiNameField = 1840,
+        kGuiTextField = 1841,
+        kGuiTextureField = 1842,
+
+        // 2100 - 2199: the particles.
+        //
+        // The panel that makes the effects: the effect that is chosen, the
+        // numbers of its recipe, and the emitters that are in the scene.
+        kParticlePreset = 2100,  // + the preset
+        kParticleCount = 2110,
+        kParticleSpeed = 2111,
+        kParticleSize = 2112,
+        kParticleLifetime = 2113,
+        kParticleSpread = 2114,
+        kParticleGravity = 2115,
+        kParticleDrag = 2116,
+        kParticleBlend = 2117,
+        kParticleColour = 2120,  // + the swatch
+        // The four buttons: a burst now, an emitter in the scene, an emitter
+        // that rides on the body that is selected, and the emitter that is
+        // selected taken away.
+        kParticleEmit = 2130,
+        kParticleAdd = 2131,
+        kParticleRemove = 2132,
+        kParticleFollow = 2133,
+
+        // 2200 - 2299: the rows of the emitters.
+        //
+        // Two ids to a row - the row itself and the X that takes the emitter
+        // away - so fifty emitters fit in the stretch.
+        kParticleRow = 2200,  // + the emitter index, times two
+
+        // 2000 - 2099: the cloud.
+        //
+        // The panel that makes the sky: the way it is drawn - flat or a
+        // volume - and the numbers of the puffs it is made of.
+        kCloudMode = 2000,      // + the mode
+        kCloudShape = 2010,      // + the shape
+        kCloudPuffs = 2020,
+        kCloudPuffSize = 2021,
+        kCloudSpread = 2022,
+        kCloudHeight = 2023,
+        kCloudCoverage = 2024,
+        kCloudSoftness = 2025,
+        kCloudDetail = 2026,
+        kCloudResolution = 2027,
+        kCloudSeed = 2028,
+        kCloudRandom = 2029,
+        kCloudGenerate = 2030,
+        kCloudPalette = 2040,  // + the swatch
     };
 
     // Who is drawing, for the overlay guard. The surfaces a pass puts down do
@@ -169,9 +288,7 @@ public:
         kOwnerTopBarOverlay = 1700,
         kOwnerModal = 1701,
         kOwnerFloatingPanel = 1710,  // + the panel
-    };
-
-    Editor(MeshRegistry& meshes, i18n::Localizer& localizer, SoundDevice& sound);
+    };    Editor(MeshRegistry& meshes, i18n::Localizer& localizer, SoundDevice& sound);
 
     // --- per frame ----------------------------------------------------------
     void handleInput(PhysicsWorld& world, Camera& camera, Window& window, int fbWidth,
@@ -232,11 +349,52 @@ public:
     bool showShadowMap() const { return showShadowMap_; }
     const LayoutRects& layout() const { return layout_; }
 
+    // --- the two modes -----------------------------------------------------
+    //
+    // 2D is the world measured and not seen: an orthographic camera looking
+    // down the Z axis, a grid in the XY plane and a gizmo with two handles
+    // instead of three. It is a mode of the EDITOR, and the scene is the same
+    // scene - nothing about it is thrown away and nothing about it is saved
+    // differently.
+    bool mode2D() const { return mode2D_; }
+    // The interface of the game, laid out instead of the world. The canvas is
+    // the game's own: the editor edits it in place, so what is on the screen
+    // while editing is what the game shows.
+    bool guiMode() const { return guiMode_; }
+    void setGuiMode(bool on);
+    // The canvas the editor edits. Null when there is no game - the editor
+    // without a project has no interface to lay out.
+    void setCanvas(gui::Canvas* canvas) { canvas_ = canvas; }
+    gui::Canvas* canvas() { return canvas_; }
+
+    // The pointer, as the editor saw it this frame. The interface of the game
+    // is drawn by the shell around the editor, and the shell needs to know
+    // where the pointer is to let the buttons answer it.
+    float pointerX() const { return ui_.pointerX(); }
+    float pointerY() const { return ui_.pointerY(); }
+    bool pointerDown() const { return ui_.pointerDown(); }
+    bool pointerPressed() const { return ui_.rawPointerPressed(); }
+    bool pointerReleased() const { return ui_.rawPointerReleased(); }
+
     // The shadows, as the user sets them. The settings belong to the project
     // and not to the machine, and the editor changes them where the shadows
     // can be seen: the pointer is the application's copy, and the application
     // puts it into the renderer and into the manifest.
     void setShadowSettings(ShadowSettings* settings) { shadowSettings_ = settings; }
+
+    // The fog, as the user sets it. The same arrangement as the shadows: the
+    // pointer is the renderer's copy, the renderer is what draws the fog, and
+    // the editor changes it where the fog can be seen.
+    void setFogSettings(FogSettings* settings) { fogSettings_ = settings; }
+
+    // The particles of the world: the emitters, the pool and the drawing.
+    //
+    // The same arrangement as the fog and the shadows: the pointer is the
+    // renderer's copy, the renderer is what draws the particles, and the
+    // editor adds emitters to it and takes them away again. The emitters are
+    // scene data, and they go into the scene file with everything else.
+    void setParticles(ParticleSystem* particles) { particles_ = particles; }
+    ParticleSystem* particles() { return particles_; }
 
     void saveScene(const PhysicsWorld& world);
     void loadScene(PhysicsWorld& world);
@@ -252,7 +410,7 @@ private:
 
     // --- input phases -------------------------------------------------------
     void handleHotkeys(PhysicsWorld& world, Camera& camera, Window& window, float dt);
-    void handleViewport(PhysicsWorld& world, Camera& camera, Window& window);
+    void handleViewport(PhysicsWorld& world, Camera& camera, Window& window, float dt);
         bool tryGizmoGrip(PhysicsWorld& world, Camera& camera);
     // The pointer's angle around a ring, in screen space, measured about the ring's
     // projected centre. False when there is no answer this frame - the centre is
@@ -273,7 +431,7 @@ private:
     // --- the dialogs Unity's File menu hangs off ---------------------------
     // One modal at a time, drawn centred over the scene like the help pages. Each
     // is a real command with a real result, not a message box that only says "ok".
-    enum class Modal { None, NewScene, OpenScene, BuildSettings, SaveFirst, ShadowSettings };
+    enum class Modal { None, NewScene, OpenScene, BuildSettings, SaveFirst, ShadowSettings, Fog };
     Modal modal_ = Modal::None;
     // What a pending "save first?" is about to do once the answer is known.
     enum class Pending { NewScene, OpenScene, LeaveProject };
@@ -352,16 +510,17 @@ private:
     bool pointerArmed_ = false;
     bool pressAccepted() const { return pointerArmed_ && ui_.pointerPressed(); }
 
-    // Projection basis for the current pointer position inside the viewport.
-    // `camera.basis()` costs four transcendentals and the field of view one
-    // more, and both the picking ray and the gizmo projection want the same
-    // values, so they are derived at most once per input frame. Rebuilt lazily:
-    // a frame where the pointer never reaches the viewport never pays for it.
-    struct ViewRay {
-        Vec3 forward, right, up;
-        float tanX = 0.0f, tanY = 0.0f;
-        bool valid = false;
-    };
+    // The projection the viewport is drawn with, and the basis the picking
+    // works in. `camera.basis()` costs four transcendentals and the field of
+    // view one more, and both the picking ray and the gizmo projection want
+    // the same values, so they are derived at most once per input frame.
+    // Rebuilt lazily: a frame where the pointer never reaches the viewport
+    // never pays for it.
+    //
+    // It is a projection and not a basis, because the camera can be
+    // orthographic as well as perspective, and the two need different numbers
+    // to answer the same question.
+    picking::ViewProjection viewRay_{};
     void updateViewRay(const Camera& camera);
     Vec3 viewportRay(const Camera& camera);
 
@@ -382,6 +541,12 @@ private:
     // The seed of the noise, kept as a whole number because that is what a
     // field can show and what a person can read out loud.
     int landformSeed_ = 1;
+    // Where the new ground lands: the middle of the world is not always where
+    // the game is. The ground that is there can be dragged where it belongs
+    // afterwards - it is an ordinary body - but the one that is made here
+    // lands where it is told to.
+    float landformPlaceX_ = 0.0f;
+    float landformPlaceZ_ = 0.0f;
     // How far the landform panel is scrolled, and how tall its content turned
     // out to be. The second number is measured, not predicted.
     float landformScroll_ = 0.0f;
@@ -390,9 +555,60 @@ private:
     // The editor asks it how high the ground is at a point, so a body dropped
     // on it lands on it and not near it.
     Landform landform_;
+    // The mesh of that ground. It is remembered so that the ground is not
+    // made again for every frame of a stroke, and so that the brush knows
+    // which ground it is painting.
+    int landformMesh_ = -1;
     // How many threads the making may use. The user picks the number in the
     // settings, and the panel uses it.
     int loaderThreads_ = 4;
+
+    // --- the brush -----------------------------------------------------------
+    // The brush paints the ground: what a stroke does to it, how wide the
+    // stroke is and how much it does.
+    LandformBrush landformBrush_ = LandformBrush::Raise;
+    float landformBrushRadius_ = 8.0f;
+    float landformBrushStrength_ = 4.0f;
+    // True when the brush is armed: the hand in the viewport paints the
+    // ground instead of picking a body out of it.
+    bool landformPainting_ = false;
+    // The ground as it was before the stroke that is being made now, and the
+    // mesh of that ground: the stroke is one entry on the undo stack when it
+    // is over.
+    std::vector<float> paintBefore_;
+    int paintMesh_ = -1;
+
+    // --- the cloud ----------------------------------------------------------
+    // What the Cloud panel says: whether the cloud is a flat picture or a
+    // volume of puffs, how many puffs it is made of, how big they are, how
+    // much sky it takes and what colour it comes out.
+    CloudSettings cloudSettings_;
+    // The seed of the noise, kept as a whole number because that is what a
+    // field can show and what a person can read out loud.
+    int cloudSeed_ = 1;
+    // How far the cloud panel is scrolled, and how tall its content turned
+    // out to be. The second number is measured, not predicted.
+    float cloudScroll_ = 0.0f;
+    float cloudContentHeight_ = 0.0f;
+    // The cloud that was made last. The editor asks it how many puffs it
+    // has, so that the panel can say how many of them there are.
+    Cloud cloud_;
+
+    // --- the particles -------------------------------------------------------
+    // The effect the panel is making. The recipe is a copy of the preset's,
+    // and the fields below change the copy - so two effects made one after
+    // the other are not the same effect twice.
+    ParticlePreset particlePreset_ = ParticlePreset::Fire;
+    ParticleSettings particleSettings_;
+    // The emitter that is selected in the list, or -1 for none.
+    int particleEmitter_ = -1;
+    // How far the panel is scrolled, and how tall its content turned out to
+    // be. The second number is measured, not predicted.
+    float particleScroll_ = 0.0f;
+    float particleContentHeight_ = 0.0f;
+    // The camera of this frame. An emitter is put where the eye is, because
+    // that is the only place a person can say "here".
+    Camera frameCamera_;
 
     // --- hierarchy -----------------------------------------------------------
     // The label a row shows is built the same way for the row and for the filter,
@@ -487,9 +703,34 @@ private:
         // with the map. They live in a dialog of their own, because a menu
         // row cannot be dragged.
         ShadowSettings,
+        // The fog: the air between the eye and the thing. It is four numbers
+        // that want to be dragged, so it is a dialog of its own as well.
+        Fog,
         // Create: a piece of ground, made of noise. It opens the panel that
         // says how the ground is made.
         Landform,
+        // Create: a cloud, made of noise. The same thing: it opens the panel
+        // that says how the cloud is made - and the panel is where the cloud
+        // is either a flat picture or a volume of puffs.
+        Cloud,
+        // Create: the effects of the world. It opens the panel that says how
+        // an effect is made and where the emitters are.
+        Particles,
+        // Create: a level of water over the ground. It is not a shape: it is
+        // made here, and it is as big and as high as it is told to be.
+        Water,
+        // The two ways of looking at a scene. 2D is the world measured and
+        // not seen: an orthographic camera, a grid in the XY plane and a
+        // gizmo with two handles instead of three.
+        Mode2D,
+        // The interface of the game, laid out instead of the world.
+        GuiMode,
+        // Create: the pieces of an interface. A panel, a picture, a line of
+        // letters and a button.
+        GuiPanel,
+        GuiImage,
+        GuiText,
+        GuiButton,
     };
 
     // One row of a dropdown. `text` is borrowed: every label comes either from the
@@ -578,7 +819,7 @@ private:
     };
     Panel panels_[kPanelCount];
 
-    // --- panels (one file each, panels/*.cpp) -----------------------------
+    // --- the panels (one file each, panels/*.cpp) ---------------------------
     void drawTopBar(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
                     int fbWidth);
     // Dropdowns and the panels hanging off the top bar, drawn last so they can
@@ -606,6 +847,33 @@ private:
     void drawLandformPanel(UiRenderer& ui, PhysicsWorld& world, const Rect& dock);
     // Makes the ground the panel describes and puts it in the scene.
     void makeLandform(PhysicsWorld& world);
+    // Paints the ground under the pointer. The ground is the one the ray
+    // meets, and the brush follows the hand.
+    void paintGround(PhysicsWorld& world, const Vec3& origin, const Vec3& direction,
+                     float dt);
+    // The stroke is over: what it did is one entry on the undo stack.
+    void endPaintStroke();
+    // Puts the heights of a ground back into its mesh. The ground is not a
+    // body, and this is what takes a stroke back.
+    void restoreGroundHeights(PhysicsWorld& world, int meshIndex,
+                              const std::vector<float>& heights);
+    // The Cloud panel: the sky, made of noise - flat or in puffs.
+    void drawCloudPanel(UiRenderer& ui, PhysicsWorld& world, const Rect& dock);
+    // Makes the cloud the panel describes and puts it in the scene.
+    void makeCloud(PhysicsWorld& world);
+    // The Particles panel: the effects of the world - the recipe of one and
+    // the emitters that are in the scene.
+    void drawParticlesPanel(UiRenderer& ui, const Rect& dock);
+    // The name of an effect, in the language of the editor.
+    const char* particlePresetLabel(int index) const;
+    // Opens a tool window - the landform, the cloud - and puts it where it
+    // covers nothing.
+    //
+    // Opening is not toggling: a menu row that says "the ground" brings the
+    // window that makes the ground, and it does not close that window when it
+    // is already open. A row that toggles closes the window the row opened a
+    // moment ago, and the second click is the one that does it.
+    void openToolPanel(int index);
     // One panel, wherever it currently is: its own rectangle decides the rest.
     void drawPanelById(UiRenderer& ui, PhysicsWorld& world, Window& window, PanelId id);
     void drawDockedPanels(UiRenderer& ui, PhysicsWorld& world, Window& window);
@@ -613,7 +881,11 @@ private:
     // The floating panels, in the order they are drawn. The one under the
     // pointer is drawn last: it is the window the pointer is aiming at, and a
     // window that is under another one cannot be reached.
-    int floatingPanelOrder(int* out) const;
+    int floatingPanelOrder(int* out, int capacity) const;
+    // Every panel, in the order they are looked for: the floating ones first,
+    // the one on top of the others first of all, and the docked ones after
+    // them.
+    int panelPickOrder(int* out) const;
     // The floating panels, declared into the overlay guard so that a click on
     // one of them belongs to it and not to the panels and the scene below.
     void declareFloatingPanels();
@@ -653,6 +925,9 @@ private:
     void drawEmptyInspector(UiRenderer& ui, const Rect& dock, float y);
     void drawTransformSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
     void drawShapeSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
+    // The water of a body that is water: the waves, the colour, the foam,
+    // the light and the bend of what is under it.
+    void drawWaterSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
     void drawCameraSection(UiRenderer& ui, PhysicsWorld& world, RigidBody& body,
                             const Rect& dock, float& y);
     void drawMaterialSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y);
@@ -664,6 +939,97 @@ private:
     void drawStateSection(UiRenderer& ui, PhysicsWorld& world, RigidBody& body,
                           const Rect& dock, float& y);
     void drawNodeSection(UiRenderer& ui, const Rect& dock, float& y);
+
+    // --- the interface of the game (panels/GuiEditor.cpp) -------------------
+    //
+    // The canvas is the game's own: the editor edits it in place, so what is
+    // on the screen while editing is what the game shows. The pointer is null
+    // when there is no game, and then there is nothing to lay out.
+    gui::Canvas* canvas_ = nullptr;
+    // The mode: the interface is being laid out instead of the world.
+    bool guiMode_ = false;
+    // The element that is being worked on, or -1.
+    int selectedGui_ = -1;
+    // The drag. The element, the handle the hand took (0 is the body of the
+    // element, 1 to 8 are the corners and the sides), and where the element
+    // was when the hand took it. The start is remembered rather than the
+    // current value, so a drag is a delta from where it began and not an
+    // accumulation of rounding.
+    int guiDragElement_ = -1;
+    int guiDragHandle_ = -1;
+    float guiDragStartX_ = 0.0f, guiDragStartY_ = 0.0f;
+    float guiDragStartW_ = 0.0f, guiDragStartH_ = 0.0f;
+    // Where the pointer was when the hand took hold: the drag is a delta from
+    // there and not an accumulation of rounding.
+    float guiDragStartPointerX_ = 0.0f, guiDragStartPointerY_ = 0.0f;
+    // The element as it was before the change that is being made now.
+    gui::Element guiBefore_;
+    int guiBeforeIndex_ = -1;
+    bool guiBeforeValid_ = false;
+
+    // The undo of the interface. A change to one element and how to take it
+    // back - the same shape as the undo of the bodies, so the same Ctrl+Z
+    // takes both.
+    struct GuiUndoStep {
+        enum class Kind { Changed, Added, Removed };
+        Kind kind = Kind::Changed;
+        int index = -1;
+        gui::Element element;
+    };
+    std::vector<GuiUndoStep> guiUndo_;
+    std::vector<GuiUndoStep> guiRedo_;
+    // The element as it was at the end of the last frame, and where it is: a
+    // change is over when the element stops changing.
+    gui::Element guiSnapshot_;
+    int guiSnapshotIndex_ = -1;
+    bool guiSnapshotValid_ = false;
+
+    // The fields of the inspector: the name, the letters and the picture.
+    TextField guiNameField_;
+    TextField guiTextField_;
+    TextField guiTextureField_;
+    // Which element each field was loaded from, so that a field follows the
+    // selection and not the other way round.
+    int guiNameFieldFor_ = -1;
+    int guiTextFieldFor_ = -1;
+    int guiTextureFieldFor_ = -1;
+
+    // The pointer's own state in the viewport: the press and the release are
+    // read from the same snapshot every other widget reads.
+    void handleGuiInput(const Rect& area);
+    // The handles around the selected element, and the outline of it.
+    void drawGuiSelection(UiRenderer& ui, const Rect& area);
+    // The tree of elements, in the hierarchy's place.
+    void drawGuiHierarchyDock(UiRenderer& ui, const Rect& dock);
+    // The fields of the selected element, in the inspector's place.
+    void drawGuiInspector(UiRenderer& ui, Window& window, const Rect& dock, float& y);
+    // The handle under the pointer, or -1.
+    int guiHandleAt(const Rect& rect, float px, float py) const;
+    // Puts a new element of this kind into the canvas and selects it.
+    int createGuiElement(gui::ElementKind kind);
+    // Takes the selected element away.
+    void deleteGuiElement();
+    // The canvas as the screen sees it: the scale and the offset that turn
+    // the canvas's own units into the pixels of the window.
+    void guiFit(const Rect& area, float& scale, float& offsetX, float& offsetY) const;
+    // Remembers an element as it is, so that a change to it can be taken
+    // back.
+    void rememberGui(int index, const gui::Element& element);
+    // Ends the change that was being made, if it is over.
+    void finishGuiUndoIfDone();
+    // Takes the last change to the interface back, and puts it on the redo
+    // stack.
+    void undoGui();
+    // Puts the last change back the other way.
+    void redoGui();
+
+    // Which of the two undo stacks the last change was made in.
+    //
+    // Ctrl+Z takes the last change back, and there are two of them: the world
+    // and the interface of the game. The one that was changed last is the one
+    // that is taken back, and this is what says which it was.
+    enum class LastChange { None, Body, Gui };
+    LastChange lastChange_ = LastChange::None;
 
     MeshRegistry& meshes_;
     i18n::Localizer& loc_;
@@ -686,10 +1052,18 @@ private:
     // body that was removed goes back to the place it came from, and a body
     // that was added goes away from the place it was put.
     struct UndoStep {
-        enum class Kind { Changed, Added, Removed };
+        enum class Kind { Changed, Added, Removed, Painted };
         Kind kind = Kind::Changed;
         int index = -1;
         RigidBody body;
+        // The heights of a ground, before and after a stroke of the brush.
+        //
+        // The ground is not a body: it is a heightfield inside a mesh, and
+        // the mesh is in the registry of meshes and not in the world. So the
+        // stroke is remembered here, with the two states of the ground, and
+        // the two are swapped as the stroke is taken back and made again.
+        std::vector<float> heightsBefore;
+        std::vector<float> heightsAfter;
     };
 
     // A change the user made, and everything it touched.
@@ -756,6 +1130,23 @@ private:
     // --- viewport options ---------------------------------------------------
     bool showGrid_ = true;
     bool showVectors_ = true;
+    // The world in 2D: measured and not seen. The camera becomes
+    // orthographic and looks down the Z axis, the grid is the XY plane and
+    // the gizmo has two handles instead of three.
+    bool mode2D_ = false;
+    // Puts the camera into the 2D view and takes it out of it again.
+    //
+    // The camera is the editor's own: it is not saved with the scene, and
+    // switching back to 3D puts it back the way it was.
+    void applyMode2D(Camera& camera, bool on);
+    // The zoom of the 2D view: the half-height of the picture, in world units.
+    static constexpr float k2DOrthoSize = 8.0f;
+    // How far the eye is from the XY plane in the 2D view. It only has to be
+    // far enough that nothing is behind the eye.
+    static constexpr float k2DEyeDistance = 60.0f;
+    // The camera as it was in the 3D view, so that going back to 3D puts it
+    // back where it was.
+    Camera camera3D_{};
     // Snap while dragging: the position lands on a quarter of a unit instead of
     // wherever the ray happened to hit. The magnet in the viewport toolbar.
     bool snapEnabled_ = false;
@@ -763,6 +1154,10 @@ private:
     bool showShadowMap_ = false;
     // The shadows themselves, where the user sets them.
     ShadowSettings* shadowSettings_ = nullptr;
+    // The fog, where the user sets it.
+    FogSettings* fogSettings_ = nullptr;
+    // The particles of the world, where the emitters are made and taken away.
+    ParticleSystem* particles_ = nullptr;
     // Console lives under the viewport and the inspector now, so it is always
     // there; these three are its level filters.
     bool consoleWarn_ = true;
@@ -813,8 +1208,6 @@ private:
     Vec3 panStartCamera_;
     float panPixelsPerUnit_ = 0.0f;
     Tool tool_ = Tool::Move;
-
-    ViewRay viewRay_;
 
     const char* text(const char* key) const { return loc_.get(key); }
 };

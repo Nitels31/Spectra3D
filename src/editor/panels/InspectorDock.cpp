@@ -56,6 +56,37 @@ bool labelMatches(const char* label, const TextField& filter) {
     return false;
 }
 
+// A COLOUR OF THE WATER
+//
+// A swatch of the colour and the three numbers of it.
+//
+// The swatch is the colour itself, so that the eye can see what the numbers
+// are without reading them - and the three numbers are there because a
+// colour cannot be typed into a swatch.
+//
+// The three numbers share the row: a colour takes three of them and the
+// panel is narrow, and a colour with a row of its own for every channel is
+// a colour that takes the whole dock.
+//
+// Says whether one of the numbers was changed.
+bool drawColourRow(UiRenderer& ui, UiContext& context, const Rect& dock, float& y, int id,
+                   const char* label, Vec3& colour) {
+    ui.fillRect(dock.x + 8.0f, y + 1.0f, 14.0f, 14.0f,
+                Color{colour.x, colour.y, colour.z});
+    ui.textFit(dock.x + 28.0f, y + 2.0f, dock.width - 36.0f, label, theme::textDim);
+    y += 19.0f;
+
+    const float third = (dock.width - 12.0f) / 3.0f;
+    float* channels[3] = {&colour.x, &colour.y, &colour.z};
+    const char* names[3] = {"R", "G", "B"};
+    bool changed = false;
+    for (int i = 0; i < 3; ++i)
+        changed |= context.propertyFine(ui, id + i, dock.x + 6.0f + third * (float)i, y, third,
+                                        names[i], *channels[i], 0.002f, 0.0f, 1.0f);
+    y += 24.0f;
+    return changed;
+}
+
 } // namespace
 
 void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& window,
@@ -110,7 +141,18 @@ void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
         // Nothing selected: there is nothing long to scroll through.
         inspectorScroll_ = 0.0f;
         ui.pushClip(bodyRect);
-        drawEmptyInspector(ui, dock, bodyTop);
+        // The interface of the game is edited in the same panel, and it is
+        // clipped the same way: a field that is scrolled out of the dock is
+        // not a field anybody can drag.
+        ui_.pushClip(bodyRect);
+        if (guiMode_ && selectedGui_ >= 0) {
+            float guiY = bodyTop;
+            drawGuiInspector(ui, window, dock, guiY);
+            inspectorContentHeight_ = guiY - bodyTop + 8.0f;
+        } else {
+            drawEmptyInspector(ui, dock, bodyTop);
+        }
+        ui_.popClip();
         ui.popClip();
         return;
     }
@@ -142,6 +184,10 @@ void Editor::drawInspectorDock(UiRenderer& ui, PhysicsWorld& world, Window& wind
         drawCameraSection(ui, world, body, innerDock, y2);
     else {
         drawShapeSection(ui, body, innerDock, y2);
+        // The water of a body that is water: the waves, the colour, the foam
+        // and the light. It is a section of its own because there is a great
+        // deal of it, and because a box has none of it.
+        if (body.isWater()) drawWaterSection(ui, body, innerDock, y2);
         drawMaterialSection(ui, body, innerDock, y2);
     }
     drawFlagsSection(ui, body, innerDock, y2);
@@ -302,6 +348,39 @@ void Editor::drawShapeSection(UiRenderer& ui, RigidBody& body, const Rect& dock,
                 body.halfExtents = {body.prismRadius, body.prismHeight * 0.5f, body.prismRadius};
             body.configure(body.mass);
         }
+    } else if (body.shape == Shape::Quad) {
+        // A square in the XY plane: two numbers, because the thickness is the
+        // shape's own business and not the user's.
+        if (labelMatches("WIDTH", filter_))
+            changed |= ui_.propertyFloat(ui, kInspectorProperty, dock.x, y, dock.width,
+                                         text("prop.sx"), body.halfExtents.x, 0.02f, 0.001f,
+                                         99999.0f);
+        y += 22.0f;
+        if (labelMatches("HEIGHT", filter_))
+            changed |= ui_.propertyFloat(ui, kInspectorProperty + 1, dock.x, y, dock.width,
+                                         text("prop.sy"), body.halfExtents.y, 0.02f, 0.001f,
+                                         99999.0f);
+        y += 24.0f;
+        if (changed) body.configure(body.mass);
+    } else if (body.shape == Shape::Water) {
+        // The water: how wide it is, how deep, and how much of what is under
+        // it shows through it. The thickness is the shape's own business, and
+        // the level it stands at is its position.
+        if (labelMatches("WIDTH", filter_))
+            changed |= ui_.propertyFloat(ui, kInspectorProperty, dock.x, y, dock.width,
+                                         text("prop.sx"), body.halfExtents.x, 0.02f, 0.001f,
+                                         99999.0f);
+        y += 22.0f;
+        if (labelMatches("DEPTH", filter_))
+            changed |= ui_.propertyFloat(ui, kInspectorProperty + 1, dock.x, y, dock.width,
+                                         text("prop.sz"), body.halfExtents.z, 0.02f, 0.001f,
+                                         99999.0f);
+        y += 22.0f;
+        if (labelMatches("ALPHA", filter_))
+            changed |= ui_.propertyFloat(ui, kInspectorProperty + 2, dock.x, y, dock.width,
+                                         text("prop.alpha"), body.waterAlpha, 0.005f, 0.0f, 1.0f);
+        y += 24.0f;
+        if (changed) body.configure(body.mass);
     } else {
         float* extents[3] = {&body.halfExtents.x, &body.halfExtents.y, &body.halfExtents.z};
         const char* labels[3] = {"prop.sx", "prop.sy", "prop.sz"};
@@ -316,9 +395,168 @@ void Editor::drawShapeSection(UiRenderer& ui, RigidBody& body, const Rect& dock,
     }
 }
 
+// THE WATER
+//
+// Everything about a body that is water: the colour of it and how the
+// colour changes with the depth, the waves and the small ripples on them,
+// the light on the surface, the foam, the bend of what is under it and the
+// darkening of the low places.
+//
+// It is a long list, and it is a long list because a sheet of water is a
+// great many things at once: it is a mirror at a grazing angle, a window
+// from above, a white thing where it breaks and a dark thing where it is
+// deep.
+void Editor::drawWaterSection(UiRenderer& ui, RigidBody& body, const Rect& dock, float& y) {
+    WaterSettings& water = body.water;
+    bool changed = false;
+
+    // --- the colour ---------------------------------------------------------
+    ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.water"));
+    y += 26.0f;
+
+    if (ui_.checkbox(ui, kWaterDepthColour, dock.x, y, dock.width, text("water.depthColour"),
+                     water.depthColour))
+        changed = true;
+    y += kRowStep;
+
+    if (labelMatches("SHALLOW", filter_))
+        changed |= drawColourRow(ui, ui_, dock, y, kWaterShallow, text("water.shallow"),
+                                  water.shallowColour);
+    else
+        y += 43.0f;
+    if (labelMatches("DEEP", filter_))
+        changed |= drawColourRow(ui, ui_, dock, y, kWaterDeep, text("water.deep"),
+                                  water.deepColour);
+    else
+        y += 43.0f;
+
+    struct Field {
+        const char* filterKey;
+        const char* labelKey;
+        float* value;
+        float step;
+        float lo;
+        float hi;
+    };
+    const Field fields[] = {
+        {"DEPTH FADE", "water.depthFade", &water.depthFade, 0.005f, 0.0f, 10.0f},
+        {"DEPTH", "water.depth", &water.depth, 0.05f, 0.0f, 500.0f},
+        {"CLARITY", "water.clarity", &water.clarity, 0.005f, 0.0f, 5.0f},
+        {"OPACITY", "water.opacity", &water.opacity, 0.005f, 0.0f, 1.0f},
+        {"SHORE", "water.shoreFade", &water.shoreFade, 0.005f, 0.0f, 1.0f},
+    };
+    const int fieldCount = (int)(sizeof(fields) / sizeof(fields[0]));
+    for (int i = 0; i < fieldCount; ++i) {
+        if (labelMatches(fields[i].filterKey, filter_))
+            changed |= ui_.propertyFloat(ui, kWaterDepthFade + i, dock.x, y, dock.width,
+                                         text(fields[i].labelKey), *fields[i].value,
+                                         fields[i].step, fields[i].lo, fields[i].hi);
+        y += kRowStep;
+    }
+    y += 4.0f;
+
+    // --- the waves ----------------------------------------------------------
+    ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.waves"));
+    y += 26.0f;
+
+    const Field waves[] = {
+        {"HEIGHT", "water.waveHeight", &water.waveHeight, 0.01f, 0.0f, 50.0f},
+        {"LENGTH", "water.waveLength", &water.waveLength, 0.05f, 0.05f, 500.0f},
+        {"SPEED", "water.waveSpeed", &water.waveSpeed, 0.01f, 0.0f, 10.0f},
+        {"STEEPNESS", "water.waveSteepness", &water.waveSteepness, 0.005f, 0.0f, 1.0f},
+        {"RIPPLE STRENGTH", "water.detailStrength", &water.detailStrength, 0.01f, 0.0f, 10.0f},
+        {"RIPPLE SIZE", "water.detailScale", &water.detailScale, 0.01f, 0.05f, 50.0f},
+        {"RIPPLE SPEED", "water.detailSpeed", &water.detailSpeed, 0.01f, 0.0f, 10.0f},
+    };
+    const int waveCount = (int)(sizeof(waves) / sizeof(waves[0]));
+    for (int i = 0; i < waveCount; ++i) {
+        if (labelMatches(waves[i].filterKey, filter_))
+            changed |= ui_.propertyFloat(ui, kWaterWaveHeight + i, dock.x, y, dock.width,
+                                         text(waves[i].labelKey), *waves[i].value, waves[i].step,
+                                         waves[i].lo, waves[i].hi);
+        y += kRowStep;
+    }
+
+    // The wind: the way it blows, in the plane of the water. Two numbers,
+    // because the plane has two directions and not three.
+    {
+        const float half = (dock.width - 12.0f) * 0.5f;
+        if (labelMatches("WIND", filter_)) {
+            changed |= ui_.propertyFloat(ui, kWaterWindX, dock.x + 6.0f, y, half, "X",
+                                         water.windDirection.x, 0.01f, -10.0f, 10.0f);
+            changed |= ui_.propertyFloat(ui, kWaterWindZ, dock.x + 6.0f + half + 6.0f, y, half,
+                                         "Z", water.windDirection.y, 0.01f, -10.0f, 10.0f);
+        }
+        y += kRowStep;
+    }
+    y += 4.0f;
+
+    // --- the light ----------------------------------------------------------
+    ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.light"));
+    y += 26.0f;
+
+    const Field lights[] = {
+        {"REFLECTIVITY", "water.reflectivity", &water.reflectivity, 0.005f, 0.0f, 1.0f},
+        {"FRESNEL POWER", "water.fresnelPower", &water.fresnelPower, 0.05f, 0.5f, 12.0f},
+        {"FRESNEL AMOUNT", "water.fresnelIntensity", &water.fresnelIntensity, 0.005f, 0.0f, 1.0f},
+        {"SUN SHINE", "water.specular", &water.specular, 0.005f, 0.0f, 4.0f},
+        {"SHINE TIGHTNESS", "water.shininess", &water.shininess, 1.0f, 1.0f, 2000.0f},
+    };
+    const int lightCount = (int)(sizeof(lights) / sizeof(lights[0]));
+    for (int i = 0; i < lightCount; ++i) {
+        if (labelMatches(lights[i].filterKey, filter_))
+            changed |= ui_.propertyFloat(ui, kWaterReflectivity + i, dock.x, y, dock.width,
+                                         text(lights[i].labelKey), *lights[i].value, lights[i].step,
+                                         lights[i].lo, lights[i].hi);
+        y += kRowStep;
+    }
+    y += 4.0f;
+
+    // --- the foam -----------------------------------------------------------
+    ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.foam"));
+    y += 26.0f;
+
+    if (labelMatches("FOAM", filter_))
+        changed |= ui_.propertyFloat(ui, kWaterFoam, dock.x, y, dock.width, text("water.foam"),
+                                     water.foam, 0.005f, 0.0f, 1.0f);
+    y += kRowStep;
+    if (labelMatches("FOAM COLOUR", filter_))
+        changed |= drawColourRow(ui, ui_, dock, y, kWaterFoamColour, text("water.foamColour"),
+                                  water.foamColour);
+    else
+        y += 43.0f;
+
+    // --- the bend of the light ----------------------------------------------
+    ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.refraction"));
+    y += 26.0f;
+
+    if (ui_.checkbox(ui, kWaterRefraction, dock.x, y, dock.width, text("water.refraction"),
+                     water.refraction))
+        changed = true;
+    y += kRowStep;
+    if (labelMatches("BEND STRENGTH", filter_))
+        changed |= ui_.propertyFloat(ui, kWaterRefractionStrength, dock.x, y, dock.width,
+                                     text("water.refractionStrength"), water.refractionStrength,
+                                     0.005f, 0.0f, 2.0f);
+    y += kRowStep;
+    y += 4.0f;
+
+    // --- the darkening ------------------------------------------------------
+    ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.darkening"));
+    y += 26.0f;
+
+    if (labelMatches("DARKENING", filter_))
+        changed |= ui_.propertyFloat(ui, kWaterDarkening, dock.x, y, dock.width,
+                                     text("water.darkening"), water.darkening, 0.005f, 0.0f, 1.0f);
+    y += kRowStep;
+
+    // The colour of the water is the colour of the body as well, so that the
+    // flat water of a flat world is the same water.
+    if (changed) markSceneDirty();
+}
+
 void Editor::drawCameraSection(UiRenderer& ui, PhysicsWorld& world, RigidBody& body,
-                                const Rect& dock, float& y) {
-    ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.camera"));
+                                const Rect& dock, float& y) {    ui_.sectionHeader(ui, dock.x, y, dock.width, text("sec.camera"));
     y += 26.0f;
 
     if (labelMatches("FOV", filter_))

@@ -30,6 +30,25 @@ constexpr float kTextureRepeat = 12.0f;
 constexpr float kTalus = 0.035f;
 constexpr float kErosionRate = 0.5f;
 
+// How much of the ground around a square has to stand above it before the
+// square is called a valley. The heights are in 0..1 and the ground around a
+// valley is a little higher than the valley itself, so the number is a
+// multiple of that difference: four means "a fifth of the range of the ground
+// above me", which on a twelve-metre hill is two and a half metres.
+constexpr float kShadeStrength = 4.0f;
+
+// How big the little bumps are, and how fine they are.
+//
+// The bumps are in the ground's own range of 0..1 and are a hundredth of it at
+// the most: on a twelve-metre hill that is a hand's width of ground under
+// your boot, which is what a hill looks like from ten metres away.
+constexpr float kDetailAmplitude = 0.01f;
+constexpr float kDetailFrequency = 14.0f;
+
+// How wet a place is, 0..1: the ground is drier in some parts of it than in
+// others, and the drier parts are a different colour.
+constexpr float kMoistureFrequency = 0.45f;
+
 // Runs `body(row)` for every row, on as many threads as there are rows to
 // share. The rows are independent, so nothing is shared and nothing is locked.
 template <typename Fn>
@@ -66,31 +85,38 @@ void mixColor(const float a[3], const float b[3], float t, float out[3]) {
     out[2] = a[2] + (b[2] - a[2]) * t;
 }
 
-// The colour of the ground at a height and a steepness.
+// The colour of the ground at a height, a steepness and a wetness.
 //
-// Four bands, and they are mixed rather than cut: sand at the bottom, grass
-// on the slopes, stone on the ground that is too steep to hold anything, and
-// snow at the top. A line drawn across the hill where one colour stops and
-// the next begins is a line you can see from the whole window, so the bands
-// fade into each other instead.
-void biomeColor(float height, float slope, float out[3]) {
-    const float sand[3] = {0.80f, 0.74f, 0.55f};
-    const float grass[3] = {0.38f, 0.58f, 0.26f};
-    const float rock[3] = {0.45f, 0.43f, 0.41f};
-    const float snow[3] = {0.93f, 0.95f, 0.98f};
+// The bands are mixed rather than cut: sand at the bottom, the ground on the
+// slopes, stone on the ground that is too steep to hold anything, and the top
+// of the ground last of all. A line drawn across the hill where one colour
+// stops and the next begins is a line you can see from the whole window, so
+// the bands fade into each other instead.
+//
+// The wetness is what makes the ground a ground and not a colour scheme: the
+// same biome is drier in one place and wetter in another, and the two are
+// mixed in here rather than being two separate biomes.
+void biomeColor(const LandformPalette& palette, float height, float slope, float wet, float out[3]) {
+    // The ground itself: the dry version of it and the wet one, mixed by how
+    // wet the place is.
+    float ground[3];
+    mixColor(palette.dry, palette.mid, wet, ground);
 
+    // And the bottom of the ground: sand, soil, ice, ash - whatever the biome
+    // has at the bottom, and the ground comes out of it.
     float base[3];
-    mixColor(sand, grass, smoothstep(0.02f, 0.18f, height), base);
+    mixColor(palette.low, ground, smoothstep(0.02f, 0.16f, height), base);
 
     // Stone takes the ground that is too steep for anything to grow on. The
     // slope is measured from the normal, so it is the same on a hill and on a
     // wall.
     float stony[3];
-    mixColor(base, rock, smoothstep(0.30f, 0.62f, slope), stony);
+    mixColor(base, palette.rock, smoothstep(0.30f, 0.62f, slope), stony);
 
-    // Snow is on the top, and it does not care how steep it is - except that
-    // a slope too steep to hold it is bare.
-    mixColor(stony, snow, smoothstep(0.70f, 0.88f, height), out);
+    // The top of the ground is the last thing on it, and it does not care how
+    // steep it is - except that a slope too steep to hold it is bare.
+    const float hold = 1.0f - smoothstep(0.55f, 0.85f, slope);
+    mixColor(stony, palette.high, smoothstep(0.70f, 0.88f, height) * hold, out);
 }
 
 // The height of the ground at a point, before the ground is eroded: 0..1.
@@ -213,9 +239,22 @@ float rawHeight(const LandformSettings& settings, float x, float z) {
 // valleys instead of a field of cubes. The moves are gathered in a buffer and
 // applied together, so the order the squares are visited in cannot change
 // the answer.
+//
+// All eight neighbours are asked, and the one that is the steepest way down
+// is the one the material goes to. The diagonals count for less, because they
+// are further away: the same difference of height over a longer step is a
+// gentler slope, and a square that slides diagonally when it should not has
+// ground with edges in it.
 void thermalErode(std::vector<float>& heights, int side, int passes) {
     if (passes <= 0 || side < 3) return;
     std::vector<float> moved(heights.size(), 0.0f);
+
+    // The eight neighbours, and how far each of them is: the step to the side
+    // is one square and the step to the corner is one and a half.
+    static const int kNeighbours[8][3] = {
+        {-1, 0, 2}, {1, 0, 2}, {0, -1, 2}, {0, 1, 2},
+        {-1, -1, 3}, {1, -1, 3}, {-1, 1, 3}, {1, 1, 3},
+    };
 
     for (int pass = 0; pass < passes; ++pass) {
         std::fill(moved.begin(), moved.end(), 0.0f);
@@ -224,21 +263,29 @@ void thermalErode(std::vector<float>& heights, int side, int passes) {
                 const size_t at = (size_t)row * (size_t)side + (size_t)col;
                 const float here = heights[at];
 
-                // The lowest of the four neighbours. The water goes there.
+                // The steepest way down. The water goes there.
                 size_t lowestAt = at;
                 float lowest = here;
-                const int neighbours[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
-                for (const auto& n : neighbours) {
+                float lowestSlope = 0.0f;
+                for (const auto& n : kNeighbours) {
                     const int r = row + n[0];
                     const int c = col + n[1];
                     if (r < 0 || r >= side || c < 0 || c >= side) continue;
                     const size_t other = (size_t)r * (size_t)side + (size_t)c;
-                    if (heights[other] < lowest) {
+                    // The slope of the way down to this neighbour, over the
+                    // distance to it: the height difference of two is the
+                    // same on the diagonal and on the side, and the diagonal
+                    // is further away, so it is the gentler of the two.
+                    const float slope = (here - heights[other]) * (float)n[2];
+                    if (slope > lowestSlope) {
+                        lowestSlope = slope;
                         lowest = heights[other];
                         lowestAt = other;
                     }
                 }
 
+                // The height the neighbour has to be below for the ground to
+                // stand: the talus, over the distance to it.
                 const float difference = here - lowest;
                 if (difference <= kTalus) continue;
                 // A quarter of the difference, and no more than the square can
@@ -303,6 +350,30 @@ const char* landformShapeName(LandformShape shape) {
     return "landform.shape.hills";
 }
 
+const char* landformBiomeName(LandformBiome biome) {
+    switch (biome) {
+    case LandformBiome::Grassland: return "landform.biome.grassland";
+    case LandformBiome::Desert: return "landform.biome.desert";
+    case LandformBiome::Snow: return "landform.biome.snow";
+    case LandformBiome::Volcanic: return "landform.biome.volcanic";
+    case LandformBiome::Jungle: return "landform.biome.jungle";
+    case LandformBiome::Tundra: return "landform.biome.tundra";
+    case LandformBiome::Savanna: return "landform.biome.savanna";
+    case LandformBiome::Alpine: return "landform.biome.alpine";
+    }
+    return "landform.biome.grassland";
+}
+
+const char* landformBrushName(LandformBrush brush) {
+    switch (brush) {
+    case LandformBrush::Raise: return "landform.brush.raise";
+    case LandformBrush::Lower: return "landform.brush.lower";
+    case LandformBrush::Smooth: return "landform.brush.smooth";
+    case LandformBrush::Flatten: return "landform.brush.flatten";
+    }
+    return "landform.brush.raise";
+}
+
 float landformVariation() {
     // The number is drawn from the machine's own random source, and the
     // engine that draws it is seeded once: two grounds made in a row are not
@@ -353,6 +424,33 @@ void Landform::build(const LandformSettings& settings) {
     // The range of the ground is the range that was asked for. The noise
     // reaches from 0 to 1 and not always both ends, and a ground that is
     // always half as high as it was asked to be is a ground nobody asked for.
+    normalizeHeights();
+
+    // How much of the ground around a square stands above it. It is measured
+    // here, before the little bumps are put on, so that a bump does not make
+    // every square of the ground look like the bottom of a hole.
+    measureShade();
+
+    // The little bumps: the detail that makes the ground ground and not a
+    // shape. They are put on after the sliding and the smoothing, because
+    // both of them would take them off again.
+    addDetail(halfWidth, halfDepth, stepX, stepZ);
+
+    // And the range once more: the bumps may have pushed the highest and the
+    // lowest point of the ground out a little, and the ground is still the
+    // ground that was asked for.
+    normalizeHeights();
+
+    lowest_ = settings_.minHeight;
+    highest_ = settings_.maxHeight;
+}
+
+// The heights so far, from 0 to 1.
+//
+// The ground is stretched so that its lowest point is 0 and its highest is 1:
+// the heights that were asked for are given to it afterwards, and a ground
+// that only uses half of the range it was given is a ground nobody asked for.
+void Landform::normalizeHeights() {
     float lowest = 1.0f;
     float highest = 0.0f;
     for (float h : heights_) {
@@ -363,9 +461,225 @@ void Landform::build(const LandformSettings& settings) {
     for (float& h : heights_) {
         h = range > 1e-5f ? (h - lowest) / range : 0.0f;
     }
+}
 
-    lowest_ = settings_.minHeight;
-    highest_ = settings_.maxHeight;
+// How much of the ground around a square stands above it, 0..1.
+//
+// A square in a valley is lower than the ground around it, and a square on a
+// ridge is higher: the difference is what a valley is. It is kept per square
+// because it is what the colour of the ground is made of - the valleys are
+// darker, because the sky does not reach them.
+void Landform::measureShade() {
+    shade_.assign(heights_.size(), 0.0f);
+    if (side_ < 3) return;
+
+    for (int row = 0; row < side_; ++row) {
+        for (int col = 0; col < side_; ++col) {
+            const size_t at = (size_t)row * (size_t)side_ + (size_t)col;
+            float sum = 0.0f;
+            int count = 0;
+            for (int dr = -1; dr <= 1; ++dr) {
+                for (int dc = -1; dc <= 1; ++dc) {
+                    if (dr == 0 && dc == 0) continue;
+                    const int r = row + dr;
+                    const int c = col + dc;
+                    if (r < 0 || r >= side_ || c < 0 || c >= side_) continue;
+                    sum += heights_[(size_t)r * (size_t)side_ + (size_t)c];
+                    ++count;
+                }
+            }
+            if (count == 0) continue;
+            const float around = sum / (float)count;
+            shade_[at] = clamp01((around - heights_[at]) * kShadeStrength);
+        }
+    }
+}
+
+// The little bumps on the surface of the ground.
+//
+// A noise of its own, much finer than the ground it is put on: a hill is
+// metres across and the bumps on it are centimetres. The bumps are centred
+// on zero, so the ground does not grow a hill on top of every other hill.
+void Landform::addDetail(float halfWidth, float halfDepth, float stepX, float stepZ) {
+    if (settings_.detail <= 0.0f) return;
+
+    const float frequency = settings_.frequency * kDetailFrequency;
+    const float amplitude = std::min(1.0f, settings_.detail) * kDetailAmplitude;
+
+    for (int row = 0; row < side_; ++row) {
+        const float z = -halfDepth + (float)row * stepZ;
+        for (int col = 0; col < side_; ++col) {
+            const float x = -halfWidth + (float)col * stepX;
+            const float fine = fbm(x * frequency, z * frequency, settings_.seed + 7919u, 3);
+            heights_[(size_t)row * (size_t)side_ + (size_t)col] +=
+                (fine - 0.5f) * 2.0f * amplitude;
+        }
+    }
+}
+
+// --- the brush ---------------------------------------------------------------
+
+// Starts a stroke: the height the flatten brush levels the ground to.
+void Landform::beginStroke(float x, float z) {
+    strokeHeight_ = ready() ? heightAt(x, z) : 0.0f;
+}
+
+// Paints the ground.
+//
+// The brush is a circle on the ground with a soft edge: the middle of it does
+// the most and the rim does the least, so a stroke has no rim to see.
+bool Landform::paint(float x, float z, float radius, float amount, LandformBrush brush) {
+    if (!ready() || radius <= 0.0f) return false;
+
+    const float span = settings_.maxHeight - settings_.minHeight;
+    if (span <= 1e-4f) return false;
+
+    const float halfWidth = settings_.width * 0.5f;
+    const float halfDepth = settings_.depth * 0.5f;
+    const float stepX = settings_.width / (float)settings_.cells;
+    const float stepZ = settings_.depth / (float)settings_.cells;
+
+    // The squares under the brush. The brush is a circle and the squares are
+    // in a grid, so the brush covers the squares whose middle is inside it.
+    const int colFrom = std::max(0, (int)std::floor((x - radius + halfWidth) / stepX));
+    const int colTo = std::min(side_ - 1, (int)std::ceil((x + radius + halfWidth) / stepX));
+    const int rowFrom = std::max(0, (int)std::floor((z - radius + halfDepth) / stepZ));
+    const int rowTo = std::min(side_ - 1, (int)std::ceil((z + radius + halfDepth) / stepZ));
+
+    // The amount in the ground's own units: the heights are 0..1 and the
+    // world is `span` high.
+    const float units = amount / span;
+
+    // The smoothing brush looks at the neighbours, and the neighbours must be
+    // the ones of the ground before the brush touched it - or the ground would
+    // be smoothed towards itself, stroke after stroke.
+    const bool smooth = brush == LandformBrush::Smooth;
+    if (smooth) scratch_ = heights_;
+
+    bool changed = false;
+    for (int row = rowFrom; row <= rowTo; ++row) {
+        const float pz = -halfDepth + (float)row * stepZ;
+        for (int col = colFrom; col <= colTo; ++col) {
+            const float px = -halfWidth + (float)col * stepX;
+            const float dx = px - x;
+            const float dz = pz - z;
+            const float distance = std::sqrt(dx * dx + dz * dz);
+            if (distance > radius) continue;
+
+            // How much of the stroke this square gets: all of it in the
+            // middle, none of it at the rim.
+            const float t = distance / radius;
+            const float falloff = 1.0f - t * t * (3.0f - 2.0f * t);
+
+            const size_t at = (size_t)row * (size_t)side_ + (size_t)col;
+            const float before = heights_[at];
+            switch (brush) {
+            case LandformBrush::Raise:
+                heights_[at] += units * falloff;
+                break;
+            case LandformBrush::Lower:
+                heights_[at] -= units * falloff;
+                break;
+            case LandformBrush::Smooth: {
+                // The average of the eight around it: the bumps are taken off
+                // and the shape of the hill is left.
+                float sum = 0.0f;
+                int count = 0;
+                for (int dr = -1; dr <= 1; ++dr) {
+                    for (int dc = -1; dc <= 1; ++dc) {
+                        if (dr == 0 && dc == 0) continue;
+                        const int r = row + dr;
+                        const int c = col + dc;
+                        if (r < 0 || r >= side_ || c < 0 || c >= side_) continue;
+                        sum += scratch_[(size_t)r * (size_t)side_ + (size_t)c];
+                        ++count;
+                    }
+                }
+                if (count == 0) break;
+                const float average = sum / (float)count;
+                heights_[at] += (average - heights_[at]) * falloff;
+                break;
+            }
+            case LandformBrush::Flatten:
+                // Level with the height the stroke began at.
+                heights_[at] += (strokeHeight_ - heights_[at]) * falloff;
+                break;
+            }
+
+            // The ground may go above the top it was given and below the
+            // bottom of it - a hill that was raised is a hill that is higher
+            // than the ground asked for - but not so far that it is a
+            // mistake.
+            heights_[at] = std::clamp(heights_[at], -1.0f, 2.0f);
+            if (heights_[at] != before) changed = true;
+        }
+    }
+
+    if (changed) {
+        painted_ = true;
+        // The valleys of the ground have moved, so the shade of them is
+        // measured again: the ground that is darker in the valley is the
+        // ground that has a valley in it.
+        measureShade();
+    }
+    return changed;
+}
+
+// Where a ray meets the ground.
+//
+// The ground is a heightfield, so there is no triangle to hit: the ray is
+// walked along, and where it goes under the ground is where it hits. The step
+// is half a square, so the ground cannot be stepped over, and the crossing
+// between two steps is found more precisely by halving it.
+bool Landform::rayHit(const Vec3& origin, const Vec3& direction, float& outDistance) const {
+    if (!ready()) return false;
+
+    const float halfWidth = settings_.width * 0.5f;
+    const float halfDepth = settings_.depth * 0.5f;
+    const float step = std::fmax(0.05f, std::fmin(settings_.width, settings_.depth) /
+                                            (float)settings_.cells * 0.5f);
+
+    float previousT = 0.0f;
+    float previousGap = origin.y - heightAt(origin.x, origin.z);
+    // The ray is walked as far as the ground is wide and then some: a ground
+    // that is not there is a ground the ray does not hit.
+    const float limit = settings_.width * 2.0f + settings_.depth * 2.0f + 100.0f;
+
+    for (float t = step; t < limit; t += step) {
+        const Vec3 point = origin + direction * t;
+        const float gap = point.y - heightAt(point.x, point.z);
+        if (gap <= 0.0f && previousGap > 0.0f) {
+            // Between the two steps: the crossing, found by halving.
+            float low = previousT;
+            float high = t;
+            for (int i = 0; i < 16; ++i) {
+                const float middle = (low + high) * 0.5f;
+                const Vec3 between = origin + direction * middle;
+                if (between.y - heightAt(between.x, between.z) > 0.0f) low = middle;
+                else high = middle;
+            }
+            const Vec3 hit = origin + direction * high;
+            // Only the ground itself is the ground: outside it the height is
+            // the height of the edge, and the edge is not a hill to paint.
+            if (std::fabs(hit.x) > halfWidth || std::fabs(hit.z) > halfDepth) return false;
+            outDistance = high;
+            return true;
+        }
+        previousT = t;
+        previousGap = gap;
+    }
+    return false;
+}
+
+// Puts a ground that was painted back into the landform.
+bool Landform::setHeights(const std::vector<float>& heights) {
+    if (heights.size() != heights_.size() || heights_.empty()) return false;
+    heights_ = heights;
+    painted_ = true;
+    // The valleys of the ground are the valleys of the heights that were
+    // given, so the shade of them is measured again.
+    measureShade();
+    return true;
 }
 
 float Landform::heightAt(float x, float z) const {
@@ -401,7 +715,11 @@ float Landform::heightAt(float x, float z) const {
     const float bottom = h01 + (h11 - h01) * fu;
     const float n = top + (bottom - top) * fv;
 
-    return settings_.minHeight + n * (settings_.maxHeight - settings_.minHeight);
+    // The height of the ground at a point, in the ground's own frame: the
+    // middle of the ground is 0, and the ground is half as high above it as
+    // it is below. It is the same height the mesh has, so a body put on the
+    // ground stands on the ground that is drawn.
+    return (n - 0.5f) * (settings_.maxHeight - settings_.minHeight);
 }
 
 MeshAsset Landform::toMesh() const {
@@ -432,7 +750,10 @@ MeshAsset Landform::toMesh() const {
             const size_t at = (size_t)row * (size_t)side + (size_t)col;
             const float x = -halfWidth + (float)col * stepX;
             const float z = -halfDepth + (float)row * stepZ;
-            const float y = settings_.minHeight + heights_[at] * span;
+            // The height is measured from the middle of the ground, because
+            // the body it belongs to stands there: the mesh is drawn around its
+            // own middle, and the ground is the height it was asked to be.
+            const float y = (heights_[at] - 0.5f) * span;
 
             // The normal comes from the slope: the height a step to the left
             // and a step to the front.
@@ -465,11 +786,24 @@ MeshAsset Landform::toMesh() const {
             if (settings_.biomes) {
                 // How steep the ground is here: 0 is flat, 1 is a wall.
                 const float slope = 1.0f - normal.y;
+                // How wet this part of the ground is: the ground is drier in
+                // some places than in others, and the two are not the same
+                // colour.
+                const float wet = fbm(x * settings_.frequency * kMoistureFrequency,
+                                      z * settings_.frequency * kMoistureFrequency,
+                                      settings_.seed + 4242u, 3);
                 float color[3];
-                biomeColor(heights_[at], slope, color);
-                part.colors[at * 3 + 0] = color[0];
-                part.colors[at * 3 + 1] = color[1];
-                part.colors[at * 3 + 2] = color[2];
+                biomeColor(landformPalette(settings_.biome), heights_[at], slope, wet, color);
+
+                // The valleys are darker, because the sky does not reach them.
+                // This is what makes a valley look like a valley and not like a
+                // stripe of a different colour.
+                const float shade =
+                    1.0f - std::min(1.0f, settings_.shading) * 0.45f *
+                              (at < shade_.size() ? shade_[at] : 0.0f);
+                part.colors[at * 3 + 0] = color[0] * shade;
+                part.colors[at * 3 + 1] = color[1] * shade;
+                part.colors[at * 3 + 2] = color[2] * shade;
             }
         }
     }
@@ -492,8 +826,12 @@ MeshAsset Landform::toMesh() const {
 
     // The bounds, the same ones an imported model carries: the editor draws the
     // box around the body, and the physics uses the half sizes.
-    asset.boundsMin = Vec3{-halfWidth, settings_.minHeight, -halfDepth};
-    asset.boundsMax = Vec3{halfWidth, settings_.maxHeight, halfDepth};
+    //
+    // They are measured from the middle of the ground, which is where the
+    // body stands: the mesh is drawn around its own middle, and the ground is
+    // the height it was asked to be.
+    asset.boundsMin = Vec3{-halfWidth, -span * 0.5f, -halfDepth};
+    asset.boundsMax = Vec3{halfWidth, span * 0.5f, halfDepth};
     asset.center = (asset.boundsMin + asset.boundsMax) * 0.5f;
     asset.half = (asset.boundsMax - asset.boundsMin) * 0.5f;
     asset.radius = asset.half.length();

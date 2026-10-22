@@ -26,7 +26,9 @@ Dependencies point **upward only**. A layer never includes a header from a layer
 below it.
 
 ```
-              app        Application, Launcher, FixedClock, main
+           player       Player: the program that plays a game
+              |
+              app        Application, GameHost, Launcher, FixedClock, main
                 |
               editor      Editor, panels/, Picking, Gizmo, AssetBrowser
                 |
@@ -35,6 +37,8 @@ below it.
               scene       BodyFactory, SceneSerializer
                 |
                 ui         Theme (palettes), UiContext
+                |
+               gui        GuiCanvas, GuiRenderer: the interface of a game
                 |
               render      Camera, Color, SceneRenderer, UiRenderer,
                 |          TextAtlas, PrimitiveCache, GlInfo
@@ -50,7 +54,7 @@ below it.
              |                         (core + platform)
              +------+------+
                     |
-                   core     Math, Log, Str, Project
+                   core     Math, Log, CrashLog, Str, Project
 
    third_party/     glfw, freetype, angelscript, miniaudio,
                 models_lib/ (cgltf, rapidobj, miniply, ufbx),
@@ -58,7 +62,10 @@ below it.
 ```
 
 `ui` sits above `render` because `UiContext.hpp` takes `Rect` and `Color` from
-there, while `Theme.hpp` is only colours. `script` sits above `scene` —
+there, while `Theme.hpp` is only colours. `gui` sits above `render` and below
+`ui`: the canvas is made of rectangles, colours and letters, and the renderer
+that draws it needs the same three the renderer of the editor's own interface
+uses. `script` sits above `scene` —
 `BindEngine.cpp` creates bodies through `BodyFactory` — and below `editor`, because
 `Application` runs it alongside the `MeshRegistry` and the camera. `GlInfo.hpp`
 lives in `render` because it is about the context, and it reads `kGlVersionMajor`
@@ -76,6 +83,8 @@ sound and the device decides what that name means.
 2. **No globals, except the log.** Everything lives in an instance somebody owns.
    The single exception is `s3d::Log`, which every layer reads — the model loaders
    included — and threading an instance of it through every call stack buys nothing.
+   `s3d::CrashLog` is the second one, for the same reason and a harder one: the
+   handler that runs when the program dies cannot be handed an instance of anything.
    *The scripting layer is the one exception to the exception:* AngelScript's global
    functions have no receiver, so `ScriptHost.cpp` keeps `g_state`/`g_sink` and
    publishes the single active `ScriptState` through `activeState()`. There is only
@@ -105,26 +114,40 @@ sound and the device decides what that name means.
    The project version and the icon directory are *read out of
    `include/core/Project.hpp`* rather than written a second time.
 
-7. **Two targets, and the boundary is the layer graph.** `spectra_runtime` is a shared
-   library holding every layer below `app/` and `editor/`; `spectra3d` is the shell:
-   `Application`, `Launcher`, `main` and the editor, linking the runtime. The split is
-   not cosmetic - it is what lets a second executable be "the same engine, an empty
-   window and a loop", which is what Build already promises, and it is what stops the
-   editor and that executable from drifting apart. Nothing below `app/` or `editor/`
-   includes either of them (the one exception is `Application.hpp`, which owns both).
+7. **The targets, and the boundary is the layer graph.** The engine's own sources are
+   compiled once into the object library `spectra_engine`, and that is used twice: as
+   the static library `spectra_runtime`, which a program links, and as the shared
+   library `SpectraPlayer.dll` - the core as a file, which a project carries in its
+   `lib/` folder and a built game has beside it. So a program is one file that
+   cannot lose its core, cannot fail to find it and cannot be of the wrong version,
+   and a project still says which core it was made with. One compilation, two shapes
+   of the same code, so the two cannot drift apart.
 
-   **The runtime is a library and not an archive.** It is built as a shared library -
-   `SpectraPlayer.dll` on Windows, `libSpectraPlayer.so` elsewhere - and it is the
-   core of the engine as a file: the program loads it, and a project carries a copy
-   of it in its `lib/` folder, so a project says which core it runs on. Everything
-   the program uses is exported (`WINDOWS_EXPORT_ALL_SYMBOLS`, and
-   `--export-all-symbols` for the GNU linker), so the layer headers carry no
-   decoration of their own.
+   On top of the core there are three programs' worth of code, and two programs:
+
+   - `spectra_game` (static) is the **game**: the world, the picture of it, the sound
+     and the scripts. It is `app/GameHost`, and it knows nothing of the editor - no
+     panels, no gizmos, no project list.
+   - `spectra3d` (executable) is the **editor**: `Application`, `Launcher` and the
+     editor itself, over that game. It plays the game through it.
+   - `spectra_player` (executable, `SpectraPlayer.exe`) is the **player**: the game
+     and nothing else - a window, a loop, and the boot file beside it that says
+     which game to play. There is no launcher in it and no editor in it, and it is
+     what a build of a game is made of: the editor copies this program into the
+     build folder and renames it after the game.
+
+   The split is not cosmetic - it is what stops the editor and the player from
+   drifting apart. Both are built from the same `GameHost`, so the game a player
+   plays is the game the editor edits. Nothing below `app/` includes either of them
+   (the one exception is `Application.hpp`, which owns both).
+
+   The shared library exports everything the program uses
+   (`WINDOWS_EXPORT_ALL_SYMBOLS`, and `--export-all-symbols` for the GNU linker), so
+   the layer headers carry no decoration of their own.
 
    A shared library cannot sit in a folder of its own on Windows: the loader looks
    for it beside the program, in the system folders, and on `PATH`. The built game
-   therefore keeps the program and the core together - and the two of them are in
-   `lib/` of the game folder, which is where the program is.
+   therefore keeps the program and the core together.
 
    `tools/scripttest` used to name eighteen engine sources by hand. It now links
    `spectra_runtime`, because a source list is not a dependency list: the old one
@@ -137,7 +160,8 @@ sound and the device decides what that name means.
 ### `core`
 
 `Math.hpp` (`Vec3`/`Quat`/`Mat3`, `clampf`, `lerpf`), `Log` (stderr + `engine.log` +
-the ring buffer the editor console reads), `Str` (UTF-8, paths, extensions) and
+the ring buffer the editor console reads), `CrashLog` (the handlers and the report of
+a crash), `Str` (UTF-8, paths, extensions) and
 `Project` (`Settings`, `ProjectLibrary`, `ProjectInfo`, the project file-name
 constants). Nothing above the standard library.
 
@@ -149,6 +173,56 @@ named exception rather than a habit.
 `Settings` is machine-level and lives next to the binary (`settings.ini`), so the
 installation is portable. `ProjectInfo` is project-level and lives in the project
 directory, so a project folder is a complete unit.
+
+### The crash report
+
+**A CRASH IS THE ONE FAILURE THE ENGINE CANNOT LOG ITS WAY OUT OF.** The log lives
+in a buffer, and the buffer dies with the process: the last thing the program said
+is exactly what is lost when it falls over. So the report is written by the handler
+itself, straight to the disk, and it **carries the last words of the log with it** —
+`Log::copyEntries()` takes a copy of the ring buffer while the handler runs, and
+that copy is the only account of what the program was doing.
+
+The handlers are three, because there are three ways to fall over:
+
+- **The machine's own**, for a fault nobody catches: a memory that was touched and
+  was not there, a stack that ran out. On Windows that is a vectored exception
+  handler (`AddVectoredExceptionHandler`), which is called before anything else and
+  is the only place that sees the address of the fault; on POSIX it is `sigaction`
+  for `SIGSEGV`, `SIGABRT`, `SIGFPE`, `SIGILL` and `SIGBUS`. The program still dies
+  the way it was going to: the handler writes the report and lets the fault go on.
+- **The C runtime's**, for a program that stopped itself: `std::abort` and the
+  signals the runtime turns a fault into.
+- **The terminate handler's**, for an exception that got out of the program.
+
+An exception that reaches `main()` is caught there instead — `main()` writes the
+report with the message the exception carries. The terminate handler does **not**
+rethrow the exception to read it: a rethrow inside a terminate handler starts a
+second unwinding, and on the GNU runtime that is enough to break the unwinding
+itself.
+
+The report is a **file next to the program**, named `crash-001.log`, `crash-002.log`
+and so on — the first free number is taken, so the reports of several crashes are
+all kept and they are in the order they happened. It holds the reason, the address
+of the fault, the stack, and the tail of the log.
+
+**THE REPORT IS WRITTEN WITHOUT THE HEAP.** A crash handler runs with the heap in
+an unknown state, so the report formats every line into a stack buffer and writes
+it with one call — no `std::string`, no `fprintf`, nothing that can ask for
+memory. The path of the file and the name of the program in it are plain buffers
+for the same reason.
+
+Two things about it are worth knowing before changing any of it:
+
+- **The unhandled-exception filter is not installed on Windows.** The vectored
+  handler sees the same faults, and a filter of its own changes the way the
+  machine walks the frames — on the GNU runtime that is enough to break the
+  unwinding of a C++ exception, which is the one thing the engine does not want
+  broken.
+- **The stack is read from the thread that died**, so the frames of the handler
+  are at the top of it and the frames of the code that broke are under them. The
+  names of the functions come from DbgHelp on Windows and from `dladdr` elsewhere,
+  and both are optional: without them the report still has the addresses.
 
 ### `platform`
 
@@ -229,6 +303,15 @@ about models: a body stores a mesh *index*, which the renderer resolves.
 registry any more), `MeshUtil` (shared bounds/normals/size fitting) and one file per
 format in `loaders/`.
 
+`LandformSettings` is here because a mesh the engine made carries the settings it
+was made of: `MeshAsset::landform` is the recipe of a ground, and the recipe is
+what a scene writes down so that the ground can be made again.
+
+`CloudSettings` is here for the same reason: `MeshAsset::cloud` is the recipe of
+a sky, and the recipe is what a scene writes down so that the cloud can be made
+again. The mode — flat or a volume — is in the recipe too, because the two are
+different clouds and not two settings of one cloud.
+
 ### `audio`
 
 `SoundDevice`: the audio device, the sounds loaded into it, and the playing of
@@ -277,6 +360,25 @@ when the camera turns, which is the one thing a sky must not do. Six quads with
 the texture coordinates written out by hand are the same picture on every
 driver, and the coordinates are the cube map rules spelled out, so a face looks
 the same whether it came from a file or from a panorama.
+
+**THE MESHES ARE ON THE CARD, AND THEY STAY THERE.** Every mesh used to be
+drawn out of the memory of the program: the driver was given a pointer to the
+vertices and copied them into the card again, for every frame, for every body.
+A ground of nine thousand vertices is three hundred kilobytes copied sixty
+times a second for a picture that did not change, and a cloud of two hundred
+puffs is worse.
+
+The buffers are made once — the first time the mesh is drawn — and the card
+keeps them. **THE BUFFERS BELONG TO THE INDEX AND NOT TO THE PICTURE**: the
+mesh in the registry never changes under an index, because the registry never
+replaces an entry. The name and the size of the mesh are remembered anyway, so
+that a registry which is replaced — and starts its numbers again — says so
+instead of drawing one mesh out of the buffers of another.
+
+**THE STATE IS LEFT AS IT WAS FOUND.** The attributes are turned off and the
+buffers are let go of after every mesh: the grid and the gizmo are drawn by the
+fixed pipeline out of the memory of the program, and a buffer that is still
+bound makes the fixed pipeline's own pointers mean something else.
 
 **THE SHADOWS ARE A PASS OF THEIR OWN.** `ShadowMap` is the picture of how far
 away the sun hit something first: one texture, one layer per *cascade* - a
@@ -343,6 +445,108 @@ scaled up, and it is **not turned**: the model matrix is a translation and a
 scale and nothing else, so the cube's own frame is the world's frame, and the
 direction a texel is looked up in is a world direction.
 
+**THE SKY IS DRAWN WITH THE SCENE'S PROGRAM, SO THE FOG REACHES IT.** The sky
+is the far distance, and the air between the eye and the sky is the same air as
+the air between the eye and everything else - so a sky drawn without the fog
+stands in front of the fog like a wall, and the horizon is a line. The sky is
+`uSurfaceMode` 2 of the scene's program: the picture of the sky with the fog
+over it, and no light and no shadow.
+
+**THE FOG IS AN INTEGRAL, NOT A DISTANCE.** The fog is thickest at the bottom
+of the world and thins as it goes up, so the amount of it between the eye and a
+thing is the integral of a density along the line between them - and an
+integral can be done exactly, which is the reason it is worth writing out.
+The integral is done in **two pieces**, because the fog has a floor: below the
+floor the density is the density of the floor, and above it the density falls
+away with the height. A ray that looks down into a hollow gets the thick air
+of the floor and not an exponential that runs away.
+
+**THE FOG CARRIES THE SUN.** The colour of the fog is the colour of the air
+plus the light of the sun scattered forward by the drops the fog is made of -
+the Henyey-Greenstein phase function, in **two lobes**: the forward one is the
+aureole around the sun and the backward one is the light that comes back from
+behind the drops. They are mixed so that the fog is as bright on average as
+it would be with no scattering in it at all - the glow around the sun is paid
+for out of the air around it and not out of the light of the sun.
+
+**THE FOG IS ONE FILE.** `shaders/fog/fog.glsl`, and the world, the particles
+and the water all have it. The loader reads a line of `#include` and puts the
+file where the line was, so that the air in front of the world and the air in
+front of the smoke and the air in front of the water are one air and not
+three.
+
+The fog belongs to the renderer (`Fog.hpp`) and not to the shadows: it has no
+map, no cascade and no bias, and it is not a comparison of two numbers. It is
+the air. The settings are the project's, like the shadows are, and they are
+set where the fog can be seen - the View menu, next to the shadows.
+
+**THE WATER IS A PROGRAM OF ITS OWN.** `water/water.vert` and
+`water/water.frag`, and not a mode of the scene's program: the water is
+transparent and the world is not, and a picture that is half of one and half of
+the other is a picture nobody can look at.
+
+**THE WATER IS A SHEET AND NOT A CUBE.** A cube has a lid and a floor and
+four walls, and the walls of a lake are not what a lake is. The sheet is a
+grid that runs from -1 to 1 in both directions and is scaled to the body
+that is the water, so that two sheets of water in the same place have the
+same waves in them.
+
+**THE COLOUR OF THE WATER IS A DEPTH.** The water is bright where it is thin
+and dark where it is deep, and the depth of the water at a place is the depth
+the body was given, less what the shore takes off it and more what a wave
+has raised. What comes back of the bottom is the light of the bottom with
+the water's own colour taken out of it, and the red is the first to go.
+
+**THE RIPPLES ARE MADE PER FRAGMENT.** The mesh carries the waves, and the
+mesh is a grid: anything smaller than a cell of it is made in the fragment
+stage, or the water is a sheet of glass with four big waves in it. They fade
+out with the distance, because a ripple that is smaller than a pixel is a
+shimmer and not a ripple.
+
+**THE BOTTOM IS BENT, AND THE BOTTOM IS A COPY.** The picture of the scene
+is copied into a texture before the water is drawn over it, and the water
+reads the copy: the same pixels the water is drawn over, so that what shows
+through the water is the world that is really there. The bend is the
+difference between the way the light would have come and the way it does
+come, in the eye's own frame.
+
+**THE WATER IS A PROPERTY OF THE BODY.** `physics/WaterSettings.hpp`, and
+the settings live with the body and not in the renderer: two sheets of water
+in one scene can look nothing alike, and the water is a property of the body
+that is water. They are set in the inspector, where the water can be seen.
+
+**THE WAVES ARE FOUR FIXED GERSTNER WAVES.** A Gerstner wave has a sharp
+crest and a flat trough, because the water at the top of the wave is thrown
+forward - and the cost of that is that the normal is not the slope of the
+height any more, so the normal is worked out of the two directions the
+surface runs in. The waves are in the world and not in the mesh, so two sheets
+of water in the same place have the same waves in them, and the sheet has to
+be cut, because the waves are worked out per point.
+
+**THE WATER IS BLENDED WITH A PREMULTIPLIED ALPHA.** The colour is written
+ready to be added to the picture and the bottom comes through what is left of
+the transparency. It is the only way the reflection survives: the sky in the
+water is light that comes *off* the surface, and a mixed alpha multiplies it
+by the transparency as well - so a shallow river seen along its length would
+lose the mirror that is the whole point of looking at it along its length.
+
+**THE SHADOW ON THE WATER IS ONE TAP, AND IT IS OFTEN NOT ASKED FOR.** The
+water takes the sun's map and the stretches of the scene, and reads the map
+once. Sixteen reads over half the screen is a price for an edge that the
+water's own waves make noisy anyway, and what the shadow takes away of the
+water is the shine of the sun. The read is skipped altogether where the sun's
+light cannot reach the water at all - a surface that faces away from the sun
+is dark whether the sun is behind a mountain or not. And the water does not
+cast a shadow: a sheet of water in the map is a sheet of water that shadows
+itself.
+
+**THE SHADOW IS NOT ASKED FOR WHERE THE SUN CANNOT REACH.** The same rule in
+the world's shader, and it is the most expensive thing in the frame: with the
+soft shadows a fragment asks the map sixteen times, and the back of every
+object in the picture asks it for nothing it will use. A surface that faces
+away from the sun has no direct light and no shine, and it is dark whether
+the sun is behind a mountain or not.
+
 **The grid follows the camera.** The grid is a *window on the world
 grid*: the patch is snapped to the major step and moved with the camera, so
 every line lands back on the world position it was on before and there is no
@@ -388,6 +592,50 @@ word in a language nobody speaks - the letters were right and the words were
 not. `editortest` asks the two tables the same question about every slot, and
 the answer has to be the same number every time.
 
+**THE PARTICLES LIVE HERE, AND NOT IN THE SCENE.** `ParticleSystem` is the
+pool of the particles, the emitters they come from, the step and the drawing.
+It is in the `render` layer because it is a thing that is *drawn*: it owns a
+program and two buffers, and the renderer is the class that owns the GL
+objects. The simulation is a few lines of arithmetic; the drawing is the part
+that needs a place, and a place in the layer graph is a real constraint.
+
+Three things about it are worth knowing before changing it:
+
+- **The pool is fixed, and it is a ring.** Four thousand particles, and a new
+  one takes the place of the oldest. A pool that grows is a pool that
+  allocates in the middle of a frame, and a frame that allocates is a frame
+  that stutters. A pool that is too small is an effect that loses its oldest
+  particles, which is what an effect does when there are too many of them.
+
+- **An emitter is scene data, and it is in the scene file.** The place, the
+  direction, the recipe and the body it rides on - all of it is written into
+  `scene.json` and read back out of it, because an effect that is in the
+  picture and not in the file is an effect that is gone when the scene is
+  opened again. The emitters travel the same way the ground's settings do:
+  as the numbers that made them.
+
+- **The same seed is the same effect.** The random numbers are the engine's
+  own - a xorshift, because a sine is a different number on two machines - and
+  the seed of the effect, the emitter and the burst are mixed into it. An
+  effect that looks different on two machines is an effect that cannot be
+  tested.
+
+The particles are drawn after the bodies and before the marks of the editor:
+a particle is behind a box when it is behind the box. They are drawn with the
+depth test on and the depth write **off** - a puff of smoke that hides the
+puff of smoke behind it is a puff of smoke in front of it, and the order the
+particles are drawn in is not the order they are in.
+
+**THE TWO KINDS OF PARTICLE ARE TWO PASSES.** One is drawn *over* what is
+behind it and one is *added* to it, and the difference is one blend function:
+smoke hides the thing behind it, and fire makes it brighter. The fog is
+different in the two as well, and it has to be - a puff of smoke takes the
+colour of the air in front of it, and a spark is light that the air scatters
+away, so a spark in a thick mist is a dimmer spark.
+
+The particles are not lit. A fire is its own light, and a shadow map of a
+puff of smoke is a shadow of a puff of smoke.
+
 ### `ui`
 
 `Theme` (colours and metrics) and `UiContext` — immediate mode. `UiContext` owns the
@@ -401,10 +649,69 @@ those references. A function returning a reference would mean the same edit in e
 one; a mutable definition means none. `ui` is the only place allowed to write them
 (`setActiveTheme`); everything else reads.
 
+### `gui`
+
+**THE INTERFACE OF A GAME, AS NUMBERS AND AS A PICTURE.**
+
+`GuiCanvas` is the data: a canvas is a reference resolution and a list of
+elements — a panel, a picture, a line of letters, a button — each with a
+rectangle, a colour and a name. `GuiRenderer` is the drawing: the canvas over
+the world, in the window's own coordinates, with the letters out of the same
+atlas the editor's own interface uses.
+
+The layer is where it is because of two dependencies and no more: the canvas is
+made of `Rect` and `Color` from `render`, and `scene` writes it down, so it
+sits above the renderer and below the scene.
+
+**THE CANVAS IS PART OF THE SCENE.** The interface of a game is not a thing
+the editor draws around the game: it is part of the game, and a game that is
+built has to carry it with it. So the canvas is written into the scene file
+next to the bodies, read back when the scene is opened, and drawn by the player
+program exactly as the editor draws it. `scenes::save` and `scenes::load` take
+the canvas; the editor edits **the game's own canvas in place**, so what is on
+the screen while editing is what the game shows.
+
+**ONE SCALE FOR BOTH DIRECTIONS.** The canvas is fitted into the rectangle it
+is drawn into with a single scale, centred in what is left. A layout made for
+1920×1080 is therefore the same layout on a smaller screen, and nothing is
+wider than it is tall — a stretched canvas has letters that are wider than they
+are high.
+
+**THE ORDER OF THE CANVAS IS THE ORDER OF THE LIST.** The renderer keeps three
+batches — flat colours, pictures, letters — and flushes one when the next
+thing would have to be drawn over it. A panel under a label reads as a panel
+under a label, and a panel that is drawn after a label covers it, because that
+is what the list says.
+
+**A CLICK IS A PRESS AND A RELEASE ON THE SAME BUTTON.** The renderer
+remembers the button the press started on: a press on one button and a release
+on another is not a click on either of them. The mark is written on the element
+itself (`hovered`, `pressed`, `clicked`) and is never written to a scene file:
+it is what happened, not what was made.
+
+**THE EDITOR EDITS IT, THE GAME ANSWERS IT.** The same canvas is drawn by both,
+and the only difference between them is whether the buttons answer the pointer:
+in the editor a click picks an element, and in a game a click presses a button.
+The editor's own undo stack has a second half for it — `GuiUndoStep` — and
+Ctrl+Z takes back whichever of the two was changed last.
+
 ### `scene`
 
 `BodyFactory` (every way a body gets created) and `SceneSerializer` (the text scene
 format, with models referenced by name).
+
+`Landform` is here as well: the shape of the ground and the mesh cut from it. The
+settings it is made of are in `assets/LandformSettings.hpp`, because a ground is a
+mesh and the mesh carries them — a scene that is saved says how the ground was
+made, and the ground is made again when the scene is opened.
+
+`Cloud` is here for the same reason, and it is the same arrangement: a cloud is
+made of noise, the noise decides where the puffs are, and the whole cloud is one
+mesh and one draw call. **THE PUFFS ARE INDEPENDENT OF ONE ANOTHER**, so the
+making is spread over the threads and each thread writes into a chunk of its own
+— the puffs come out in the same order whatever order they were made in, and the
+same seed is the same cloud on a machine with one thread as on a machine with
+six.
 
 ### `i18n`
 
@@ -464,6 +771,13 @@ Five things to know before changing any of it:
   i.e. to a helper.
 - **Nothing steps the world here.** The bindings mutate a live `PhysicsWorld` in
   place, so one script runs the same way in edit mode and in Play.
+- **The effects are asked for by name.** `engine::emitParticles(x, y, z, 40,
+  "fire")` and the engine knows what fire is: the names are the same ones the
+  editor uses and the same ones the scene file uses, so an effect can be asked
+  for by a person and by a script and mean the same thing. A name the engine
+  does not have is said out loud in the log and the effect is not made - a
+  script that asks for a fire and gets nothing is a bug in the script, and a
+  log line is where such a bug is found.
 - **One context, reused.** `Host` keeps a single `asIScriptContext` instead of
   creating one per call, and calls `Unprepare()` on both the success and the exception
   path. A context left mid-execution cannot be prepared again, so skipping this is
@@ -499,6 +813,42 @@ owns its own arrangement:
 | `panels/ScenePanel.cpp` | the "Scene" strip, the tool column, the navigation balls |
 | `panels/InspectorDock.cpp` | the inspector: filter, sections, scrolling |
 | `panels/BottomBar.cpp` | the console with its per-level filters |
+| `panels/LandformPanel.cpp` | the ground: the shape, the noise, the numbers of it |
+| `panels/CloudPanel.cpp` | the sky: flat or a volume, the puffs, the numbers of it |
+| `panels/GuiEditor.cpp` | the interface of the game: the tree, the fields, the handles |
+
+**THE TWO MODES OF THE EDITOR.** There are two ways of looking at a project,
+and they are modes of the editor and not of the scene: nothing is thrown away
+and nothing is saved differently.
+
+- **2D** is the world *measured* and not seen. The camera becomes orthographic
+  and looks down the Z axis, so the picture is the XY plane with no vanishing
+  point in it; the grid is built in that plane instead of the ground plane;
+  and the gizmo has two handles instead of three, because a flat world has two
+  directions to move in and one to turn about.
+- **The interface** lays the GUI of the game out instead of the world. The
+  hierarchy shows the tree of elements, the inspector shows their fields, and
+  a click in the viewport picks an element and drags it.
+
+**AN ORTHOGRAPHIC CAMERA IS A DIFFERENT SET OF NUMBERS.** A perspective camera
+and an orthographic one answer "where is this pixel" in different ways: the
+first divides by the depth, the second does not. So the projection is a
+**value** — `picking::ViewProjection` — and not a basis, and every place that
+turns a pixel into a ray or a world point into a pixel asks the projection
+instead of working the numbers out for itself. The picture and the pointer
+cannot disagree about where a thing is, because they are made from the same
+numbers.
+
+**THE ORTHOGRAPHIC PICTURE IS THE ZOOM.** `Camera::orthoSize` is the half-height
+of the picture in world units, and the wheel changes it. A perspective view
+has no zoom here — the wheel is the scroll of the panels — but an
+orthographic picture has one, and a flat scene that cannot be made bigger is a
+flat scene that can only be looked at from far away.
+
+**A FLAT WORLD HAS NO SUN IN IT.** The 2D view draws no shadow map and no
+sheet for it to fall on. The renderer knows which of the two it is from the
+camera: an orthographic camera *is* the 2D view, so the grid and the picture
+cannot disagree about which plane the world is in.
 
 **Rotating with a gizmo ring.** Rings turn around the body's **world** axes:
 `gizmo::axesFor()` rotates them for scale only. Local axes in a rotation meant the
@@ -521,6 +871,13 @@ frame removed three failure modes at once:
 The sign of the step depends on which way the camera looks: an axis pointing **at**
 the camera turns the other way on screen. A ring seen exactly edge-on projects to a
 line, which is true in every editor.
+
+**A tool window is opened and not toggled.** The Landform panel and the Cloud
+panel are opened from the Create menu, and the row that opens one does not close
+it when it is already open: a row that toggles closes the window the row opened
+a moment ago, and the second click is the one that does it.
+`Editor::openToolPanel()` opens it, puts it where it covers nothing, and
+remembers that it is on screen.
 
 **The File menu and the dialogs.** Ten items, in Unity's order: New Scene, Open
 Scene, Save, Save As, New Project, Open Project, Save Project, Build Settings, Build
@@ -550,23 +907,48 @@ that discards a scene.
 
 ### `app`
 
-`Application` is the composition root: it owns every subsystem, runs the frame loop
-and switches between the two app states. `Launcher` is the start menu, which lives
-in `Launcher::Result { Stay, OpenProject, Quit }`. `FixedClock` is the fixed-step
-accumulator (60 Hz). `main.cpp` is five lines.
+`Application` is the composition root: it owns the launcher, the editor and the game
+they play, runs the frame loop and switches between the two app states. `Launcher` is
+the start menu, which lives in `Launcher::Result { Stay, OpenProject, Quit }`.
+`FixedClock` is the fixed-step accumulator (60 Hz). `main.cpp` is five lines.
+
+**`GameHost` is the game.** The world, the picture of it, the sound, the scripts and
+the loop that runs them - everything a game is, and nothing that draws a dock. The
+editor plays the game through it, and the player program is it and nothing else, so
+the two cannot drift apart: the same world, the same camera, the same physics, the
+same scripts. It is compiled once, into the static library `spectra_game`, and linked
+into both programs.
+
+The frame is in three parts, and the shell around the game decides where its own
+work goes: `updateCamera()` first (a click is answered with the camera the user was
+looking through), then the shell's own input, then `updateWorld()` (the scripts and
+the physics) and the picture.
 
 `Application` and `Launcher` sit **in the executable, not in `spectra_runtime`**,
 which is rule 7 above: both are the shell around the engine, not the engine. The
 consequence is visible in the file list - the runtime stops at `i18n`.
 
 **The step cap and the frame-time clamp are two different brakes.**
-`kMaxFrameTime` (`Application.cpp`) clamps `dt` to 0.1 s, so at 60 Hz a fully
+`kMaxFrameTime` (`GameHost.cpp`) clamps `dt` to 0.1 s, so at 60 Hz a fully
 clamped frame can fund at most **six** 16.7 ms steps. `FixedClock`'s cap is a
 second, independent brake, and the header argues for it at length: with the cap
 binding first, frame time is `cap * step + render` and stays proportional to the
 real cost; without it, a slow step is paid up to six times in a row and the frame
 rate pins itself to a plateau it cannot leave. **A cap above six never binds**,
 which makes it a second value that has to agree with the first.
+
+### `player`
+
+`Player` is the game as a program: the engine, a window and a loop, with no
+launcher and no editor in it. It opens the boot file beside it - the data folder of
+a built game is `<name>_Data`, and the manifest in it says which game this is - loads
+the world that file names, runs the scripts and plays the game until the window is
+closed.
+
+It is what a build of a game is made of: `File > Build` copies this program into the
+build folder and renames it after the game, so a build is a program of its own and
+not the editor with another name on it. The editor finds it next to itself
+(`findPlayerProgram()`), the same way it finds the core.
 
 ---
 
@@ -590,7 +972,7 @@ A project is a folder, and the folder is the architecture of the game:
     prefabs/         the ready-made pieces
     ui/              the pieces of the interface
     data/            the tables and the settings
-    particles/       the effects
+    particles/       the effects the project brings of its own
     physics/         the physical materials
   lib/               the core of the engine, as the library it is
   scripts/           the scripts of the game
@@ -599,6 +981,13 @@ A project is a folder, and the folder is the architecture of the game:
   project.Spectra    the manifest: what the project is
   icon.ico           the picture of the project
 ```
+
+**The effects of a scene are in the scene.** The emitters - the places the
+particles come from, and the recipes they are made of - are written into
+`scenes/scene.json` with the bodies and the interface, because an effect that
+is in the picture and not in the file is an effect that is gone when the scene
+is opened again. The `particles/` folder is for the effects a project brings
+of its own: the ones that are not in any one scene.
 
 **The scene lives in `scenes/` and the manifest says which file it is.** The
 manifest holds the path relative to the project folder (`scene=scenes/scene.json`),
@@ -619,10 +1008,12 @@ everything the project did not bring. The engine's own assets keep their older
 names (`image/textures`, `sounds`, `image/icons`), so both spellings are looked
 for; `core/Project.hpp` holds the list of both (`assetdirs::`).
 
-**`lib/` is the core of the engine.** A project is created with a copy of
+**`lib/` is the core of the engine as a file.** A project is created with a copy of
 `SpectraPlayer` in it, so a project folder says which core it was made with, and
 the built game puts the program and the core together - the two of them have to
-be together, because that is where Windows looks for a library.
+be together, because that is where Windows looks for a library. The program itself
+carries the core as well: the editor and the built game are one file that does
+not depend on a library being found.
 
 **The icon of the project is the icon of the window.** `icon.ico` beside the
 project is applied to the window when the project is opened
@@ -827,6 +1218,27 @@ Three things about the size to know before touching `handlePanelDrag`:
 - **A floating panel's top edge is its title bar.** It is taken only in the corner
   boxes and is a drag handle everywhere else, because a grip that ate half the title
   bar would make it not one.
+- **A window is dragged by the window.** A floating panel is a surface: the guard says
+  that a press on it belongs to it, so that a click on a window does not also pick the
+  body behind it. The drag of its title bar is a press of that window, and the drag
+  asks the guard **as the window does** (`UiContext::pointerPressedBy(owner)`) - asked as
+  anybody else, the window takes the press away from itself, the drag never starts,
+  and no floating window can be moved at all. The panel is therefore found **before**
+  the guard is asked: the grip or the title bar under the pointer says which panel the
+  press belongs to, and the guard is asked as that panel.
+- **The release that ends a drag is the drag's own.** The window being dragged is under
+  the pointer by definition, and the guard must not swallow the release: the drag would
+  go on for ever and the window would follow the pointer after the hand had let go of
+  it. The popup capture is still honoured - a dropdown that opened during the drag owns
+  the pointer.
+- **The window under the pointer is the window on top.** The floating panels are drawn
+  in one order and declared into the guard in the same order (`floatingPanelOrder`), so
+  the last one drawn is the last one declared, and the last one declared is the one
+  that owns the press. The window the pointer is on is drawn last, and a window that is
+  under another one cannot be reached.
+- **The grip of a floating window belongs to that window.** Its edge is an edge of the
+  panel and not a line across the screen: a grip that answered to the whole line
+  resized a window that was somewhere else entirely.
 
 A panel is closed with **X** in its header — the same rectangle in drawing and in
 the drag test, so the click that closes it cannot also move it, and the X rectangle
@@ -852,10 +1264,121 @@ as the settings say - one to six. The ground lands in the scene as an ordinary
 body, a mesh like any other, so the renderer and the physics do not know or
 care that this one was not read from a file.
 
+**A GROUND IS SAVED WITH THE SCENE.** A ground is a mesh the engine made, and
+there is no file behind it: the mesh lives in the registry of the running
+editor and nowhere else. A scene that names it and is saved would therefore
+come back with a box the size of the ground where the ground was - the body
+kept its shape and its size, and the mesh it pointed at was not there.
+
+So the ground carries the settings it was made of (`MeshAsset::landform`), and
+the scene writes them with the body that stands on them:
+
+```json
+{
+  "shape": "mesh",
+  "mesh": { "name": "landform 4242", "scale": 1 },
+  "landform": { "shape": "plateau", "biome": "desert", "seed": 4242, "cells": 96, "...": "..." }
+}
+```
+
+A ground that has been painted has its heights in the same place, as one line
+of letters under `"heights"`. A body of water has a `water` node of its own:
+its colour and how much of what is under it shows through it.
+
+**THE EFFECTS ARE SAVED WITH THE SCENE TOO.** The emitters are not a body
+and they are not a mesh: they are the places the particles come from, and
+they are written into the same file, in the same way, with the whole recipe
+in them - because a file that is read by hand should say what the effect is
+made of.
+
+```json
+{
+  "emitters": [
+    {
+      "position": [0, 1, 0], "direction": [0, 1, 0], "body": -1,
+      "continuous": true, "interval": 1, "enabled": true,
+      "settings": { "count": 28, "lifetime": 0.9, "blend": "additive", "...": "..." }
+    }
+  ]
+}
+```
+
+An emitter that rides on a body says which body it is, and its position and
+its direction are in the body own frame - so a nozzle on the back of a thing
+sprays out of the back of the thing, and it keeps doing that when the thing
+turns round.
+
+When the scene is opened, the ground is made again from those settings, under
+the name the file gives it, and the body stands on it. The noise is the same on
+every machine, so the ground that comes back is the ground that was saved - and
+a build of a game needs nothing else, because the settings travel in the scene
+file the build carries. The settings themselves are in
+`assets/LandformSettings.hpp` and not next to the ground: a ground is a mesh,
+and it is the mesh that carries them.
+
 The noise itself is in `scene/Noise.hpp` and is worth a word: it is a hash of
 the integer lattice, smoothed, summed over four octaves. It is a picture and
 not a measurement, so the hash behind it is the cheap sine everybody uses and
 does not care how it turns out.
+
+**A GROUND LOOKS LIKE GROUND.** The noise alone is a field of bumps, and a field
+of bumps is not a piece of land. Four things are done to it, and each of them
+is a number in the panel:
+
+- **The material slides downhill.** A square that stands above its neighbour by
+  more than the angle of repose gives the difference away, and the eight
+  neighbours are asked which way down is the steepest - the diagonals count
+  for less, because they are further away. This is what takes the spikes off
+  and leaves ridges and valleys.
+- **The little bumps.** A noise of its own, much finer than the ground it is
+  put on, added after the sliding and the smoothing because both of them would
+  take it off again. It is the difference between a hill and a balloon.
+- **The valleys are darker.** How much of the ground around a square stands
+  above it is measured, and the square is darkened by it: the sky does not
+  reach the bottom of a valley, and a ground that is coloured only by its
+  height and its steepness is a ground of flat bands that says nothing about
+  the shape of the ground under it.
+- **The biome.** The colours the ground comes out in - and a biome is nothing
+  but colours: the ground is made the same way in every one of them. The
+  bottom of the ground is sand, soil, ice or ash, the ground itself has a
+  wet and a dry version of it, the steep parts are stone, and the top is snow
+  or a cap of stone. Eight of them, and the panel shows a swatch of each.
+
+**THE LANDFORM PANEL IS A WINDOW.** It is a tool window: it floats, it starts
+closed, and the View menu brings it back. It is dragged by its title bar and
+resized by its edges like any other floating panel, and where it is left is
+where it comes back - the layout file keeps it with the rest of the workspace.
+It is also where the ground lands: the panel says where the new ground is put
+in the world, and the ground that is there is an ordinary body that can be
+dragged where it belongs afterwards.
+
+**THE BRUSH PAINTS THE GROUND.** The panel has a brush in it - raise, lower,
+smooth, flatten - and a button that puts it in the hand. While the brush is in
+the hand, the hand in the viewport paints the ground under it instead of
+picking a body out of it.
+
+The ground is a heightfield, so the brush is a circle on the heights: the
+middle of it does the most and the rim does the least, and the amount is in
+metres a second, so the brush does the same work on a slow machine and on a
+fast one. The ground under the ray is found with the box of the ground first -
+it is cheap - and then with the heights of it, because a box is not a hill.
+
+**A GROUND THAT WAS PAINTED IS SAVED WITH ITS HEIGHTS.** The settings are the
+recipe of the ground, and a ground that has been painted is not what the
+recipe makes. So the heights of a painted ground are in the scene file beside
+the recipe, as one line of letters: a heightfield is thousands of numbers, and
+a file a person reads cannot be thousands of lines of numbers. A ground that
+has not been painted has no heights in the file - the recipe is enough - and
+the file says so by their absence.
+
+**WATER IS A SURFACE AND NOT A THING.** It is a shape of its own (`Shape::Water`),
+it is looked at and not collided with, and it casts no shadow: a flat sheet in
+the map of the shadows is a flat sheet that shadows itself. The level it
+stands at and how big it is are the position and the size of the body, like
+every other body keeps them; what the water has of its own is its colour and
+how much of what is under it shows through it, and those two are in the scene
+file under `water`. The shader of the water is the scene's own for now - the
+water shader takes it over, and the body carries everything it needs.
 
 **THE LOADER READS IN PARALLEL.** A model is a file that takes a while to read,
 and reading it touches no GL, so the models a scene names are parsed on as many
@@ -965,9 +1488,10 @@ reading their names.
   `consumePlayStarted()` (a one-shot signal) → `runProjectScripts()` during it →
   a fixed `world_.step()` → render.
 
-**"Build" is `stageBuild()`.** There is no separate player: the player *is* this
-executable, so a build is a folder that can be copied to another machine and run
-from there:
+**"Build" is `stageBuild()`.** The program of a build is the **player** - a
+separate program, built next to the editor and copied into the build folder under
+the name of the game. A build is a folder that can be copied to another machine and
+run from there:
 
 ```
 <build>/
@@ -986,15 +1510,18 @@ from there:
 
 **The program and the core are together** because that is where Windows looks
 for a library, and a program that cannot find its core is a program that does
-not start. **The data is in a folder of its own** because that is where the
+not start. The program carries the core inside as well, so the copy beside it
+is the one a project keeps and the one a build of a game is given.
+**The data is in a folder of its own** because that is where the
 program looks for it: `<name>_Data` beside the program, and the name of the
 folder is the name of the program without the extension.
 
 **`boot.spectra` is the manifest of the game.** It is the project's own manifest
 under another name, and it says where the scenes are - `scene=scenes/scene.json`,
 relative to the data folder. A built game opens it without asking: the boot file
-says which game it is, so the launcher is not in the way (`Application::initialize()`
-looks for `<exeDir>/<name>_Data/boot.spectra` and opens what it finds).
+says which game it is, so the launcher is not in the way - and the program that
+opens it is the **player** (`Player::initialize()`), not the editor. The editor
+asks which project to open; the player is told.
 
 **`plugins/` is what the engine brings**, and `assets/` is what the game is: the
 same two roots the engine knows everywhere else - the game's own assets first,
@@ -1108,17 +1635,19 @@ their own literals.
 | `<projectsRoot>/<Project>/editorlayout.txt` | the saved editor workspace (written by `EditorLayout.cpp`) |
 | `<projectsRoot>/<Project>/scripts/` | `*.as`, run when Play begins |
 | `<projectsRoot>/<Project>/assets/` | the content of the project: `textures/`, `audio/`, `music/`, `shaders/`, `material/`, `fonts/`, `models/`, `sky/`, `lang/`, `icons/`, `prefabs/`, `ui/`, `data/`, `particles/`, `physics/` |
-| `<projectsRoot>/<Project>/lib/` | the core of the engine, as the library it is: `SpectraPlayer.dll` |
+| `<projectsRoot>/<Project>/lib/` | the core of the engine as a file: `SpectraPlayer.dll` - the core the project was made with, which the program also carries inside |
 | `<projectsRoot>/<Project>/icon.ico` | the picture of the project: the icon of the window while the project is open |
 | `<gameDir>/<Game>_Data/boot.spectra` | the manifest of a built game: the same keys, and the scene of the game beside it |
 | `<exeDir>/assets/sounds/*.wav` | the sounds the engine ships: the name of each is its file's stem, so a file dropped in the folder is a sound the scripts can play and a body can carry |
 | `<exeDir>/assets/fonts/JetBrainsMono-Regular.ttf` | the font the interface is drawn with, with its licence beside it. It is shipped rather than borrowed so the engine has the same letters on every machine it runs on |
 | `<exeDir>/assets/image/icons/*.ico` | the application icons the settings screen offers |
 | `<exeDir>/settings.ini` | machine-level settings: `projectRoot`, `language`, `theme`, `frameRateCap`, `appIcon`, up to 8 `recent` |
+| `<exeDir>/engine.log` | the log of the run: stderr and this file are the same lines, and the editor console reads the ring buffer they come from |
+| `<exeDir>/crash-001.log` | the report of a crash: the reason, the address of the fault, the stack and the tail of the log. The next crash takes the next free number, so the reports of several crashes are all kept |
 
 The projects root is `Settings::projectRoot`, by default `<exeDir>/project` - and
-`<exeDir>/../project` when that is the one that is there, because a built game
-keeps its program in `lib/` and its projects beside that.
+`<exeDir>/../project` when that is the one that is there, which is where a built
+game keeps the projects of the machine it was built on.
 
 Facts worth keeping in mind, because they mildly contradict intuition:
 
@@ -1236,6 +1765,13 @@ panel and not on a whole line of the screen, the picture and the pointer agree
 about where a thing is, and the font the engine ships has every letter the atlas
 draws. It needs no window and no editor - the geometry is plain functions over
 plain data, which is why it can be asked about here.
+
+The cloud is checked there as well: that it is made, that the same seed is the
+same cloud and another seed is another one, that the threads do not change it,
+that fewer puffs and a coarser ball make a cheaper cloud, that the flat cloud
+is a picture on a plane and the cloud of puffs is not, that the top of the
+cloud is brighter than the bottom of it, and that a cloud that is saved comes
+back a cloud and not a box in its place.
 
 It has already paid for itself: the first run of it found that the atlas's slot
 table counted 96 ASCII characters where there are 95, and spent the last slot

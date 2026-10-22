@@ -18,13 +18,22 @@
 #include "core/Math.hpp"
 #include "core/Project.hpp"
 #include "core/Str.hpp"
+#include "gui/GuiCanvas.hpp"
 #include "platform/Filesystem.hpp"
 #include "platform/Window.hpp"
 #include "render/Camera.hpp"
+#include "render/ParticleSystem.hpp"
 #include "render/SceneRenderer.hpp"
 #include "render/TextAtlas.hpp"
+#include "assets/MeshRegistry.hpp"
+#include "physics/PhysicsWorld.hpp"
+#include "scene/BodyFactory.hpp"
 #include "scene/Landform.hpp"
+#include "scene/Cloud.hpp"
 #include "scene/Noise.hpp"
+#include "scene/SceneSerializer.hpp"
+#include "ui/OverlayGuard.hpp"
+
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -203,6 +212,65 @@ void testGrips() {
           "the left edge of the inspector is a grip");
 }
 
+// A WINDOW IS DRAGGED BY ITS TITLE BAR
+
+void testWindowDrag() {
+    heading("a floating window is dragged by its title bar");
+    Workspace ws = sampleWorkspace();
+    // Two windows, one over the other, and the pointer on the title bar of the
+    // one that is under the pointer.
+    ws.zones[kFavorites] = PanelZone::Float;
+    ws.zones[kSounds] = PanelZone::Float;
+    ws.floatRects[kFavorites] = Rect{100.0f, 100.0f, 300.0f, 200.0f};
+    ws.floatRects[kSounds] = Rect{120.0f, 120.0f, 300.0f, 200.0f};
+    // The tool windows are closed: this is about the two windows here.
+    for (int i = 5; i < kPanelCount; ++i) ws.open[i] = false;
+
+    // The window under the pointer is the one on top: it is drawn last, and
+    // the surface that is drawn last is the one that owns the press.
+    int order[kPanelCount];
+    const int count = floatingPanelOrder(ws, 150.0f, 110.0f, order, kPanelCount);
+    check(count == 2, "both windows are on screen");
+    check(order[count - 1] == kFavorites, "the window under the pointer is the one on top");
+
+    // And it is the one the pointer is on: the last one in the order is the
+    // window under the pointer, and there is no window where the pointer is
+    // not over one.
+    check(order[count - 1] == kFavorites, "the window under the pointer is the one that is found");
+    int elsewhere[kPanelCount];
+    const int none = floatingPanelOrder(ws, 900.0f, 600.0f, elsewhere, kPanelCount);
+    check(none == 2, "and both windows are still on screen");
+    check(elsewhere[none - 1] == kSounds,
+          "the window under the pointer is the one on top when the pointer is on the other");
+
+    // The guard: a press on a window belongs to that window and to nobody
+    // else. Asked as the window asks, the press is there - and that is what
+    // lets the window be dragged by its title bar. Asked as anybody else, the
+    // window has taken the press, which is what keeps a click on a window from
+    // picking the body behind it.
+    OverlayGuard guard;
+    guard.push(ws.floatRects[kFavorites].x, ws.floatRects[kFavorites].y,
+               ws.floatRects[kFavorites].width, ws.floatRects[kFavorites].height,
+               Editor::kOwnerFloatingPanel + kFavorites);
+    guard.push(ws.floatRects[kSounds].x, ws.floatRects[kSounds].y,
+               ws.floatRects[kSounds].width, ws.floatRects[kSounds].height,
+               Editor::kOwnerFloatingPanel + kSounds);
+    check(!guard.pressTaken(150.0f, 110.0f, Editor::kOwnerFloatingPanel + kFavorites),
+          "the press on a window is the press of that window");
+    check(guard.pressTaken(150.0f, 110.0f, 0),
+          "and it is not the press of the scene underneath it");
+
+    // The grip of a window belongs to that window: the edge of a window that
+    // is somewhere else is not an edge of this one.
+    const Rect window = ws.floatRects[kFavorites];
+    check(gripsAt(ws, kFavorites, window.x + 2.0f, window.y + 100.0f) == kGripLeft,
+          "the left edge of the window is a grip");
+    check(gripsAt(ws, kFavorites, window.x + 2.0f, window.y + 500.0f) == 0,
+          "and it is not a grip a long way down the same line");
+    check(gripsAt(ws, kFavorites, window.x + 150.0f, window.y + 8.0f) == 0,
+          "the title bar of the window is not a grip");
+}
+
 // THE PICTURE AND THE POINTER ARE THE SAME VIEW OF THE WORLD
 
 void testPictureAndPointer() {
@@ -366,13 +434,16 @@ void testLandform() {
 
     float lowest = 1e9f, highest = -1e9f;
     for (size_t i = 0; i < part.vertices.size(); i += kMeshVertexFloats) {
+        // The height of the ground is measured from its middle: the body it
+        // belongs to stands there, and the mesh is drawn around its middle.
         const float y = part.vertices[i + kMeshPositionOffset + 1];
         lowest = std::fmin(lowest, y);
         highest = std::fmax(highest, y);
     }
-    check(lowest >= settings.minHeight - 0.01f && highest <= settings.maxHeight + 0.01f,
+    const float range = settings.maxHeight - settings.minHeight;
+    check(lowest >= -range * 0.5f - 0.01f && highest <= range * 0.5f + 0.01f,
           "the ground stays between the heights that were asked for");
-    check(highest - lowest > (settings.maxHeight - settings.minHeight) * 0.9f,
+    check(highest - lowest > range * 0.9f,
           "and it uses the whole of that range");
 
     // The ground the editor asks about is the ground that was drawn. A body
@@ -534,7 +605,555 @@ void testLandform() {
           "the ground on the plateau is not flat");
 }
 
+// A GROUND THAT IS SAVED IS A GROUND THAT COMES BACK
+
+void testLandformScene() {
+    heading("a ground that is saved comes back a ground");
+
+    // The ground, made the way the panel makes it: the settings, the mesh, and
+    // the settings travelling with the mesh so that the scene can say how the
+    // ground was made.
+    LandformSettings settings;
+    settings.cells = 24;
+    settings.width = 40.0f;
+    settings.depth = 30.0f;
+    settings.minHeight = 1.0f;
+    settings.maxHeight = 9.0f;
+    settings.seed = 4242;
+    settings.shape = LandformShape::Plateau;
+    settings.variation = 0.0031f;
+    settings.biome = LandformBiome::Desert;
+    settings.detail = 0.4f;
+    settings.shading = 0.5f;
+
+    Landform ground;
+    ground.build(settings);
+    MeshAsset asset = ground.toMesh();
+    asset.name = "landform " + std::to_string(settings.seed);
+    asset.landform = ground.settings();
+
+    MeshRegistry meshes;
+    const int mesh = meshes.importMesh(std::move(asset));
+    check(mesh >= 0, "the ground is in the registry");
+
+    PhysicsWorld world;
+    RigidBody body;
+    body.shape = Shape::Mesh;
+    body.mesh = mesh;
+    const MeshAsset* made = meshes.at(mesh);
+    body.halfExtents = made ? made->half : Vec3{1.0f, 1.0f, 1.0f};
+    body.position = Vec3{0.0f, settings.minHeight, 0.0f};
+    body.material.isStatic = true;
+    body.configure(body.mass);
+    body.syncPrevTransform();
+    world.bodies.push_back(body);
+
+    // The scene is written and read back, the way the editor does it. The
+    // canvas goes with it: the interface of the game is a part of the scene.
+    const std::string path = str::join(fs::executableDir(), "landform-scene-test.json");
+    gui::Canvas canvas;
+    check(scenes::save(world, meshes, canvas, path), "the scene with the ground is written");
+
+    std::string text;
+    fs::readFile(path, text);
+    check(text.find("\"landform\"") != std::string::npos,
+          "the file says how the ground was made");
+
+    PhysicsWorld opened;
+    MeshRegistry openedMeshes;
+    gui::Canvas openedCanvas;
+    check(scenes::load(opened, openedMeshes, openedCanvas, path),
+          "the scene is read back");
+    check(opened.bodies.size() == 1, "the ground is in the scene that came back");
+
+    if (opened.bodies.size() == 1) {
+        const RigidBody& back = opened.bodies[0];
+        check(back.hasMesh(), "the ground has its mesh and not a box in its place");
+        check(back.shape == Shape::Mesh, "and it is a mesh body");
+
+        const MeshAsset* again = openedMeshes.at(back.mesh);
+        check(again != nullptr, "the mesh of the ground is there");
+        if (again && made) {
+            check(again->parts.size() == made->parts.size() &&
+                      again->parts[0].vertices.size() == made->parts[0].vertices.size(),
+                  "the ground that came back is the ground that was saved");
+            check(again->landform.has_value(), "and it still says how it was made");
+            if (again->landform) {
+                check(again->landform->seed == settings.seed, "the seed is the same one");
+                check(again->landform->shape == LandformShape::Plateau,
+                      "and the shape is the same one");
+                check(again->landform->biome == LandformBiome::Desert,
+                      "and the biome is the same one");
+                check(std::fabs(again->landform->detail - settings.detail) < 0.001f,
+                      "and so are the little bumps");
+                check(std::fabs(again->landform->shading - settings.shading) < 0.001f,
+                      "and the darkness of the valleys");
+            }
+
+            // The heights: the same ground, not a ground that looks like it.
+            bool same = true;
+            const MeshPart& a = made->parts[0];
+            const MeshPart& b = again->parts[0];
+            for (size_t i = 0; i < a.vertices.size(); i += kMeshVertexFloats)
+                if (std::fabs(a.vertices[i + kMeshPositionOffset + 1] -
+                              b.vertices[i + kMeshPositionOffset + 1]) > 0.001f)
+                    same = false;
+            check(same, "the ground stands where it stood");
+        }
+    }
+
+    fs::removeTree(path);
+}
+
+// THE BRUSH PAINTS THE GROUND, AND THE GROUND THAT WAS PAINTED COMES BACK
+
+void testLandformBrush() {
+    heading("the brush paints the ground");
+
+    LandformSettings settings;
+    settings.cells = 32;
+    settings.width = 40.0f;
+    settings.depth = 40.0f;
+    settings.minHeight = 0.0f;
+    settings.maxHeight = 10.0f;
+    settings.seed = 91;
+
+    Landform ground;
+    ground.build(settings);
+    const std::vector<float> before = ground.heights();
+
+    // The brush raises the ground under the hand, and the ground under the
+    // hand is the ground that is changed.
+    ground.beginStroke(0.0f, 0.0f);
+    check(ground.paint(0.0f, 0.0f, 6.0f, 2.0f, LandformBrush::Raise),
+          "the brush changes the ground");
+    check(ground.painted(), "and the ground knows that it was painted");
+
+    float difference = 0.0f;
+    for (size_t i = 0; i < before.size(); ++i) difference += std::fabs(before[i] - ground.heights()[i]);
+    check(difference > 0.0f, "the ground is not the ground it was");
+
+    // And the brush lowers it again: the ground under the hand is lower than
+    // the ground around it.
+    const float raised = ground.heightAt(0.0f, 0.0f);
+    ground.paint(0.0f, 0.0f, 6.0f, 4.0f, LandformBrush::Lower);
+    check(ground.heightAt(0.0f, 0.0f) < raised, "the brush lowers the ground as well");
+
+    // The smoothing brush takes the bumps off: the ground under the hand is
+    // closer to its neighbours than it was.
+    const float rough = std::fabs(ground.heightAt(0.0f, 0.0f) - ground.heightAt(1.0f, 0.0f));
+    ground.paint(0.0f, 0.0f, 8.0f, 1.0f, LandformBrush::Smooth);
+    check(std::fabs(ground.heightAt(0.0f, 0.0f) - ground.heightAt(1.0f, 0.0f)) < rough,
+          "the brush smooths the ground");
+
+    // The ray meets the ground: the ground is a heightfield, and the brush
+    // follows the hand.
+    float distance = 0.0f;
+    const bool hit = ground.rayHit(Vec3{0.0f, 40.0f, 0.0f}, Vec3{0.0f, -1.0f, 0.0f}, distance);
+    check(hit, "the ray meets the ground");
+    check(hit && distance > 0.0f && distance < 40.0f, "and it meets it where the ground is");
+    check(!ground.rayHit(Vec3{500.0f, 40.0f, 500.0f}, Vec3{0.0f, -1.0f, 0.0f}, distance),
+          "and it does not meet the ground that is not there");
+
+    // A ground that was painted is saved with its heights, and it comes back
+    // the ground that was painted.
+    MeshAsset asset = ground.toMesh();
+    asset.name = "landform painted";
+    asset.landform = ground.settings();
+    asset.landformHeights = ground.heights();
+
+    MeshRegistry meshes;
+    const int mesh = meshes.importMesh(std::move(asset));
+    PhysicsWorld world;
+    RigidBody body;
+    body.shape = Shape::Mesh;
+    body.mesh = mesh;
+    body.position = Vec3{0.0f, (settings.minHeight + settings.maxHeight) * 0.5f, 0.0f};
+    body.material.isStatic = true;
+    body.configure(body.mass);
+    body.syncPrevTransform();
+    world.bodies.push_back(body);
+
+    const std::string path = str::join(fs::executableDir(), "landform-brush-test.json");
+    gui::Canvas canvas;
+    check(scenes::save(world, meshes, canvas, path), "the painted ground is written");
+
+    PhysicsWorld opened;
+    MeshRegistry openedMeshes;
+    gui::Canvas openedCanvas;
+    check(scenes::load(opened, openedMeshes, openedCanvas, path), "and read back");
+    if (opened.bodies.size() == 1 && opened.bodies[0].hasMesh()) {
+        const MeshAsset* again = openedMeshes.at(opened.bodies[0].mesh);
+        check(again && !again->landformHeights.empty(), "the ground that came back was painted");
+        bool same = again && again->landformHeights.size() == ground.heights().size();
+        if (same)
+            for (size_t i = 0; i < again->landformHeights.size(); ++i)
+                if (std::fabs(again->landformHeights[i] - ground.heights()[i]) > 0.001f) same = false;
+        check(same, "and it is the ground that was painted");
+    } else {
+        check(false, "the ground that came back is a ground");
+    }
+    fs::removeTree(path);
+}
+
+// THE WATER IS A LEVEL OF WATER, AND IT IS SAVED
+
+void testWater() {
+    heading("the water is a level of water");
+
+    PhysicsWorld world;
+    RigidBody body = BodyFactory::makeWater(Vec3{0.0f, 2.0f, 0.0f}, 100.0f, 80.0f,
+                                            Vec3{0.1f, 0.3f, 0.45f}, 0.5f);
+    check(body.shape == Shape::Water, "the water is water");
+    check(!body.castsShadow, "and it casts no shadow");
+    check(body.halfExtents.x > 0.0f && body.halfExtents.z > 0.0f, "it is as big as it was told to be");
+    world.bodies.push_back(body);
+
+    const std::string path = str::join(fs::executableDir(), "water-test.json");
+    gui::Canvas canvas;
+    MeshRegistry meshes;
+    check(scenes::save(world, meshes, canvas, path), "the water is written");
+
+    PhysicsWorld opened;
+    MeshRegistry openedMeshes;
+    gui::Canvas openedCanvas;
+    check(scenes::load(opened, openedMeshes, openedCanvas, path), "and read back");
+    check(opened.bodies.size() == 1, "the water is in the scene that came back");
+    if (opened.bodies.size() == 1) {
+        const RigidBody& back = opened.bodies[0];
+        check(back.shape == Shape::Water, "it is still water");
+        check(std::fabs(back.position.y - 2.0f) < 0.001f, "at the level it was at");
+        check(std::fabs(back.waterAlpha - 0.5f) < 0.001f, "and as clear as it was");
+        check(std::fabs(back.material.color.z - 0.45f) < 0.001f, "and the colour it had");
+    }
+    fs::removeTree(path);
+}
+
+
+void testLandformLooks() {
+    heading("the ground looks like ground");
+
+    LandformSettings settings;
+    settings.cells = 32;
+    settings.width = 40.0f;
+    settings.depth = 40.0f;
+    settings.minHeight = 0.0f;
+    settings.maxHeight = 12.0f;
+    settings.seed = 77;
+
+    // The colour of every vertex of a ground, so that two grounds can be
+    // compared without looking at them.
+    const auto colorsOf = [](const Landform& ground) {
+        std::vector<float> colors;
+        const MeshAsset mesh = ground.toMesh();
+        if (mesh.parts.empty()) return colors;
+        colors = mesh.parts[0].colors;
+        return colors;
+    };
+
+    // The biomes are different biomes: the same ground in two of them is two
+    // different pictures, and a biome that changes nothing is a name and not a
+    // biome.
+    LandformSettings desert = settings;
+    desert.biome = LandformBiome::Desert;
+    Landform grassland;
+    grassland.build(settings);
+    Landform dry;
+    dry.build(desert);
+    const std::vector<float> green = colorsOf(grassland);
+    const std::vector<float> sand = colorsOf(dry);
+    check(!green.empty() && !sand.empty(), "the ground is coloured");
+    float difference = 0.0f;
+    for (size_t i = 0; i < green.size() && i < sand.size(); ++i)
+        difference += std::fabs(green[i] - sand[i]);
+    check(difference > 0.5f, "two biomes are two different grounds");
+
+    // The little bumps are on the ground. A ground without them is a shape, and
+    // a ground with them is ground.
+    LandformSettings smooth = settings;
+    smooth.detail = 0.0f;
+    Landform plain;
+    plain.build(smooth);
+    Landform bumpy;
+    bumpy.build(settings);
+    float roughness = 0.0f;
+    for (int row = 1; row < plain.settings().cells; ++row)
+        for (int col = 1; col < plain.settings().cells; ++col)
+            roughness += std::fabs(bumpy.heightAt((float)col, (float)row) -
+                                   bumpy.heightAt((float)col + 1.0f, (float)row)) -
+                          std::fabs(plain.heightAt((float)col, (float)row) -
+                                    plain.heightAt((float)col + 1.0f, (float)row));
+    check(roughness > 0.0f, "the ground has little bumps on it");
+
+    // The valleys are darker than the ridges. The ground is coloured by the
+    // shape of the ground and not only by how high it is, and that is what
+    // makes a valley look like a valley.
+    LandformSettings lit = settings;
+    lit.shading = 0.0f;
+    Landform bright;
+    bright.build(lit);
+    Landform dark;
+    dark.build(settings);
+    const std::vector<float> litColors = colorsOf(bright);
+    const std::vector<float> darkColors = colorsOf(dark);
+    float darker = 0.0f;
+    for (size_t i = 0; i < litColors.size() && i < darkColors.size(); ++i)
+        if (darkColors[i] < litColors[i] - 0.001f) darker += 1.0f;
+    check(darker > 0.0f, "the valleys are darker than the ridges");
+}
+
+// THE CLOUD IS MADE OF NOISE AND IS WHAT IT SAYS IT IS
+
+// The settings a cloud is made with, and the two ways it can be made.
+CloudSettings cloudSettingsFor(CloudMode mode) {
+    CloudSettings settings;
+    settings.mode = mode;
+    settings.seed = 77;
+    settings.puffs = 24;
+    settings.puffSize = 3.0f;
+    settings.spread = 24.0f;
+    settings.height = 9.0f;
+    settings.coverage = 0.55f;
+    settings.softness = 0.5f;
+    settings.detail = 4;
+    settings.resolution = 8;
+    return settings;
+}
+
+void testCloud() {
+    heading("the cloud is made and it is what it says it is");
+
+    // The volume: a heap of puffs, and every puff is a ball of triangles.
+    CloudSettings settings = cloudSettingsFor(CloudMode::Puffy);
+    Cloud cloud;
+    cloud.build(settings);
+    check(cloud.ready(), "the cloud is made");
+    check(cloud.puffCount() > 0, "and it is made of puffs");
+
+    const MeshAsset mesh = cloud.toMesh();
+    check(mesh.parts.size() == 1, "the cloud is one part");
+    const MeshPart& part = mesh.parts[0];
+    check(!part.vertices.empty(), "it has vertices");
+    check(!part.indices.empty(), "and triangles");
+    check(part.colors.size() == part.vertices.size() / kMeshVertexFloats * 3,
+          "and a colour for every vertex");
+
+    // Every index points at a vertex that is there. A cloud of a hundred
+    // puffs is a mesh with thousands of vertices, and one index past the end
+    // of them is a crash in the middle of a frame.
+    bool inRange = true;
+    const unsigned int vertexCount = (unsigned int)(part.vertices.size() / kMeshVertexFloats);
+    for (unsigned int index : part.indices)
+        if (index >= vertexCount) inRange = false;
+    check(inRange, "every triangle of the cloud points at a vertex that is there");
+
+    // The same seed is the same cloud, and another seed is another cloud.
+    Cloud again;
+    again.build(settings);
+    Cloud other;
+    CloudSettings otherSettings = settings;
+    otherSettings.seed = 78;
+    other.build(otherSettings);
+    check(again.toMesh().parts[0].vertices == cloud.toMesh().parts[0].vertices,
+          "the same seed is the same cloud");
+    check(other.toMesh().parts[0].vertices != cloud.toMesh().parts[0].vertices,
+          "and another seed is another cloud");
+
+    // The threads do not change the cloud: the puffs are made in parallel and
+    // they come out in the same order whatever order they were made in.
+    Cloud threaded;
+    CloudSettings threadedSettings = settings;
+    threadedSettings.threads = 4;
+    threaded.build(threadedSettings);
+    check(threaded.toMesh().parts[0].vertices == cloud.toMesh().parts[0].vertices,
+          "the threads do not change the cloud");
+
+    // The cost of the cloud is the number of the puffs and how finely they are
+    // made. A cloud that is asked for less of both is a cheaper cloud.
+    CloudSettings cheap = settings;
+    cheap.puffs = 8;
+    cheap.resolution = 4;
+    Cloud small;
+    small.build(cheap);
+    const MeshAsset smallMesh = small.toMesh();
+    const MeshPart& smallPart = smallMesh.parts[0];
+    check(smallPart.indices.size() < part.indices.size(),
+          "fewer puffs and a coarser ball make a cheaper cloud");
+
+    // The flat cloud is a picture on a plane: every point of it is in the
+    // plane, and it is not a heap of puffs.
+    CloudSettings flat = cloudSettingsFor(CloudMode::Flat);
+    Cloud flatCloud;
+    flatCloud.build(flat);
+    const MeshAsset flatMesh = flatCloud.toMesh();
+    const MeshPart& flatPart = flatMesh.parts[0];
+    float depth = 0.0f;
+    for (size_t i = 0; i < flatPart.vertices.size(); i += kMeshVertexFloats)
+        depth = std::fmax(depth, std::fabs(flatPart.vertices[i + kMeshPositionOffset + 2]));
+    check(depth < 0.05f, "the flat cloud is a picture on a plane");
+
+    // The volume is not: it has a depth.
+    float volume = 0.0f;
+    for (size_t i = 0; i < part.vertices.size(); i += kMeshVertexFloats)
+        volume = std::fmax(volume, std::fabs(part.vertices[i + kMeshPositionOffset + 2]));
+    check(volume > 0.5f, "and the cloud of puffs is not");
+
+    // The top of the cloud is brighter than the bottom of it: the sun reaches
+    // the top of a cloud and hardly reaches the bottom of it.
+    float lowest = 1e9f, highest = -1e9f;
+    for (size_t i = 0; i < part.vertices.size(); i += kMeshVertexFloats) {
+        const float y = part.vertices[i + kMeshPositionOffset + 1];
+        lowest = std::fmin(lowest, y);
+        highest = std::fmax(highest, y);
+    }
+    // The averages and not the brightest of each half: a puff that is buried
+    // in the middle of the cloud is dark wherever it is, and the brightest
+    // vertex of the bottom of the cloud says nothing about the bottom of it.
+    float top = 0.0f, bottom = 0.0f;
+    int topCount = 0, bottomCount = 0;
+    for (size_t i = 0; i < part.vertices.size(); i += kMeshVertexFloats) {
+        const float y = part.vertices[i + kMeshPositionOffset + 1];
+        const float light = part.colors[i / kMeshVertexFloats * 3];
+        if (y > highest - (highest - lowest) * 0.2f) {
+            top += light;
+            ++topCount;
+        }
+        if (y < lowest + (highest - lowest) * 0.2f) {
+            bottom += light;
+            ++bottomCount;
+        }
+    }
+    top = topCount ? top / (float)topCount : 0.0f;
+    bottom = bottomCount ? bottom / (float)bottomCount : 0.0f;
+    check(top > bottom + 0.05f, "the top of the cloud is brighter than the bottom of it");
+
+    // The cloud is as tall as it was asked to be: a cloud that is nine metres
+    // high is nine metres high.
+    check(highest - lowest <= settings.height + settings.puffSize + 0.5f,
+          "the cloud is as tall as it was asked to be");
+
+    // And it is as wide as it was asked to be.
+    float wide = 0.0f;
+    for (size_t i = 0; i < part.vertices.size(); i += kMeshVertexFloats)
+        wide = std::fmax(wide, std::fabs(part.vertices[i + kMeshPositionOffset + 0]));
+    check(wide <= settings.spread * 0.5f + settings.puffSize + 0.5f,
+          "and as wide as it was asked to be");
+}
+
+// A CLOUD THAT IS SAVED COMES BACK A CLOUD
+
+void testCloudScene() {
+    heading("a cloud that is saved comes back a cloud");
+
+    CloudSettings settings = cloudSettingsFor(CloudMode::Puffy);
+    settings.seed = 4242;
+
+    Cloud cloud;
+    cloud.build(settings);
+    MeshAsset asset = cloud.toMesh();
+    asset.name = "cloud " + std::to_string(settings.seed);
+    asset.cloud = cloud.settings();
+
+    MeshRegistry meshes;
+    const int mesh = meshes.importMesh(std::move(asset));
+    check(mesh >= 0, "the cloud is in the registry");
+
+    PhysicsWorld world;
+    RigidBody body;
+    body.shape = Shape::Mesh;
+    body.mesh = mesh;
+    const MeshAsset* made = meshes.at(mesh);
+    body.halfExtents = made ? made->half : Vec3{1.0f, 1.0f, 1.0f};
+    body.position = made ? made->center : Vec3{};
+    body.material.isStatic = true;
+    body.configure(body.mass);
+    body.syncPrevTransform();
+    world.bodies.push_back(body);
+
+    const std::string path = str::join(fs::executableDir(), "cloud-scene-test.json");
+    gui::Canvas canvas;
+    check(scenes::save(world, meshes, canvas, path), "the scene with the cloud is written");
+
+    std::string text;
+    fs::readFile(path, text);
+    check(text.find("\"cloud\"") != std::string::npos, "the file says how the cloud was made");
+
+    PhysicsWorld opened;
+    MeshRegistry openedMeshes;
+    gui::Canvas openedCanvas;
+    check(scenes::load(opened, openedMeshes, openedCanvas, path), "the scene is read back");
+    check(opened.bodies.size() == 1, "the cloud is in the scene that came back");
+
+    if (opened.bodies.size() == 1) {
+        const RigidBody& back = opened.bodies[0];
+        check(back.hasMesh(), "the cloud has its mesh and not a box in its place");
+        check(back.shape == Shape::Mesh, "and it is a mesh body");
+
+        const MeshAsset* again = openedMeshes.at(back.mesh);
+        check(again != nullptr, "the mesh of the cloud is there");
+        if (again && made) {
+            check(again->parts.size() == made->parts.size() &&
+                      again->parts[0].vertices.size() == made->parts[0].vertices.size(),
+                  "the cloud that came back is the cloud that was saved");
+            check(again->cloud.has_value(), "and it still says how it was made");
+            if (again->cloud) {
+                check(again->cloud->seed == settings.seed, "the seed is the same one");
+                check(again->cloud->mode == CloudMode::Puffy, "and the way it is drawn is the same");
+            }
+        }
+    }
+
+    fs::removeTree(path);
+}
+
 // THE CHARACTERS A FIELD CAN HOLD ARE THE CHARACTERS THE ENGINE CAN DRAW
+
+void testParticlesScene() {
+    heading("the effects of a scene come back with the scene");
+
+    // An emitter is scene data: a place, a direction and a recipe. The scene
+    // file carries it, and a scene that is opened again has it.
+    ParticleSystem particles;
+
+    Emitter emitter;
+    emitter.position = Vec3{1.5f, 2.0f, -3.0f};
+    emitter.direction = Vec3{0.0f, 1.0f, 0.0f};
+    emitter.settings = particlePresetSettings(ParticlePreset::Smoke);
+    emitter.settings.count = 42;
+    emitter.continuous = true;
+    emitter.interval = 2.5f;
+    particles.addEmitter(emitter);
+
+    PhysicsWorld world;
+    MeshRegistry meshes;
+    gui::Canvas canvas;
+    const std::string path = str::join(fs::executableDir(), "particles-scene-test.json");
+    check(scenes::save(world, meshes, canvas, path, &particles),
+          "the scene with the emitter is written");
+
+    std::string text;
+    fs::readFile(path, text);
+    check(text.find("\"emitters\"") != std::string::npos,
+          "the file says where the particles come from");
+
+    // And it comes back.
+    ParticleSystem opened;
+    PhysicsWorld openedWorld;
+    MeshRegistry openedMeshes;
+    gui::Canvas openedCanvas;
+    check(scenes::load(openedWorld, openedMeshes, openedCanvas, path, 1, &opened),
+          "the scene with the emitter is read back");
+    check(opened.emitters().size() == 1, "the emitter is in the scene that came back");
+
+    if (opened.emitters().size() == 1) {
+        const Emitter& back = opened.emitters()[0];
+        check(back.position.x == 1.5f && back.position.y == 2.0f && back.position.z == -3.0f,
+              "the emitter is where it was");
+        check(back.settings.count == 42, "the recipe is the recipe that was saved");
+        check(back.continuous && back.interval == 2.5f, "and so is the way it repeats");
+        check(back.settings.blend == ParticleBlend::Alpha, "and the way it is drawn");
+    }
+}
 
 void testTextCodepoints() {
     heading("a field can hold what the engine can draw");
@@ -615,11 +1234,23 @@ void testWidgetIds() {
         {Editor::kLandformShape, Editor::kLandformShape + 5, "the landform's shapes"},
         {Editor::kLandformSeed, Editor::kLandformRandom, "the landform's fields"},
         {Editor::kLandformLevels, Editor::kLandformGround, "the landform's shape numbers"},
+        {Editor::kCloudMode, Editor::kCloudMode + 1, "the cloud's modes"},
+        {Editor::kCloudShape, Editor::kCloudShape + 3, "the cloud's shapes"},
+        {Editor::kCloudPuffs, Editor::kCloudGenerate, "the cloud's numbers"},
+        {Editor::kCloudPalette, Editor::kCloudPalette + 3, "the cloud's colours"},
+        {Editor::kLandformBiome, Editor::kLandformBiome + 7, "the landform's biomes"},
+        {Editor::kLandformDetail, Editor::kLandformPlaceZ, "the landform's new numbers"},
         {Editor::kInspectorDock, Editor::kInspectorDock, "the inspector"},
         {Editor::kInspectorProperty, Editor::kInspectorProperty + 39,
          "the inspector's numbers"},
+        {Editor::kWaterDepthColour, Editor::kWaterDarkening, "the water's numbers"},
         {Editor::kFilterField, Editor::kConsoleFilter, "the filters"},
         {Editor::kSceneHeader, Editor::kSceneHeader, "the scene header"},
+        {Editor::kParticlePreset, Editor::kParticlePreset + 4, "the particles' presets"},
+        {Editor::kParticleCount, Editor::kParticleBlend + 1, "the particles' numbers"},
+        {Editor::kParticleColour, Editor::kParticleColour + 5, "the particles' colours"},
+        {Editor::kParticleEmit, Editor::kParticleFollow, "the particles' buttons"},
+        {Editor::kParticleRow, Editor::kParticleRow + 99, "the particles' rows"},
     };
     const int count = (int)(sizeof(ranges) / sizeof(ranges[0]));
 
@@ -1029,9 +1660,17 @@ int main() {
     testResize();
     testGrips();
     testFloatingPanels();
+    testWindowDrag();
     testPictureAndPointer();
     testNoise();
     testLandform();
+    testLandformScene();
+    testLandformLooks();
+    testLandformBrush();
+    testWater();
+    testCloud();
+    testCloudScene();
+    testParticlesScene();
     testTextCodepoints();
     testWidgetIds();
     testShaders();

@@ -98,6 +98,72 @@ bool projectToViewport(const Vec3& worldPoint, const Vec3& cameraPos, const Vec3
     return true;
 }
 
+void viewProjection(const Camera& camera, float width, float height, ViewProjection& out) {
+    camera.basis(out.forward, out.right, out.up);
+    out.position = camera.position;
+    out.orthographic = camera.orthographic;
+
+    const float h = height > 1.0f ? height : 1.0f;
+    const float w = width > 1.0f ? width : 1.0f;
+    if (camera.orthographic) {
+        // The picture is a box: the same size of the world on every side, and
+        // the width follows from the aspect of the viewport.
+        out.halfHeight = camera.orthoSize > 0.0f ? camera.orthoSize : 1.0f;
+        out.halfWidth = out.halfHeight * (w / h);
+        out.tanX = 0.0f;
+        out.tanY = 0.0f;
+        return;
+    }
+    // The camera's field of view is over the viewport's height, and the
+    // horizontal one follows from the aspect. The renderer projects with the
+    // same two numbers, and they are here rather than in the editor so a test
+    // can compare the two.
+    const float tanHalf = std::tan(camera.fovDeg * kPi / 360.0f);
+    out.tanY = tanHalf;
+    out.tanX = tanHalf * (w / h);
+    out.halfWidth = 0.0f;
+    out.halfHeight = 0.0f;
+}
+
+bool projectToViewport(const Vec3& worldPoint, const ViewProjection& projection, float width,
+                       float height, float& outX, float& outY) {
+    const Vec3 relative = worldPoint - projection.position;
+    if (projection.orthographic) {
+        // No depth in the answer: the picture is the world measured, and a
+        // thing at the back is the same size as a thing at the front.
+        if (projection.halfWidth <= 0.0f || projection.halfHeight <= 0.0f) return false;
+        outX = (dot(relative, projection.right) / projection.halfWidth * 0.5f + 0.5f) * width;
+        outY = (0.5f - dot(relative, projection.up) / projection.halfHeight * 0.5f) * height;
+        return true;
+    }
+    const float depth = dot(relative, projection.forward);
+    if (depth <= 1e-4f) return false;
+    outX = ((dot(relative, projection.right) / (depth * projection.tanX)) * 0.5f + 0.5f) * width;
+    outY = (0.5f - (dot(relative, projection.up) / (depth * projection.tanY)) * 0.5f) * height;
+    return true;
+}
+
+Vec3 rayFromViewport(float pixelX, float pixelY, const Rect& viewport,
+                      const ViewProjection& projection) {
+    const float localX = pixelX - viewport.x;
+    const float localY = pixelY - viewport.y;
+    // The viewport's own space: the middle of it is the camera's forward, and
+    // the edges are the camera's field of view. The same two numbers the
+    // projection is built from, so the pointer and the picture agree about
+    // where a thing is.
+    const float ndcX = 2.0f * localX / viewport.width - 1.0f;
+    const float ndcY = 1.0f - 2.0f * localY / viewport.height;
+    if (projection.orthographic) {
+        // The rays of an orthographic camera are parallel: every one of them
+        // goes the same way, and where the pointer is only says how far along
+        // that way the world is.
+        return projection.forward;
+    }
+    return (projection.forward + projection.right * (ndcX * projection.tanX) +
+            projection.up * (ndcY * projection.tanY))
+        .normalized();
+}
+
 Vec3 rayFromViewport(float pixelX, float pixelY, const Rect& viewport, const Vec3& forward,
                      const Vec3& right, const Vec3& up, float tanX, float tanY) {
     const float localX = pixelX - viewport.x;

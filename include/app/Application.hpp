@@ -3,21 +3,11 @@
 #include <string>
 #include <vector>
 
-#include "assets/MeshRegistry.hpp"
-#include "assets/TextureRegistry.hpp"
-#include "audio/SoundDevice.hpp"
-#include "core/Project.hpp"
-#include "editor/Editor.hpp"
-#include "i18n/Localizer.hpp"
-#include "physics/PhysicsWorld.hpp"
-#include "platform/Window.hpp"
-#include "render/Camera.hpp"
-#include "render/SceneRenderer.hpp"
-#include "render/UiRenderer.hpp"
-#include "script/ScriptHost.hpp"
-#include "ui/UiContext.hpp"
-#include "app/FixedClock.hpp"
+#include "app/GameHost.hpp"
 #include "app/Launcher.hpp"
+#include "editor/Editor.hpp"
+#include "render/UiRenderer.hpp"
+#include "ui/UiContext.hpp"
 
 namespace s3d {
 
@@ -26,6 +16,11 @@ namespace s3d {
 //
 // The application is a two-state machine: the launcher owns the window until a
 // project is chosen, the editor owns it from then on.
+//
+// The game itself is a GameHost: the world, the picture of it, the sound and
+// the scripts. The editor plays the game through it, and the player program -
+// the program a build of a game is made of - is that and nothing else, so the
+// two cannot drift apart.
 class Application {
 public:
     Application();
@@ -41,48 +36,27 @@ public:
 private:
     void runLauncherFrame();
     void runEditorFrame(float dt);
+    // The picture of the editor: the world in the viewport between the docks,
+    // and the panels on top of it.
+    void renderEditorScene();
     void updateTitle();
-    // Seconds between rendered frames, or 0 when uncapped.
-    double frameInterval() const;
     // True while the editor's physics is stepping: the one case where the picture
     // changes without anyone touching anything.
-    bool isSimulating() const { return inEditor_ && editor_ && editor_->simulating(); }
+    //
+    // And while there are particles in the air, which is the other case: a fire
+    // that nobody touches still burns, and a picture that changes on its own
+    // needs frames - the window would draw one a second and the fire would
+    // crawl.
+    bool isSimulating() const {
+        return (inEditor_ && editor_ && editor_->simulating()) ||
+               game_.particles().hasLiveParticles();
+    }
 
     // Hands the window over to the editor for `project`.
     void openProject(const ProjectInfo& project);
     void closeProject();
-    // The world a project opens with, without an editor in it: what a built
-    // game starts.
-    void loadProjectWorld(const ProjectInfo& project);
 
-
-
-    void updateCameraInput(Window& window, float dt, bool allowMove = true);
-    void updateSimulation(float dt, bool stepping);
-    void renderScene();
     void reportStartupInfo();
-    // The sky the world is seen against: the engine's own, the project's, or
-    // none at all.
-    void loadSky();
-    void loadSkyFrom(const std::string& directory);
-    // The sky of the project, from its own `assets/sky`.
-    void loadProjectSky(const std::string& projectAssets);
-
-    // --- sound ---------------------------------------------------------------
-    // Starts the device and loads the sounds that ship with the engine. A
-    // machine with no sound card is a machine where everything else still has
-    // to work, so a failure here is a line in the log and not a stop.
-    void startAudio();
-    // The sounds the project brings: loaded when the project is opened, after
-    // the engine's, and they replace the ones of the same name.
-    void loadProjectSounds();
-    // The sounds the bodies make when they hit something, and the sounds the
-    // scene's own bodies carry.
-    void playImpactSounds();
-
-    // Runs every .as file in the project's scripts folder. Called when play mode
-    // starts so scripts see a live world.
-    void runProjectScripts();
 
     // --- what File > Build does ---------------------------------------------
     // The editor decides where the build goes; copying the program, its runtime
@@ -93,74 +67,16 @@ private:
     int stageModels(const std::string& assets, const std::string& target,
                     const ProjectInfo& project);
 
-    Window window_;
-    PhysicsWorld world_;
-    MeshRegistry meshes_;
-    // Owned here rather than by the renderer: a texture outlives any one frame
-    // and is shared by every body that uses the same image, so it belongs next to
-    // the model registry and not inside the thing that draws.
-    TextureRegistry textures_;
-    // The sound of the world. Owned here, like the textures: a sound outlives
-    // any one frame and is shared by every body that makes the same one.
-    SoundDevice sound_;
-    i18n::Localizer localizer_;
-    Camera camera_;
-    // The body index of the camera the viewport is looking through, or -1 when
-    // the free camera is in charge. The body itself is not drawn while it is
-    // the eye: its icon would be a hand's width from the near plane and would
-    // fill the screen.
-    int sceneCamera_ = -1;
-    SceneRenderer sceneRenderer_;
-    // The shadows, as they are set right now. The editor changes them where
-    // the shadows can be seen, and they are the project's - so they go into
-    // the manifest with the rest of it.
-    ShadowSettings shadowSettings_;
-    UiRenderer uiRenderer_;
+    // The game: the world, the picture of it, the sound and the scripts.
+    GameHost game_;
+    // The launcher, and the interface it draws itself with.
     Launcher launcher_;
     UiContext launcherUi_;
-    script::Host scripts_;
+    // The editor's own interface: the panels, the gizmos, the console.
+    UiRenderer uiRenderer_;
     std::unique_ptr<Editor> editor_;
 
-    ProjectInfo project_;
     bool inEditor_ = false;
-
-
-
-    // 60 Hz simulation, at most TWO steps per rendered frame.
-    //
-    // Two is FixedClock's own documented number, and it is not an arbitrary
-    // safety limit: it is what keeps frame time proportional to the cost of a
-    // step. `dt` is clamped to kMaxFrameTime, so a fully clamped frame can fund
-    // six steps, and paying for six is what pins the frame rate to a plateau a
-    // slower step cannot leave - because clearing the accumulator throws the debt
-    // away instead of paying it down. See FixedClock.hpp.
-    //
-    // This used to say 10, which never bound: six is all a clamped frame can ask
-    // for, so the value was a second number that had to agree with kMaxFrameTime
-    // without agreeing with it.
-    FixedClock clock_{60.0, 2};
-    // How far the physics accumulator is into its next step, read by renderScene
-    // so bodies are drawn interpolated between fixed steps rather than at them.
-    // 1 until the first step says otherwise, because 1 is "draw the transform the
-    // world actually has" and that is the right answer whenever nothing has moved.
-    float clockAlpha_ = 1.0f;
-    // True on the frame the user asked for a picture of the screen. The picture
-    // is taken at the end of that frame, before the buffer is swapped.
-    bool screenshotRequested_ = false;
-    // The cap above, named because Application.cpp quotes it in a comment and a
-    // hook budget is the thing that has to be reasoned about.
-    static constexpr int kMaxStepsPerRenderedFrame = 2;
-    // The impulse each body took in the last step, one entry per body. Kept
-    // here so that a step does not allocate: the list is as long as the world
-    // and the world does not change size every frame.
-    std::vector<float> impactImpulses_;
-    double simulationTime_ = 0.0;
-    // Start of the current one-second window, on the window clock.
-    double lastTickTime_ = 0.0;
-    double previousTime_ = 0.0;
-// When the next capped frame is due, on the window clock. Absolute, so the
-    // period does not drift with the render time.
-    double nextFrameTime_ = 0.0;
 };
 
 } // namespace s3d

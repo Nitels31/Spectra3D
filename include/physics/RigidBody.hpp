@@ -4,6 +4,7 @@
 
 #include "core/Math.hpp"
 #include "physics/Material.hpp"
+#include "physics/WaterSettings.hpp"
 
 namespace s3d {
 
@@ -23,6 +24,15 @@ enum class Shape {
     // a new shape has to be appended or every scene written before it changes
     // what it means.
     Camera,
+    // A flat square in the XY plane: the 2D workhorse. It is a box that is
+    // very thin, and it is collided as one - a sprite in a flat world is a
+    // rectangle.
+    Quad,
+    // Water: a surface, not a thing. It is a level of water over the ground,
+    // and it is looked at and not collided with - a body that fell into it
+    // falls through it, which is what a body does when there is no water in
+    // the game yet.
+    Water,
 };
 
 // Collision primitive of a rigid body plus everything the simulation needs to
@@ -67,6 +77,19 @@ struct RigidBody {
     // measure the engine's own view camera uses, so the two mean the same
     // thing and a camera entity needs no conversion to be looked through.
     float cameraFov = 70.0f;
+
+    // The water of a body that is water: how much of what is under it can be
+    // seen through it. One is clear water and zero is a wall of it.
+    //
+    // The colour of the water is the colour of the body, like every other
+    // body's colour, and the level it stands at is where the body stands.
+    float waterAlpha = 0.65f;
+
+    // Everything else about the water: the waves, the colours, the foam and
+    // the light. It is here and not in the renderer because the water is a
+    // property of the body that is water - two sheets of water in one scene
+    // can look nothing alike.
+    WaterSettings water;
 
     // `mesh` indexes MeshRegistry, which lives one layer up in `assets`. The
     // physics layer therefore only carries the opaque handle, never the type.
@@ -148,6 +171,9 @@ struct RigidBody {
 
     bool hasMesh() const { return mesh >= 0; }
     bool isCamera() const { return shape == Shape::Camera; }
+    // Water is looked at and not collided with, like a camera is looked
+    // through and not collided with.
+    bool isWater() const { return shape == Shape::Water; }
 };
 
 const char* shapeName(Shape s);

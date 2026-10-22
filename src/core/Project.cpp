@@ -515,6 +515,16 @@ bool ProjectLibrary::readManifest(const std::string& projectPath, ProjectInfo& o
             if (parseFloat(value, number)) info.shadowNormalOffset = clampf(number, 0.0f, 8.0f);
         } else if (key == "shadowRadius") {
             if (parseFloat(value, number)) info.shadowRadius = clampf(number, 0.5f, 32.0f);
+        } else if (key == "fogDensity") {
+            if (parseFloat(value, number)) info.fogDensity = clampf(number, 0.0f, 0.05f);
+        } else if (key == "fogFalloff") {
+            if (parseFloat(value, number)) info.fogFalloff = clampf(number, 0.0f, 0.2f);
+        } else if (key == "fogHeight") {
+            if (parseFloat(value, number)) info.fogHeight = clampf(number, -50.0f, 200.0f);
+        } else if (key == "fogScatter") {
+            if (parseFloat(value, number)) info.fogScatter = clampf(number, 0.0f, 2.0f);
+        } else if (key == "fogForward") {
+            if (parseFloat(value, number)) info.fogForward = clampf(number, 0.0f, 0.95f);
         } else if (key == "scene") {
             // The scene file inside the project, as a path relative to the
             // project folder. A project that keeps its scene in JSON says so
@@ -585,6 +595,14 @@ text += "cameraFov=" + formatFloat(info.cameraFov) + "\n";
     text += "shadowBias=" + formatFloat(info.shadowBias) + "\n";
     text += "shadowNormalOffset=" + formatFloat(info.shadowNormalOffset) + "\n";
     text += "shadowRadius=" + formatFloat(info.shadowRadius) + "\n";
+    // The fog: the air between the eye and the thing. It is written with the
+    // shadows because it is the same kind of thing: the weather of a scene,
+    // and the scene's own.
+    text += "fogDensity=" + formatFloat(info.fogDensity) + "\n";
+    text += "fogFalloff=" + formatFloat(info.fogFalloff) + "\n";
+    text += "fogHeight=" + formatFloat(info.fogHeight) + "\n";
+    text += "fogScatter=" + formatFloat(info.fogScatter) + "\n";
+    text += "fogForward=" + formatFloat(info.fogForward) + "\n";
     // The scene file the project keeps its scene in, as a path relative to the
     // project folder. The resolved name, so a project that has not migrated yet
     // keeps saying what it is using.
@@ -829,6 +847,22 @@ std::string findEngineCore() {
     }
     for (const char* name : kEngineCoreNames) {
         const std::string path = str::join(str::join(exeDir, kProjectLibDir), name);
+        if (fileExists(path)) return path;
+    }
+    return {};
+}
+
+// The player: the program that plays a game.
+//
+// It is built next to the editor, and the editor is what copies it into a
+// build - under the name of the game. So it is looked for next to the running
+// program, which is where the build system puts it.
+std::string findPlayerProgram() {
+    const std::string& exeDir = fs::executableDir();
+    if (exeDir.empty()) return {};
+
+    for (const char* name : kPlayerProgramNames) {
+        const std::string path = str::join(exeDir, name);
         if (fileExists(path)) return path;
     }
     return {};

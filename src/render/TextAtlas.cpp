@@ -3,6 +3,7 @@
 #include "core/Log.hpp"
 #include "core/Str.hpp"
 #include "platform/Filesystem.hpp"
+#include "render/FontFile.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -20,46 +21,6 @@ namespace {
 #endif
 
 constexpr int kAtlasSize = 1024;
-
-// The font the engine ships with, in the assets next to the program. It is
-// looked for first and it is the reason the editor looks the same on every
-// machine: a system font is a different font on every system, and on a machine
-// with none of them the editor has no letters at all.
-//
-// The name is the one the file has in the assets; the second is what a build
-// with an older assets folder may have.
-const char* const kBundledFonts[] = {
-    "fonts/JetBrainsMono-Regular.ttf",
-    "fonts/JetBrainsMono.ttf",
-};
-
-// System fonts tried after the bundled one, which is the fallback for a build
-// whose assets folder was not copied along. Windows first, then Linux, then
-// macOS - the same order on every platform, so a machine with more than one of
-// them still ends up with the same letters.
-const char* const kSystemFontPaths[] = {
-    "C:\\Windows\\Fonts\\consola.ttf",
-    "C:\\Windows\\Fonts\\CascadiaMono.ttf",
-    "C:\\Windows\\Fonts\\CascadiaCode.ttf",
-    "C:\\Windows\\Fonts\\segoeui.ttf",
-    "C:\\Windows\\Fonts\\tahoma.ttf",
-    "C:\\Windows\\Fonts\\arial.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans.ttf",
-    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
-    "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-    "/usr/share/fonts/TTF/NotoSansMono-Regular.ttf",
-    "/Library/Fonts/Arial.ttf",
-    "/System/Library/Fonts/Menlo.ttc",
-    "/System/Library/Fonts/SFNSMono.ttf",
-    "/System/Library/Fonts/Supplemental/Arial.ttf",
-    "/System/Library/Fonts/Supplemental/Courier New.ttf",
-};
 
 // The printable ASCII is 95 characters, U+0020..U+007E, and the slot table
 // counted 96 of them: the last slot was U+007F, which no font draws and
@@ -149,35 +110,19 @@ bool TextAtlas::build() {
 
     // The bundled font first, then the system ones. Every candidate is tried
     // before the next one is: a font that cannot be read is not a font.
-    //
-    // The project's own fonts come before the engine's: a project that brings
-    // a font of its own has it baked into the atlas.
-    for (const std::string& root : fs::assetRoots()) {
-        for (const char* name : kBundledFonts) {
-            const std::string path = str::join(root, name);
-            // The font library can only be given a narrow path, so the path is
-            // handed over in the machine's own code page.
-            if (FT_New_Face(library, fs::systemPath(path).c_str(), 0, &face) == 0) {
-                used = path;
-                break;
-            }
-        }
-        if (face) break;
-    }
-    const std::string& assets = fs::assetRoot();
-    if (!face) {
-        for (const char* path : kSystemFontPaths) {
-            if (FT_New_Face(library, path, 0, &face) == 0) {
-                used = path;
-                break;
-            }
+    for (const std::string& path : fontFileCandidates()) {
+        // The font library can only be given a narrow path, so the path is
+        // handed over in the machine's own code page.
+        if (FT_New_Face(library, fs::systemPath(path).c_str(), 0, &face) == 0) {
+            used = path;
+            break;
         }
     }
     if (!face) {
         FT_Done_FreeType(library);
         Log::warn("Text: no usable font (none in '%s/fonts' and none on this system), "
                   "falling back to metrics estimate",
-                  assets.c_str());
+                  fs::assetRoot().c_str());
         return false;
     }
     FT_Set_Pixel_Sizes(face, 0, kPixelSize);

@@ -132,6 +132,15 @@ void SceneRenderer::initialize() {
                              shaderPath("shadows/shadow_debug.frag"));
     shadowMap_.initialize(shadowMap_.settings());
 
+    // The particles: their program and their buffers. A program that does not
+    // load is not a reason to stop - the engine draws the scene with what it
+    // has, and the log says what is missing.
+    particles_.initialize();
+
+    // The water: its program and its grid. The same: a program that does not
+    // load is not a reason to draw no water.
+    water_.initialize();
+
     primitives_.build();
     buildArenaGrid();
 }
@@ -150,38 +159,59 @@ void cameraFrustum(const Camera& camera, int width, int height, double& halfWidt
     // numbers: a frustum that is wider than the camera's own would make the
     // pointer and the picture disagree about where a thing is, and the horizon
     // would sit at the wrong height.
-    const double tanHalf = std::tan(camera.fovDeg * kPi / 360.0);
     const double h = (double)std::max(1, height);
     const double w = (double)std::max(1, width);
+    if (camera.orthographic) {
+        // An orthographic camera has no vanishing point: the picture is a box
+        // of the world, and the half-extents of that box are the zoom and the
+        // aspect.
+        halfHeight = camera.orthoSize > 0.0 ? (double)camera.orthoSize : 1.0;
+        halfWidth = halfHeight * (w / h);
+        return;
+    }
+    const double tanHalf = std::tan(camera.fovDeg * kPi / 360.0);
     halfHeight = tanHalf * kNearPlane;
     halfWidth = tanHalf * kNearPlane * (w / h);
+}
+
+// The world in 2D: the grid is in the XY plane and the sun casts no shadow.
+//
+// The grid is made again rather than drawn in two ways: the plane it is in is
+// decided when it is built, and a grid that is built for one plane and drawn
+// in another is a grid that lies about where the world is.
+void SceneRenderer::setMode2D(bool flat) {
+    if (mode2D_ == flat) return;
+    mode2D_ = flat;
+    arenaGridReady_ = false;
+    buildArenaGrid();
+    shadowCatcherReady_ = false;
 }
 
 void SceneRenderer::setProjection(const Camera& camera, const Viewport& viewport) {
     double halfWidth = 0.0, halfHeight = 0.0;
     cameraFrustum(camera, viewport.width, viewport.height, halfWidth, halfHeight);
 
-    projection_[0] = (float)(2.0 * kNearPlane / (2.0 * halfWidth));
-    projection_[5] = (float)(2.0 * kNearPlane / (2.0 * halfHeight));
-    projection_[8] = 0.0f;
-    projection_[9] = 0.0f;
-    projection_[10] = (float)(-(kFarPlane + kNearPlane) / (kFarPlane - kNearPlane));
-    projection_[11] = -1.0f;
-    projection_[14] = (float)(-2.0 * kFarPlane * kNearPlane / (kFarPlane - kNearPlane));
-    projection_[1] = projection_[2] = projection_[3] = projection_[4] = 0.0f;
-    projection_[6] = projection_[7] = projection_[12] = projection_[13] = projection_[15] = 0.0f;
-
     // The same numbers as a matrix, for the shaders. The two have to be the
     // same numbers: the fixed pipeline draws the grid and the gizmo, and the
     // shader draws the bodies, and they are all in the same picture.
-    projectionMatrix_ = frustum((float)-halfWidth, (float)halfWidth, (float)-halfHeight,
-                                 (float)halfHeight, (float)kNearPlane, (float)kFarPlane);
+    if (camera.orthographic) {
+        // The world measured and not seen: the depth is the same for every
+        // point of the picture, and the far plane is behind everything.
+        projectionMatrix_ = ortho((float)-halfWidth, (float)halfWidth, (float)-halfHeight,
+                                  (float)halfHeight, (float)-kFarPlane, (float)kFarPlane);
+    } else {
+        projectionMatrix_ = frustum((float)-halfWidth, (float)halfWidth, (float)-halfHeight,
+                                     (float)halfHeight, (float)kNearPlane, (float)kFarPlane);
+    }
     std::copy(projectionMatrix_.m, projectionMatrix_.m + 16, projection_);
 
     glViewport(viewport.glX, viewport.glY, viewport.width, viewport.height);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    glFrustum(-halfWidth, halfWidth, -halfHeight, halfHeight, kNearPlane, kFarPlane);
+    if (camera.orthographic)
+        glOrtho(-halfWidth, halfWidth, -halfHeight, halfHeight, -kFarPlane, kFarPlane);
+    else
+        glFrustum(-halfWidth, halfWidth, -halfHeight, halfHeight, kNearPlane, kFarPlane);
 
     // The viewport of the scene, kept for the shadow pass: the map is a
     // picture of its own and the scene's viewport would cut it to a corner of
@@ -228,8 +258,13 @@ void SceneRenderer::beginFrame(int framebufferWidth, int framebufferHeight) {
 void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& meshes,
                                  const TextureRegistry& textures, const Camera& camera,
                                  const Viewport& viewport, bool showGrid, bool showVectors,
-                                 float alpha, int hiddenBody) {
+                                 float alpha, float time, int hiddenBody) {
     if (viewport.width < 1 || viewport.height < 1) return;
+
+    // The world in 2D is the orthographic picture: the grid is in the XY
+    // plane and the sun casts no shadow. The camera says which of the two
+    // this is, so the grid and the picture cannot disagree about it.
+    setMode2D(camera.orthographic);
 
     glEnable(GL_SCISSOR_TEST);
     glScissor(viewport.glX, viewport.glY, viewport.width, viewport.height);
@@ -246,27 +281,63 @@ void SceneRenderer::renderWorld(const PhysicsWorld& world, const MeshRegistry& m
     // And only when the map has gone stale: while the editor sits still, the
     // world and the sun are the same, and the map would be the same picture
     // again and again.
-    if (shadowsEnabled() && shadowProgram_.ready() && shadowMap_.ready()) {
+    //
+    // A flat world has no sun in it: the 2D view is the world measured and
+    // not seen, and there is nothing in it for a shadow to fall on.
+    if (!mode2D_ && shadowsEnabled() && shadowProgram_.ready() && shadowMap_.ready()) {
         if (shadowMapIsStale(world)) {
             renderShadowMap(world, meshes, alpha, hiddenBody);
             rememberShadowState(world);
         }
     }
 
+    // The uniforms of the scene pass, before anything is drawn with them: the
+    // sky is drawn with the same program as the bodies, the sheet the shadow
+    // falls on is drawn with it too, and the fog they all share is set here.
+    beginScenePass(camera);
+
     // The sky first, with the depth test off: it is behind everything, and
     // everything else is drawn over it.
-    sky_.draw(camera);
+    //
+    // It is drawn with the scene's program and not with the fixed pipeline, so
+    // that the fog reaches it: the sky is the far distance, and the air
+    // between the eye and the sky is the same air as the air between the eye
+    // and everything else. A sky drawn without it stands in front of the fog
+    // like a wall, and the horizon is a line.
+    sky_.draw(camera, sceneProgram_);
 
-    // The uniforms of the scene pass, before anything is drawn with them: the
-    // sheet the shadow falls on is drawn with the same program as the bodies.
-    beginScenePass(camera);
+    // The sky had the last word on the first texture unit, and the first
+    // texture unit is the white texel for everything that has no picture of
+    // its own: the primitives and the grid. Without this they would be drawn
+    // with a face of the sky.
+    gl::ActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, whiteTexture_);
 
     // The sheet the shadow falls on, and then the grid over it: the grid is
     // the ground the eye reads, and the sheet is what the shadow is drawn on.
-    if (shadowsEnabled() && shadowProgram_.ready() && shadowMap_.ready())
+    // A flat world has no shadow and no sheet.
+    if (!mode2D_ && shadowsEnabled() && shadowProgram_.ready() && shadowMap_.ready())
         drawShadowCatcher();
     if (showGrid) drawArena(camera);
     drawBodies(world, meshes, textures, camera, alpha, hiddenBody);
+
+    // The water, over the picture of the world: it is the one thing in the
+    // scene that you can see through, and something you can see through has
+    // to be drawn over the things behind it.
+    drawWater(world, camera, time, hiddenBody);
+
+    // The particles, after the bodies and before the marks of the editor:
+    // a particle is behind a box when it is behind the box, and a particle
+    // in front of a box is in front of it. They are drawn with the depth
+    // test on and the depth write off - a puff of smoke that hides the puff
+    // of smoke behind it is a puff of smoke in front of it.
+    //
+    // The sun goes with them: the fog in front of a particle is lit by the
+    // sun, and the air in front of a puff of smoke is brighter where the sun
+    // is behind it.
+    const ShadowSettings& sunSettings = shadowMap_.settings();
+    particles_.draw(camera, viewMatrix_, projectionMatrix_, &fog_, sunDirection(sunSettings),
+                    sunSettings.sunColour);
 
     if (showVectors) drawDebugVectors(world);
     glEnable(GL_LIGHTING);
@@ -462,6 +533,9 @@ void SceneRenderer::renderShadowMap(const PhysicsWorld& world, const MeshRegistr
             const RigidBody& body = world.bodies[(size_t)index];
             if (!body.visible || index == hiddenBody) continue;
             if (!body.castsShadow) continue;
+            // The water is a surface and not a thing, and the shadow of a
+            // surface is the shadow of the ground under it.
+            if (body.isWater()) continue;
 
             // The thing is not in this stretch of the scene, so its shadow
             // cannot reach it.
@@ -487,10 +561,41 @@ void SceneRenderer::renderShadowMap(const PhysicsWorld& world, const MeshRegistr
                                            Vec3{scale, scale, scale}) *
                              Mat4::translation(-mesh->center);
                 shadowProgram_.setMat4("uModel", model.m);
-                for (const MeshPart& part : mesh->parts) {
+
+                // The same buffers the scene pass draws the mesh out of: the
+                // map of the shadows is a picture of the world as the sun
+                // sees it, and the world is the same geometry.
+                MeshBuffers* buffers = nullptr;
+                if (gl::GenBuffers && gl::BindBuffer && gl::BufferData &&
+                    gl::VertexAttribPointer && gl::EnableVertexAttribArray &&
+                    gl::DisableVertexAttribArray)
+                    buffers = buffersFor(body.mesh, *mesh);
+
+                const size_t stride = sizeof(float) * kMeshVertexFloats;
+                for (size_t partIndex = 0; partIndex < mesh->parts.size(); ++partIndex) {
+                    const MeshPart& part = mesh->parts[partIndex];
                     if (part.indices.empty()) continue;
+
+                    const bool onCard = buffers && !buffers->vertices.empty() &&
+                                        buffers->vertices[partIndex] != 0 &&
+                                        buffers->indices[partIndex] != 0;
+                    if (onCard) {
+                        // The position is all the map needs.
+                        gl::BindBuffer(GL_ARRAY_BUFFER, buffers->vertices[partIndex]);
+                        gl::VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, (GLsizei)stride,
+                                                (const void*)(kMeshPositionOffset * sizeof(float)));
+                        gl::EnableVertexAttribArray(0);
+                        gl::BindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffers->indices[partIndex]);
+                        glDrawElements(GL_TRIANGLES, (GLsizei)part.indices.size(), GL_UNSIGNED_INT,
+                                       (const void*)0);
+                        gl::BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+                        gl::DisableVertexAttribArray(0);
+                        gl::BindBuffer(GL_ARRAY_BUFFER, 0);
+                        continue;
+                    }
+
                     glEnableClientState(GL_VERTEX_ARRAY);
-                    glVertexPointer(3, GL_FLOAT, (GLsizei)(sizeof(float) * kMeshVertexFloats),
+                    glVertexPointer(3, GL_FLOAT, (GLsizei)stride,
                                     part.vertices.data() + kMeshPositionOffset);
                     glDrawElements(GL_TRIANGLES, (GLsizei)part.indices.size(), GL_UNSIGNED_INT,
                                    part.indices.data());
@@ -623,10 +728,19 @@ void SceneRenderer::buildArenaGrid() {
 
     // One vertex: the position in the patch's own frame, the colour, and how
     // transparent the vertex is before the distance fade is applied.
-    auto emit = [&](float x, float z, float r, float g, float b, float alpha) {
-        arenaPositions_.push_back(x);
-        arenaPositions_.push_back(0.0f);
-        arenaPositions_.push_back(z);
+    //
+    // The two coordinates are the ones of the plane the world is laid out in:
+    // X and Z in the 3D view, X and Y in the 2D one. The plane is the same for
+    // the whole grid, so it is decided once and not per vertex.
+    auto emit = [&](float u, float v, float r, float g, float b, float alpha) {
+        arenaPositions_.push_back(u);
+        if (mode2D_) {
+            arenaPositions_.push_back(v);
+            arenaPositions_.push_back(0.0f);
+        } else {
+            arenaPositions_.push_back(0.0f);
+            arenaPositions_.push_back(v);
+        }
         arenaVertexColors_.push_back(r);
         arenaVertexColors_.push_back(g);
         arenaVertexColors_.push_back(b);
@@ -671,12 +785,24 @@ void SceneRenderer::buildArenaGrid() {
 
     // World axes: X red, Y green, Z blue. They are at the world origin and they
     // stay there - the grid follows the camera, the axes do not.
-    emit(-kAxisExtent, 0.0f, 0.75f, 0.25f, 0.20f, kAxisAlpha);
-    emit(kAxisExtent, 0.0f, 0.75f, 0.25f, 0.20f, kAxisAlpha);
-    emit(0.0f, -kAxisExtent, 0.20f, 0.45f, 0.75f, kAxisAlpha);
-    emit(0.0f, kAxisExtent, 0.20f, 0.45f, 0.75f, kAxisAlpha);
-    emit(0.0f, 0.0f, 0.35f, 0.85f, 0.40f, kAxisAlpha);
-    emit(0.0f, 0.0f, 0.35f, 0.85f, 0.40f, kAxisAlpha);
+    //
+    // The axis that points out of the plane of the grid is a point: it is the
+    // one that goes towards the eye, and in the 2D view it is the Z axis.
+    if (mode2D_) {
+        emit(-kAxisExtent, 0.0f, 0.75f, 0.25f, 0.20f, kAxisAlpha);
+        emit(kAxisExtent, 0.0f, 0.75f, 0.25f, 0.20f, kAxisAlpha);
+        emit(0.0f, -kAxisExtent, 0.35f, 0.85f, 0.40f, kAxisAlpha);
+        emit(0.0f, kAxisExtent, 0.35f, 0.85f, 0.40f, kAxisAlpha);
+        emit(0.0f, 0.0f, 0.20f, 0.45f, 0.75f, kAxisAlpha);
+        emit(0.0f, 0.0f, 0.20f, 0.45f, 0.75f, kAxisAlpha);
+    } else {
+        emit(-kAxisExtent, 0.0f, 0.75f, 0.25f, 0.20f, kAxisAlpha);
+        emit(kAxisExtent, 0.0f, 0.75f, 0.25f, 0.20f, kAxisAlpha);
+        emit(0.0f, -kAxisExtent, 0.20f, 0.45f, 0.75f, kAxisAlpha);
+        emit(0.0f, kAxisExtent, 0.20f, 0.45f, 0.75f, kAxisAlpha);
+        emit(0.0f, 0.0f, 0.35f, 0.85f, 0.40f, kAxisAlpha);
+        emit(0.0f, 0.0f, 0.35f, 0.85f, 0.40f, kAxisAlpha);
+    }
 
     arenaColors_.assign(arenaVertexColors_.size(), 0.0f);
 }
@@ -719,6 +845,7 @@ void SceneRenderer::drawShadowCatcher() {
     sceneProgram_.setFloat("uShadowStrength", 0.55f);
     sceneProgram_.setMat4("uModel", Mat4::identity().m);
     sceneProgram_.setInt("uUseVertexColour", 0);
+    sceneProgram_.setFloat("uAlpha", 1.0f);
 
     // The depth test is off and the depth is not written: the sheet is on the
     // ground, it is drawn before the bodies, and the bodies stand on it and
@@ -763,12 +890,47 @@ void SceneRenderer::drawArena(const Camera& camera) {
     glDisable(GL_DEPTH_TEST);
     glLineWidth(1.0f);
 
+    // The fog of the fixed pipeline, for the grid.
+    //
+    // The grid is drawn by the fixed pipeline, so the shader's fog does not
+    // reach it - and a grid that stays crisp in a foggy world is a grid that
+    // is not in the world. The fixed function fog is the only fog there is for
+    // the fixed pipeline, so the grid gets it.
+    //
+    // It is the exponential one and not the straight line, because that is the
+    // curve the shader's fog is: the light of a thing is eaten by the air on
+    // the way in e^(-k*d), and the straight line is not that.
+    //
+    // The density is the density of the air where the eye is: the grid is
+    // measured from the eye, and the shader's fog is measured from the eye
+    // too. What the fixed pipeline cannot do is the height of the fog - it
+    // has no way to say that the air is thinner higher up - and the grid is
+    // on the ground, where the air is thickest and where the two agree most.
+    const bool fogOn = fog_.density > 0.0f;
+    if (fogOn) {
+        const float atEye =
+            fog_.density *
+            std::exp(-fog_.falloff * std::max(camera.position.y - fog_.height, 0.0f));
+        const GLfloat fogColour[4] = {fog_.colour.x, fog_.colour.y, fog_.colour.z, 1.0f};
+        glEnable(GL_FOG);
+        glFogi(GL_FOG_MODE, GL_EXP);
+        glFogf(GL_FOG_DENSITY, atEye);
+        glFogfv(GL_FOG_COLOR, fogColour);
+    }
+
     // The grid is a window on the world grid that follows the camera: the
     // patch is snapped to the major step and moved with the camera, so every
     // line lands back on the world position it was on before and there is no
     // edge of the grid to walk to.
+    //
+    // The second axis of the patch is Z in the 3D view and Y in the 2D one -
+    // the plane the grid is in.
     const float offsetX = std::floor(camera.position.x / kMajorStep) * kMajorStep;
-    const float offsetZ = std::floor(camera.position.z / kMajorStep) * kMajorStep;
+    const float offsetV = mode2D_ ? std::floor(camera.position.y / kMajorStep) * kMajorStep
+                                  : std::floor(camera.position.z / kMajorStep) * kMajorStep;
+    // And the eye's own distance along that axis, which is what the fade is
+    // measured from.
+    const float eyeV = mode2D_ ? camera.position.y : camera.position.z;
 
     // The transparency of every vertex, from its distance to the camera. A
     // line that fades along its length is what makes the grid look endless:
@@ -786,11 +948,13 @@ void SceneRenderer::drawArena(const Camera& camera) {
         // The grid is in the patch's frame and is moved with the camera; the
         // axes are already in the world and stay where they are.
         const bool axis = i >= majorEnd;
-        const float wx = axis ? positions[0] : positions[0] + offsetX;
-        const float wz = axis ? positions[2] : positions[2] + offsetZ;
-        const float dx = wx - camera.position.x;
-        const float dz = wz - camera.position.z;
-        const float distance = std::sqrt(dx * dx + dz * dz);
+        const float u = positions[0];
+        const float v = mode2D_ ? positions[1] : positions[2];
+        const float wu = axis ? u : u + offsetX;
+        const float wv = axis ? v : v + offsetV;
+        const float du = wu - camera.position.x;
+        const float dv = wv - eyeV;
+        const float distance = std::sqrt(du * du + dv * dv);
 
         float fade;
         if (i < minorEnd) {
@@ -799,11 +963,11 @@ void SceneRenderer::drawArena(const Camera& camera) {
             fade = fadeOut(distance, kMajorFadeStart, kMajorFadeEnd);
         } else {
             // The axes stand at the world origin, so it is the origin's
-            // distance that counts for them - and the Y axis is vertical, so
-            // it is the origin itself.
-            const float adx = (i < majorEnd + 2) ? dx : (0.0f - camera.position.x);
-            const float adz = (i < majorEnd + 4) ? dz : (0.0f - camera.position.z);
-            fade = fadeOut(std::sqrt(adx * adx + adz * adz), kMajorFadeStart, kMajorFadeEnd);
+            // distance that counts for them - and the axis that points out of
+            // the plane is the origin itself.
+            const float adu = (i < majorEnd + 2) ? du : (0.0f - camera.position.x);
+            const float adv = (i < majorEnd + 4) ? dv : (0.0f - eyeV);
+            fade = fadeOut(std::sqrt(adu * adu + adv * adv), kMajorFadeStart, kMajorFadeEnd);
         }
 
         colors[0] = vertexColors[0];
@@ -822,9 +986,14 @@ void SceneRenderer::drawArena(const Camera& camera) {
     glVertexPointer(3, GL_FLOAT, 12, arenaPositions_.data());
     glColorPointer(4, GL_FLOAT, 16, arenaColors_.data());
 
-    // The grid, moved with the camera.
+    // The grid, moved with the camera. The second axis of the patch is Z in
+    // the 3D view and Y in the 2D one - the plane the grid is in - so the grid
+    // is moved along that axis and not along a third one that does not exist.
     glPushMatrix();
-    glTranslatef(offsetX, 0.0f, offsetZ);
+    if (mode2D_)
+        glTranslatef(offsetX, offsetV, 0.0f);
+    else
+        glTranslatef(offsetX, 0.0f, offsetV);
     glDrawArrays(GL_LINES, 0, (GLsizei)ArenaGrid::kGridVertices);
     glPopMatrix();
 
@@ -833,6 +1002,12 @@ void SceneRenderer::drawArena(const Camera& camera) {
 
     glDisableClientState(GL_COLOR_ARRAY);
     glDisableClientState(GL_VERTEX_ARRAY);
+
+    // The fog off again: it belongs to the grid and to nothing else. The gizmo
+    // and the outline of the selection are drawn by the fixed pipeline too, and
+    // they are the editor's marks on the world - a gizmo that fades into the
+    // mist is a gizmo nobody can grab.
+    if (fogOn) glDisable(GL_FOG);
 
     glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
@@ -864,6 +1039,10 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
         // an engine does not draw the camera it is rendering from.
         if (index == hiddenBody) continue;
         if (!sphereVisible(body.position, body.boundRadius)) continue;
+        // The water is drawn last of all, after everything else: it is the
+        // one thing in the scene that you can see through, and something you
+        // can see through has to be drawn over the things behind it.
+        if (body.isWater()) continue;
 
         // Interpolated between the state before the last physics step and the
         // state after it. This is the whole point of the fixed-step accumulator:
@@ -894,7 +1073,7 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
             const Mat4 model = Mat4::compose(drawPosition, drawOrientation,
                                               Vec3{scale, scale, scale}) *
                                Mat4::translation(-mesh->center);
-            drawMeshWithShader(*mesh, textures, model);
+            drawMeshWithShader(*mesh, textures, model, body.mesh);
             ++paletteIndex;
             continue;
         }
@@ -902,8 +1081,16 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
         // The primitives. The colour of the body is the colour of the thing:
         // the primitives have no colours of their own, and the tint is what
         // the editor picked.
+        //
+        // And the white texel on the first unit: a primitive has no picture
+        // of its own, and whatever was bound there before - the sky, most of
+        // the time - would be drawn over it.
+        gl::ActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, whiteTexture_);
+        sceneProgram_.setInt("uAlbedoMap", 0);
         sceneProgram_.setVec3("uTint", color.r, color.g, color.b);
         sceneProgram_.setInt("uUseVertexColour", 0);
+        sceneProgram_.setFloat("uAlpha", 1.0f);
 
         Mat4 model = Mat4::compose(drawPosition, drawOrientation, Vec3{1.0f, 1.0f, 1.0f});
         switch (body.shape) {
@@ -970,6 +1157,15 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
             drawCameraEntity(body, model);
             break;
         }
+        case Shape::Water: {
+            // The water is drawn after everything else - see the loop above.
+            // The shader of the water is the scene's own for now, and the
+            // water shader takes it over from here: the body carries
+            // everything a water shader needs - the level it stands at, how
+            // big it is, its colour and how much of what is under it shows
+            // through.
+            break;
+        }
         default: {
             model = Mat4::compose(drawPosition, drawOrientation, body.halfExtents);
             sceneProgram_.setMat4("uModel", model.m);
@@ -979,6 +1175,19 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
         }
         ++paletteIndex;
     }
+
+    // And the water, last of all: a flat sheet over the ground, and what is
+    // under it shows through it.
+    //
+    // The sheet is drawn with the scene's own shader, and the water shader
+    // takes it over from here: the body carries everything a water shader
+    // needs - the level it stands at, how big it is, its colour and how much
+    // of what is under it shows through.
+    //
+    // The depth is not written while the water is drawn: a surface that is
+    // see-through must not stop what is behind it from being drawn.
+    if (mode2D_) drawFlatWater(world, alpha, hiddenBody);
+
     gl::UseProgram(0);
 
     // The fixed pipeline's own matrix, back to the camera's: the lines and the
@@ -986,6 +1195,64 @@ void SceneRenderer::drawBodies(const PhysicsWorld& world, const MeshRegistry& me
     // of the last body is not the world.
     glMatrixMode(GL_MODELVIEW);
     glLoadMatrixf(view_);
+}
+
+// THE WATER
+//
+// The water has a program of its own, and the program has a grid of its own:
+// the waves are worked out per point, and a sheet with four corners has four
+// waves in it.
+//
+// The picture of the scene is copied before the water is drawn over it: the
+// water bends what is under it, and a thing that is bent has to be there to
+// be bent.
+void SceneRenderer::drawWater(const PhysicsWorld& world, const Camera& camera, float time,
+                               int hiddenBody) {
+    if (mode2D_) return;
+    if (!water_.wanted(world)) return;
+
+    // The copy of the picture of the scene, for the bend of the light. It is
+    // made only when something is going to read it.
+    if (water_.bendsLight(world))
+        water_.captureScene(viewportX_, viewportY_, viewportWidth_, viewportHeight_);
+
+    water_.draw(world, camera, viewMatrix_, projectionMatrix_, fog_, shadowMap_, viewportX_,
+                viewportY_, viewportWidth_, viewportHeight_, time, hiddenBody);
+}
+
+// The water in a flat world.
+//
+// A flat world is the world measured and not seen: the grid is in the XY
+// plane and there is no horizon to mirror. The water's own program is a
+// program of a world with a horizon in it, so the flat water is drawn with
+// the scene's own: a sheet of it, seen from above, with what is under it
+// showing through.
+void SceneRenderer::drawFlatWater(const PhysicsWorld& world, float alpha, int hiddenBody) {
+    sceneProgram_.use();
+    for (int index = 0; index < (int)world.bodies.size(); ++index) {
+        const RigidBody& body = world.bodies[(size_t)index];
+        if (!body.visible || !body.isWater()) continue;
+        if (index == hiddenBody) continue;
+
+        const Vec3 drawPosition{lerpf(body.prevPosition.x, body.position.x, alpha),
+                                lerpf(body.prevPosition.y, body.position.y, alpha),
+                                lerpf(body.prevPosition.z, body.position.z, alpha)};
+        const Quat drawOrientation = nlerp(body.prevOrientation, body.orientation, alpha);
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        sceneProgram_.setFloat("uAlpha", body.waterAlpha);
+        sceneProgram_.setVec3("uTint", body.material.color.x, body.material.color.y,
+                              body.material.color.z);
+        sceneProgram_.setInt("uUseVertexColour", 0);
+        const Mat4 model = Mat4::compose(drawPosition, drawOrientation, body.halfExtents);
+        sceneProgram_.setMat4("uModel", model.m);
+        glCallList(primitives_.cube());
+        glDepthMask(GL_TRUE);
+        sceneProgram_.setFloat("uAlpha", 1.0f);
+        glDisable(GL_BLEND);
+    }
 }
 
 // The uniforms the scene pass shares: the sun, the sky and the shadow map.
@@ -1005,9 +1272,6 @@ void SceneRenderer::beginScenePass(const Camera& camera) {
     sceneProgram_.setFloat("uAmbient", settings.ambient);
     sceneProgram_.setFloat("uSpecular", settings.specular);
     sceneProgram_.setFloat("uShininess", settings.shininess);
-    sceneProgram_.setVec3("uFogColour", settings.fogColour.x, settings.fogColour.y,
-                          settings.fogColour.z);
-    sceneProgram_.setFloat("uFogDensity", settings.fogDensity);
     // Where the eye is. The shine and the haze are both measured from it, and
     // a shader that is not told where the eye is measures both from the
     // middle of the world.
@@ -1015,6 +1279,17 @@ void SceneRenderer::beginScenePass(const Camera& camera) {
                           camera.position.z);
     sceneProgram_.setMat4("uView", viewMatrix_.m);
     sceneProgram_.setMat4("uProjection", projectionMatrix_.m);
+
+    // The fog: the air between the eye and the thing. Six numbers say what it
+    // is - how thick it is where it is thickest, how fast it thins as it
+    // goes up, the height at which it is thickest, the colour of the air, how
+    // much of the sun's light it carries and how forward it throws that light.
+    sceneProgram_.setVec3("uFogColour", fog_.colour.x, fog_.colour.y, fog_.colour.z);
+    sceneProgram_.setFloat("uFogDensity", fog_.density);
+    sceneProgram_.setFloat("uFogFalloff", fog_.falloff);
+    sceneProgram_.setFloat("uFogHeight", fog_.height);
+    sceneProgram_.setFloat("uFogScatter", fog_.scatter);
+    sceneProgram_.setFloat("uFogForward", fog_.forward);
 
     // The shadow map: the same picture read two ways. The filter belongs to
     // the sampler and not to the texture, so the two readings are two sampler
@@ -1084,15 +1359,38 @@ void SceneRenderer::beginScenePass(const Camera& camera) {
 }
 
 // One mesh, with the scene's program.
-
+//
+// THE MESH IS DRAWN OUT OF THE CARD WHEN THE CARD HAS IT.
+//
+// The old way was to give the driver a pointer into the memory of the
+// program, and the driver copied the vertices into the card again for every
+// frame of every body. A ground of nine thousand vertices is three hundred
+// kilobytes copied sixty times a second for a picture that did not change.
+//
+// The buffers are made once, when the mesh is drawn for the first time, and
+// the card keeps them: the mesh in the registry never changes under an index,
+// so the buffers belong to the index.
+//
+// And the state is left as it was found: the attributes are turned off and the
+// buffers are let go of, because the fixed pipeline draws the grid and the
+// gizmo out of the memory of the program, and a buffer that is still bound
+// makes the fixed pipeline's own pointers mean something else.
 bool SceneRenderer::drawMeshWithShader(const MeshAsset& mesh, const TextureRegistry& textures,
-                                       const Mat4& model) {
+                                       const Mat4& model, int meshIndex) {
     if (!sceneProgram_.ready()) return false;
 
     const size_t stride = sizeof(float) * kMeshVertexFloats;
     sceneProgram_.setMat4("uModel", model.m);
 
-    for (const MeshPart& part : mesh.parts) {
+    // The buffers of the mesh, made if they are not there yet. A driver
+    // without buffers is drawn the old way.
+    MeshBuffers* buffers = nullptr;
+    if (meshIndex >= 0 && gl::GenBuffers && gl::BindBuffer && gl::BufferData &&
+        gl::VertexAttribPointer && gl::EnableVertexAttribArray && gl::DisableVertexAttribArray)
+        buffers = buffersFor(meshIndex, mesh);
+
+    for (size_t partIndex = 0; partIndex < mesh.parts.size(); ++partIndex) {
+        const MeshPart& part = mesh.parts[partIndex];
         // The colour of the part multiplies the picture, the way the fixed
         // pipeline multiplied it: a part with a colour of its own is a part
         // that is tinted, and the tint is the part's own.
@@ -1105,15 +1403,9 @@ bool SceneRenderer::drawMeshWithShader(const MeshAsset& mesh, const TextureRegis
             part.colors.size() == part.vertices.size() / kMeshVertexFloats * 3 &&
             !part.colors.empty();
         sceneProgram_.setInt("uUseVertexColour", vertexColors ? 1 : 0);
-
-        glEnableClientState(GL_VERTEX_ARRAY);
-        glEnableClientState(GL_NORMAL_ARRAY);
-        if (vertexColors) {
-            glEnableClientState(GL_COLOR_ARRAY);
-            glColorPointer(3, GL_FLOAT, 0, part.colors.data());
-        }
-        glVertexPointer(3, GL_FLOAT, (GLsizei)stride, part.vertices.data() + kMeshPositionOffset);
-        glNormalPointer(GL_FLOAT, (GLsizei)stride, part.vertices.data() + kMeshNormalOffset);
+        // A mesh is opaque: the water is the one thing in the scene that is
+        // not, and it is not a mesh.
+        sceneProgram_.setFloat("uAlpha", 1.0f);
 
         // The picture on the surface, or the white one: a mesh without a
         // picture is not a mesh without a colour.
@@ -1122,31 +1414,155 @@ bool SceneRenderer::drawMeshWithShader(const MeshAsset& mesh, const TextureRegis
         if (hasTexture) {
             gl::ActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, tex);
-            glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-            glTexCoordPointer(2, GL_FLOAT, (GLsizei)stride,
-                              part.vertices.data() + kMeshTexCoordOffset);
             sceneProgram_.setInt("uAlbedoMap", 0);
         } else {
             gl::ActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, whiteTexture_);
-            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
             sceneProgram_.setInt("uAlbedoMap", 0);
         }
 
-        if (!part.indices.empty()) {
-            glDrawElements(GL_TRIANGLES, (GLsizei)part.indices.size(), GL_UNSIGNED_INT,
-                           part.indices.data());
+        const bool onCard = buffers && !buffers->vertices.empty() &&
+                            buffers->vertices[partIndex] != 0 && !part.vertices.empty();
+        if (onCard) {
+            // The vertices, out of the card: the position, the normal and
+            // the texture coordinate are in one array, and the colour of the
+            // vertex is in another.
+            gl::BindBuffer(GL_ARRAY_BUFFER, buffers->vertices[partIndex]);
+            gl::VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, (GLsizei)stride,
+                                    (const void*)(kMeshPositionOffset * sizeof(float)));
+            gl::EnableVertexAttribArray(0);
+            gl::VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, (GLsizei)stride,
+                                    (const void*)(kMeshNormalOffset * sizeof(float)));
+            gl::EnableVertexAttribArray(1);
+            gl::VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, (GLsizei)stride,
+                                    (const void*)(kMeshTexCoordOffset * sizeof(float)));
+            gl::EnableVertexAttribArray(2);
+            if (vertexColors && buffers->colors[partIndex] != 0) {
+                gl::BindBuffer(GL_ARRAY_BUFFER, buffers->colors[partIndex]);
+                gl::VertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 0, (const void*)0);
+                gl::EnableVertexAttribArray(3);
+            } else {
+                gl::DisableVertexAttribArray(3);
+            }
         } else {
-            glDrawArrays(GL_TRIANGLES, 0,
-                         (GLsizei)(part.vertices.size() / kMeshVertexFloats));
+            glEnableClientState(GL_VERTEX_ARRAY);
+            glEnableClientState(GL_NORMAL_ARRAY);
+            if (vertexColors) {
+                glEnableClientState(GL_COLOR_ARRAY);
+                glColorPointer(3, GL_FLOAT, 0, part.colors.data());
+            }
+            glVertexPointer(3, GL_FLOAT, (GLsizei)stride, part.vertices.data() + kMeshPositionOffset);
+            glNormalPointer(GL_FLOAT, (GLsizei)stride, part.vertices.data() + kMeshNormalOffset);
+            if (hasTexture) {
+                glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+                glTexCoordPointer(2, GL_FLOAT, (GLsizei)stride,
+                                  part.vertices.data() + kMeshTexCoordOffset);
+            } else {
+                glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+            }
         }
 
-        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-        if (vertexColors) glDisableClientState(GL_COLOR_ARRAY);
+        if (!part.indices.empty()) {
+            if (onCard && buffers->indices[partIndex] != 0) {
+                gl::BindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffers->indices[partIndex]);
+                glDrawElements(GL_TRIANGLES, (GLsizei)part.indices.size(), GL_UNSIGNED_INT,
+                               (const void*)0);
+                gl::BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+            } else {
+                glDrawElements(GL_TRIANGLES, (GLsizei)part.indices.size(), GL_UNSIGNED_INT,
+                               part.indices.data());
+            }
+        } else {
+            glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(part.vertices.size() / kMeshVertexFloats));
+        }
+
+        if (onCard) {
+            // The state is left as it was found: the attributes are turned off
+            // and the buffers are let go of, so that the fixed pipeline -
+            // which draws the grid and the gizmo out of the memory of the
+            // program - is not looking at a buffer that is bound.
+            gl::DisableVertexAttribArray(0);
+            gl::DisableVertexAttribArray(1);
+            gl::DisableVertexAttribArray(2);
+            gl::DisableVertexAttribArray(3);
+            gl::BindBuffer(GL_ARRAY_BUFFER, 0);
+        } else {
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+            if (vertexColors) glDisableClientState(GL_COLOR_ARRAY);
+        }
     }
     glDisableClientState(GL_VERTEX_ARRAY);
     glDisableClientState(GL_NORMAL_ARRAY);
     return true;
+}
+
+// The buffers of a mesh, made the first time it is drawn.
+//
+// The mesh in the registry never changes under an index - the registry never
+// replaces an entry - so the buffers belong to the index. The size of the
+// mesh is remembered anyway: a mesh that has changed is made again, because a
+// buffer of the wrong size is a picture of another mesh.
+SceneRenderer::MeshBuffers* SceneRenderer::buffersFor(int mesh, const MeshAsset& asset) {
+    MeshBuffers& buffers = meshBuffers_[mesh];
+
+    size_t vertexCount = 0;
+    size_t indexCount = 0;
+    for (const MeshPart& part : asset.parts) {
+        vertexCount += part.vertices.size();
+        indexCount += part.indices.size();
+    }
+    if (buffers.ready && buffers.vertexCount == vertexCount &&
+        buffers.indexCount == indexCount && buffers.name == asset.name)
+        return &buffers;
+
+    // The old ones are thrown away first: a buffer that is made again must
+    // not be the one that is still bound.
+    for (unsigned int& buffer : buffers.vertices) {
+        if (buffer) gl::DeleteBuffers(1, &buffer);
+        buffer = 0;
+    }
+    for (unsigned int& buffer : buffers.colors) {
+        if (buffer) gl::DeleteBuffers(1, &buffer);
+        buffer = 0;
+    }
+    for (unsigned int& buffer : buffers.indices) {
+        if (buffer) gl::DeleteBuffers(1, &buffer);
+        buffer = 0;
+    }
+    buffers.vertices.assign(asset.parts.size(), 0);
+    buffers.colors.assign(asset.parts.size(), 0);
+    buffers.indices.assign(asset.parts.size(), 0);
+
+    for (size_t i = 0; i < asset.parts.size(); ++i) {
+        const MeshPart& part = asset.parts[i];
+        if (!part.vertices.empty()) {
+            gl::GenBuffers(1, &buffers.vertices[i]);
+            gl::BindBuffer(GL_ARRAY_BUFFER, buffers.vertices[i]);
+            gl::BufferData(GL_ARRAY_BUFFER, (GLsizeiptr)part.vertices.size() * sizeof(float),
+                           part.vertices.data(), GL_STATIC_DRAW);
+        }
+        if (!part.colors.empty()) {
+            gl::GenBuffers(1, &buffers.colors[i]);
+            gl::BindBuffer(GL_ARRAY_BUFFER, buffers.colors[i]);
+            gl::BufferData(GL_ARRAY_BUFFER, (GLsizeiptr)part.colors.size() * sizeof(float),
+                           part.colors.data(), GL_STATIC_DRAW);
+        }
+        if (!part.indices.empty()) {
+            gl::GenBuffers(1, &buffers.indices[i]);
+            gl::BindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffers.indices[i]);
+            gl::BufferData(GL_ELEMENT_ARRAY_BUFFER,
+                           (GLsizeiptr)part.indices.size() * sizeof(unsigned int),
+                           part.indices.data(), GL_STATIC_DRAW);
+        }
+    }
+    gl::BindBuffer(GL_ARRAY_BUFFER, 0);
+    gl::BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
+    buffers.vertexCount = vertexCount;
+    buffers.indexCount = indexCount;
+    buffers.name = asset.name;
+    buffers.ready = true;
+    return &buffers;
 }
 
 void SceneRenderer::drawCameraEntity(const RigidBody& body, const Mat4& model) {
@@ -1246,10 +1662,10 @@ void SceneRenderer::renderSelection(const RigidBody& body) {
 }
 
 void SceneRenderer::renderGizmo(const Vec3& position, const Vec3* axes, float length,
-                               float ringRadius, const Vec3* ringU, const Vec3* ringV,
-                               int activeAxis, GizmoShape shape) {
+                                float ringRadius, const Vec3* ringU, const Vec3* ringV,
+                                int activeAxis, GizmoShape shape, bool flat) {
     static const Color kAxisColors[3] = {{1.0f, 0.30f, 0.30f}, {0.35f, 1.0f, 0.35f},
-                                         {0.40f, 0.60f, 1.0f}};
+                                          {0.40f, 0.60f, 1.0f}};
     // The rotate ring is sampled the same number of times the picker samples it,
     // so the curve on screen is the curve that is grabbable.
     constexpr int kRingSteps = 48;
@@ -1261,7 +1677,11 @@ void SceneRenderer::renderGizmo(const Vec3& position, const Vec3* axes, float le
         // The ring basis comes from the caller, which builds it with the same
         // gizmo::ringFrame() the picker uses. Recomputing it here is how the drawn
         // ring and the grabbable ring drift apart.
-        for (int i = 0; i < 3; ++i) {
+        //
+        // In the 2D view the only ring is the one about Z: a flat world turns in
+        // its own plane and nowhere else.
+        const int first = flat ? 2 : 0;
+        for (int i = first; i <= 2; ++i) {
             const float dim = activeAxis == i ? 1.0f : 0.62f;
             const Color color = kAxisColors[i].scaled(dim);
             glLineWidth(activeAxis == i ? 4.0f : 2.0f);
@@ -1281,7 +1701,10 @@ void SceneRenderer::renderGizmo(const Vec3& position, const Vec3* axes, float le
         return;
     }
 
-    for (int i = 0; i < 3; ++i) {
+    // The 2D view has two directions to move in, and the third handle is not
+    // drawn - a handle that is not there cannot be grabbed either.
+    const int axisCount = flat ? 2 : 3;
+    for (int i = 0; i < axisCount; ++i) {
         const Vec3& axis = axes[i];
         Vec3 u = std::fabs(axis.y) < 0.9f ? cross(axis, Vec3{0.0f, 1.0f, 0.0f})
                                           : cross(axis, Vec3{1.0f, 0.0f, 0.0f});

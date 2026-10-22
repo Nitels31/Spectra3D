@@ -51,8 +51,8 @@ void ringFrame(const Vec3& axis, Vec3& u, Vec3& v) {
 }
 
 int pickAxis(float pointerX, float pointerY, const Vec3& rayOrigin, const Vec3& rayDir,
-             const Vec3& cameraPos, const Vec3& forward, const Vec3& right, const Vec3& up,
-             float tanX, float tanY, const Rect& viewport, const RigidBody& body, Mode mode) {
+             const picking::ViewProjection& projection, const Rect& viewport,
+             const RigidBody& body, Mode mode, bool flat) {
     // Rotate has no axis to grab; its handles are rings and pickRing handles those.
     // Silently answering -1 here keeps a caller that forgot to branch from
     // dragging a straight line through the scene.
@@ -65,7 +65,10 @@ int pickAxis(float pointerX, float pointerY, const Vec3& rayOrigin, const Vec3& 
 
     int bestAxis = -1;
     float bestScreenDistanceSq = 1e30f;
-    for (int i = 0; i < 3; ++i) {
+    // A flat world has two directions to move in: the third handle is neither
+    // drawn nor picked, and a handle that is not drawn must not be grabbable.
+    const int axisCount = flat ? 2 : 3;
+    for (int i = 0; i < axisCount; ++i) {
         float axisT = 0.0f, rayT = 0.0f;
         picking::closestOnAxis(rayOrigin, rayDir, body.position, axes[i], axisT, rayT);
         if (axisT < 0.0f || axisT > length || rayT <= 0.0f) continue;
@@ -78,8 +81,8 @@ int pickAxis(float pointerX, float pointerY, const Vec3& rayOrigin, const Vec3& 
 
         // ...then let the closest handle in screen space win.
         float pixelX = 0.0f, pixelY = 0.0f;
-        if (!picking::projectToViewport(onAxis, cameraPos, forward, right, up, tanX, tanY,
-                                        viewport.width, viewport.height, pixelX, pixelY))
+        if (!picking::projectToViewport(onAxis, projection, viewport.width, viewport.height,
+                                        pixelX, pixelY))
             continue;
 
         const float dx = pixelX - pointerX;
@@ -94,15 +97,17 @@ int pickAxis(float pointerX, float pointerY, const Vec3& rayOrigin, const Vec3& 
 }
 
 int pickRing(float pointerX, float pointerY, const Vec3& rayOrigin, const Vec3& rayDir,
-             const Vec3& cameraPos, const Vec3& forward, const Vec3& right, const Vec3& up,
-             float tanX, float tanY, const Rect& viewport, const RigidBody& body) {
+             const picking::ViewProjection& projection, const Rect& viewport,
+             const RigidBody& body, bool flat) {
     Vec3 axes[3];
     axesFor(body, Mode::Rotate, axes);
     const float radius = ringRadius(body);
 
     int bestAxis = -1;
     float bestDistanceSq = kRingPickRadius * kRingPickRadius;
-    for (int i = 0; i < 3; ++i) {
+    // A flat world turns in its own plane: the only ring is the one about Z.
+    const int first = flat ? 2 : 0;
+    for (int i = first; i <= 2; ++i) {
         Vec3 u, v;
         ringFrame(axes[i], u, v);
 
@@ -111,8 +116,8 @@ int pickRing(float pointerX, float pointerY, const Vec3& rayOrigin, const Vec3& 
             const Vec3 point = body.position + (u * std::cos(a) + v * std::sin(a)) * radius;
 
             float pixelX = 0.0f, pixelY = 0.0f;
-            if (!picking::projectToViewport(point, cameraPos, forward, right, up, tanX, tanY,
-                                            viewport.width, viewport.height, pixelX, pixelY))
+            if (!picking::projectToViewport(point, projection, viewport.width, viewport.height,
+                                            pixelX, pixelY))
                 continue;
 
             const float dx = pixelX - pointerX;

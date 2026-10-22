@@ -28,7 +28,13 @@ namespace {
 // it - which is what made the corners impossible to size on their own.
 // 4: the landform panel is in the file as well. A file written before that has
 // no line for it, and the panel keeps the place it has now.
-constexpr int kLayoutVersion = 4;
+// 5: the particles panel is in the file as well, and it is the same thing: a
+// file written before that has no line for it, and the panel keeps the place
+// it has now.
+// 6: and the cloud. The panels are named and not numbered, so a file that has
+// no line for the cloud simply has no cloud in it - the panel keeps the place
+// it has now.
+constexpr int kLayoutVersion = 6;
 
 // `key=value` lines, `#` comments, blank lines skipped: the same shape as the
 // manifest, so one reader's rules apply to every text file the engine writes.
@@ -89,12 +95,16 @@ const char* panelKey(int index) {
     case (int)PanelId::Favorites: return "Favorites";
     case (int)PanelId::Sounds: return "Sounds";
     case (int)PanelId::Landform: return "Landform";
+    case (int)PanelId::Cloud: return "Cloud";
+    case (int)PanelId::Particles: return "Particles";
     default: return "";
     }
 }
 
 int panelFromKey(const std::string& key) {
-    for (int i = 0; i < kPanelCount; ++i)
+    // The panels and not the slots: the last slot has no name, and a file
+    // with a line that has no name in it is a line that names nothing.
+    for (int i = 0; i < (int)PanelId::PanelCount; ++i)
         if (key == panelKey(i)) return i;
     return -1;
 }
@@ -347,7 +357,10 @@ void Editor::saveLayout() {
     text += "\n";
     // Every panel, every time, in a fixed order: the file is meant to be readable
     // and hand-editable, so it must not depend on what the user happened to touch.
-    for (int i = 0; i < kPanelCount; ++i) {
+    //
+    // The panels and not the slots: a line with no name in it is a line that
+    // names nothing, and the file is read by people.
+    for (int i = 0; i < (int)PanelId::PanelCount; ++i) {
         const Panel& panel = panels_[i];
         text += "panel=";
         text += panelKey(i);

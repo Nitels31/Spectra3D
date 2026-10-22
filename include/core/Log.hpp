@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdarg>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,19 @@ public:
 
     static const std::vector<Entry>& entries();
     static void clear();
+
+    // The messages as the console shows them, newest last, copied into the
+    // caller's buffer. Returns the number of bytes written, not counting the
+    // terminating NUL.
+    //
+    // The crash report takes the log with it: a crash is the one failure the
+    // engine cannot log its way out of, and the ring buffer is still in
+    // memory when the handler runs. The copy is taken under the lock, because
+    // the buffer belongs to the thread that reads it and a crash can come
+    // from any thread - and the lock is taken with try_lock and not with
+    // lock, because the caller is a handler that must not wait for a thread
+    // that is busy logging and is never going to let go.
+    static size_t copyEntries(char* out, size_t capacity);
 
     // Takes the messages the other threads wrote into the ring buffer. Called
     // by the thread that owns the buffer, once per frame.

@@ -1,5 +1,7 @@
 #pragma once
 #include <array>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <GL/gl.h>
@@ -10,10 +12,13 @@
 #include "physics/PhysicsWorld.hpp"
 #include "render/Camera.hpp"
 #include "render/Color.hpp"
+#include "render/Fog.hpp"
+#include "render/ParticleSystem.hpp"
 #include "render/PrimitiveCache.hpp"
 #include "render/ShaderProgram.hpp"
 #include "render/ShadowMap.hpp"
 #include "render/Skybox.hpp"
+#include "render/WaterSystem.hpp"
 
 namespace s3d {
 
@@ -60,6 +65,14 @@ public:
     // The map, for the debug view.
     const ShadowMap& shadowMap() const { return shadowMap_; }
 
+    // The fog: the air between the eye and the thing.
+    //
+    // The settings live here and not with the shadows because the renderer is
+    // what draws the fog, and the editor changes them in place - where the fog
+    // can be seen, which is the only place a fog is worth setting.
+    FogSettings& fogSettings() { return fog_; }
+    const FogSettings& fogSettings() const { return fog_; }
+
     // Clears the whole framebuffer before the viewport pass. Without this a
     // window that was just resized (or a frame captured mid-resize) can show
     // whatever the back buffer happened to contain - usually black - in the
@@ -78,10 +91,13 @@ public:
     // editor, between the two docks and above the console. The projection is the
     // camera's own field of view over it, so what is on screen and what the
     // pointer points at are the same picture.
+    //
+    // `time` is the time of the world, in seconds: the waves of the water are
+    // a function of it and of nothing else.
     void renderWorld(const PhysicsWorld& world, const MeshRegistry& meshes,
                      const TextureRegistry& textures, const Camera& camera,
                      const Viewport& viewport, bool showGrid, bool showVectors,
-                     float alpha, int hiddenBody = -1);
+                     float alpha, float time, int hiddenBody = -1);
 
     void renderSelection(const RigidBody& body);
 
@@ -103,10 +119,28 @@ public:
     // tool ends up drawn as an arrow.
     enum class GizmoShape { Arrows, Rings, Cubes };
 
+    // `flat` is the 2D view: a flat world has two directions to move in and
+    // one to turn about, so the third handle is not drawn - and a handle that
+    // is not drawn must not be picked either.
     void renderGizmo(const Vec3& position, const Vec3* axes, float length, float ringRadius,
-                     const Vec3* ringU, const Vec3* ringV, int activeAxis, GizmoShape shape);
+                     const Vec3* ringU, const Vec3* ringV, int activeAxis, GizmoShape shape,
+                     bool flat = false);
+
+    // The world in 2D: the grid is the XY plane and the picture is measured
+    // and not seen. It is the renderer's own setting, because the grid and
+    // the shadow catcher are the renderer's.
+    void setMode2D(bool flat);
+    bool mode2D() const { return mode2D_; }
 
     const PrimitiveCache& primitives() const { return primitives_; }
+
+    // The particles of the world: the emitters, the pool and the drawing.
+    //
+    // They live here because this is the class that owns the GL objects, and
+    // the particles are a program and two buffers. The game and the editor
+    // ask for them through here, and the emitters are part of the scene.
+    ParticleSystem& particles() { return particles_; }
+    const ParticleSystem& particles() const { return particles_; }
 
     // The sky the world is seen against. It lives here because it is a GL
     // object, and this is the class that owns GL objects.
@@ -154,6 +188,13 @@ private:
     void drawBodies(const PhysicsWorld& world, const MeshRegistry& meshes,
                      const TextureRegistry& textures, const Camera& camera, float alpha,
                      int hiddenBody);
+    // The water of the world, over the picture of it: the waves, the colour
+    // of the water, the foam and the mirror of the sky.
+    void drawWater(const PhysicsWorld& world, const Camera& camera, float time, int hiddenBody);
+    // The water in a flat world: a sheet seen from above, drawn with the
+    // scene's own program because the water's own is a program of a world
+    // with a horizon in it.
+    void drawFlatWater(const PhysicsWorld& world, float alpha, int hiddenBody);
     void drawDebugVectors(const PhysicsWorld& world);
 
     // The shadow pass: the map of what the sun hit first.
@@ -168,12 +209,53 @@ private:
     // The uniforms the scene pass shares: the sun, the sky, the shadow map.
     void beginScenePass(const Camera& camera);
     // Draws one mesh with the scene's program.
+    //
+    // `meshIndex` is the number the mesh has in the registry, and it is what
+    // the buffers on the card belong to: -1 for a mesh that is not in the
+    // registry and is drawn out of the memory of the program as it always
+    // was.
     bool drawMeshWithShader(const MeshAsset& mesh, const TextureRegistry& textures,
-                            const Mat4& model);
+                            const Mat4& model, int meshIndex = -1);
 
     void extractFrustum(const float* projection, const float* view);
     bool sphereVisible(const Vec3& center, float radius) const;
     void drawCameraEntity(const RigidBody& body, const Mat4& model);
+
+    // THE MESHES ON THE CARD
+    //
+    // Every mesh used to be drawn out of the memory of the program: the
+    // driver was given a pointer to the vertices and copied them into the
+    // card again, for every frame, for every body. A ground of nine thousand
+    // vertices is three hundred kilobytes copied sixty times a second for a
+    // picture that did not change, and a cloud of two hundred puffs is worse.
+    //
+    // The buffers are made once - the first time the mesh is drawn - and the
+    // card keeps them. The mesh in the registry never changes under an index
+    // (the registry never replaces an entry), so the buffers belong to the
+    // index and not to the picture.
+    struct MeshBuffers {
+        // One pair of buffers per part: the vertices (position, normal and
+        // texture coordinate in one array) and the colours, and one buffer
+        // of indices.
+        std::vector<unsigned int> vertices;
+        std::vector<unsigned int> colors;
+        std::vector<unsigned int> indices;
+        // The name of the mesh the buffers were made of. The mesh in the
+        // registry never changes under an index, but a registry that is
+        // replaced starts its numbers again - and then the name is what says
+        // that the buffers belong to another mesh.
+        std::string name;
+        // How much of the mesh is in them, so that a mesh that has changed is
+        // made again instead of drawn out of the old picture of it.
+        size_t vertexCount = 0;
+        size_t indexCount = 0;
+        bool ready = false;
+    };
+    std::unordered_map<int, MeshBuffers> meshBuffers_;
+    // The buffers of a mesh, made the first time it is drawn. Null when the
+    // driver has no buffers at all, and then the mesh is drawn the way it
+    // always was.
+    MeshBuffers* buffersFor(int mesh, const MeshAsset& asset);
 
     // The shadow map is drawn again only when the world or the sun has moved.
     //
@@ -206,6 +288,23 @@ private:
 
     PrimitiveCache primitives_;
     Skybox sky_;
+    // The particles of the world: the emitters, the pool and the drawing.
+    //
+    // They are here because this is the class that owns the GL objects, and
+    // the particles are a program and two buffers. They are drawn with the
+    // scene, after the bodies: a particle is behind a box when it is behind
+    // the box.
+    ParticleSystem particles_;
+    // The water of the world: the program, the grid and the picture of the
+    // scene that the water bends.
+    //
+    // It is here for the same reason the particles are: it is a program and
+    // a buffer, and this is the class that owns the GL objects.
+    WaterSystem water_;
+    // The fog, as the user sets it. It belongs to the renderer and not to the
+    // application: the renderer is what draws it, and there is one fog in a
+    // frame however many programs are in use.
+    FogSettings fog_;
     float projection_[16] = {};
     float view_[16] = {};
     float frustum_[6][4] = {};
@@ -233,6 +332,9 @@ private:
 
     // Whether the map of the shadows is drawn over the scene.
     bool showShadowDebug_ = false;
+    // The world in 2D: the grid is in the XY plane and the sun casts no
+    // shadow - a flat world has no sun in it.
+    bool mode2D_ = false;
     // Which picture the scene is drawn with when the shadows are being looked
     // at. Zero is the picture itself.
     int shadowDebugMode_ = 0;

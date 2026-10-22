@@ -57,7 +57,7 @@ int spawnShape(int shapeValue, float x, float y, float z, float sx, float sy, fl
     ScriptState* state = activeState();
     if (!state || !state->world) return -1;
 
-    if (shapeValue < 0 || shapeValue > (int)Shape::Camera) {
+    if (shapeValue < 0 || shapeValue > (int)Shape::Quad) {
         Log::error("engine::spawnShape: %d is not a Shape value", shapeValue);
         return -1;
     }
@@ -229,6 +229,7 @@ const EnumValue kShapeValues[] = {
     {"ShapePrism", (int)Shape::Prism},
     {"ShapeMesh", (int)Shape::Mesh},
     {"ShapeCamera", (int)Shape::Camera},
+    {"ShapeQuad", (int)Shape::Quad},
 };
 
 const char* const kGravityEnum = "Gravity";

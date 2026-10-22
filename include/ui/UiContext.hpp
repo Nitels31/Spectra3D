@@ -65,6 +65,17 @@ public:
     // capture reads these; every other reader wants the guarded version.
     bool rawPointerPressed() const { return pointerPressed_; }
     bool rawPointerReleased() const { return pointerReleased_; }
+    // The press, asked on behalf of a surface.
+    //
+    // The same edge as pointerPressed(), but the surface the asker is inside
+    // does not take the press from it. A floating window is a surface, and the
+    // drag of its title bar is a press of that window: asked as anybody else,
+    // the window takes the press away from itself, and no floating window can
+    // be moved at all.
+    bool pointerPressedBy(int owner) const {
+        return pointerPressed_ && captureId_ == 0 &&
+               !overlays_.pressTaken(pointerX_, pointerY_, owner);
+    }
     double scrollDelta() const { return scrollDelta_; }
     bool ctrlHeld() const { return ctrlHeld_; }
     bool cameraCaptured() const { return cameraCaptured_; }

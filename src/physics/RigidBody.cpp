@@ -98,6 +98,34 @@ void RigidBody::configure(float newMass) {
             boundRadius = r;
             return;
         }
+        case Shape::Quad: {
+            // A flat square in the XY plane. The thickness is fixed: a sprite
+            // in a flat world is a rectangle, and how thick the rectangle is
+            // not is a question nobody asks.
+            const float w = clampf(halfExtents.x, 0.01f, 10.0f);
+            const float h = clampf(halfExtents.y, 0.01f, 10.0f);
+            const float d = 0.02f;
+            halfExtents = {w, h, d};
+            setInertia(mass / 12.0f * (4.0f * h * h + 4.0f * d * d),
+                       mass / 12.0f * (4.0f * w * w + 4.0f * d * d),
+                       mass / 12.0f * (4.0f * w * w + 4.0f * h * h));
+            boundRadius = std::sqrt(w * w + h * h);
+            return;
+        }
+        case Shape::Water: {
+            // A level of water: a flat sheet in the XZ plane. The thickness is
+            // fixed for the same reason the quad's is - it is a surface and
+            // not a thing, and how thick a surface is nobody asks.
+            const float w = clampf(halfExtents.x, 0.1f, 10000.0f);
+            const float d = clampf(halfExtents.z, 0.1f, 10000.0f);
+            const float t = 0.02f;
+            halfExtents = {w, t, d};
+            setInertia(mass / 12.0f * (4.0f * d * d + 4.0f * t * t),
+                       mass / 12.0f * (4.0f * w * w + 4.0f * d * d),
+                       mass / 12.0f * (4.0f * w * w + 4.0f * t * t));
+            boundRadius = std::sqrt(w * w + d * d);
+            return;
+        }
         default: break;
     }
 
@@ -147,6 +175,8 @@ const char* shapeName(Shape s) {
         case Shape::Prism: return "Prism";
         case Shape::Mesh: return "Mesh";
         case Shape::Camera: return "Camera";
+        case Shape::Quad: return "Quad";
+        case Shape::Water: return "Water";
     }
     return "?";
 }

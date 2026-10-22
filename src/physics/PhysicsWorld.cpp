@@ -393,8 +393,10 @@ currentStepDt_ = dt;
         // drift and it does not spin. It is still anchored, though - a camera
         // that follows a moving body is the whole point of having a camera in
         // the scene.
+        // Water is placed too: a level of water does not fall either, and it
+        // is not something the simulation has an opinion about.
         if (b.asleep) continue;
-        if (!b.isCamera()) {
+        if (!b.isCamera() && !b.isWater()) {
             if (b.material.isStatic) continue;
             b.position += b.velocity * dt;
             b.orientation = integrate(b.orientation, b.angularVelocity, dt);
@@ -500,7 +502,9 @@ void PhysicsWorld::collectPairContacts() {
         // never be found as a collision partner. This is the one place that
         // decides what collides with what, which is why it is here and not
         // scattered through the contact code.
-        if (b.isCamera()) continue;
+        // Water is not in the world either: it is a surface that is looked at,
+        // and a body that was stopped by it would be stopped by the sea.
+        if (b.isCamera() || b.isWater()) continue;
         // Static bodies are inserted too. They never drive a query (see the loop
         // below) but they must be findable as collision partners, or an immovable
         // body collides with nothing at all and everything slides straight through

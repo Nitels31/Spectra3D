@@ -1,7 +1,9 @@
 #pragma once
+#include <array>
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace s3d {
 
@@ -151,8 +153,79 @@ inline std::string join(const std::string& a, const std::string& b) {
     if (a.empty()) return b;
     if (b.empty()) return a;
     const char last = a[a.size() - 1];
-    if (last == '/' || last == '\\') return a + b;
+    if (last == '/' || last == '\\') return a + "/" + b;
     return a + "/" + b;
+}
+
+// BASE64: BINARY IN A TEXT FILE.
+//
+// A heightfield is thousands of numbers, and a scene file is a file a person
+// reads. The numbers go into the file as one line of letters instead of as
+// thousands of lines of numbers: the file stays readable, and the ground it
+// describes is still the ground.
+//
+// The alphabet is the usual one, and the padding is the usual '='.
+inline std::string toBase64(const void* data, size_t bytes) {
+    static const char kAlphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const unsigned char* in = (const unsigned char*)data;
+    std::string out;
+    out.reserve((bytes + 2) / 3 * 4);
+
+    size_t at = 0;
+    while (at + 3 <= bytes) {
+        const unsigned value = ((unsigned)in[at] << 16) | ((unsigned)in[at + 1] << 8) |
+                               (unsigned)in[at + 2];
+        out += kAlphabet[(value >> 18) & 0x3Fu];
+        out += kAlphabet[(value >> 12) & 0x3Fu];
+        out += kAlphabet[(value >> 6) & 0x3Fu];
+        out += kAlphabet[value & 0x3Fu];
+        at += 3;
+    }
+    if (at < bytes) {
+        const unsigned value = (unsigned)in[at] << 16;
+        out += kAlphabet[(value >> 18) & 0x3Fu];
+        out += kAlphabet[(value >> 12) & 0x3Fu];
+        out += (at + 1 < bytes) ? kAlphabet[(value >> 6) & 0x3Fu] : '=';
+        out += '=';
+    }
+    return out;
+}
+
+// The other direction. False when the text is not base64: a file that was
+// written by something else is a file that is not read, and saying so is
+// better than reading it as noise.
+inline bool fromBase64(const std::string& text, std::vector<unsigned char>& out) {
+    // What every letter of the alphabet stands for. -1 is "not a letter".
+    //
+    // Built once, when the first thing is decoded: the table is the same for
+    // every call, and building it again for every ground in a scene would be
+    // work nobody asked for.
+    static const std::array<int, 256> table = [] {
+        std::array<int, 256> letters;
+        letters.fill(-1);
+        const char* alphabet =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (int i = 0; i < 64; ++i) letters[(unsigned char)alphabet[i]] = i;
+        return letters;
+    }();
+
+    out.clear();
+    out.reserve(text.size() / 4 * 3);
+    unsigned value = 0;
+    int bits = 0;
+    for (char c : text) {
+        if (c == '=' || c == '\n' || c == '\r') continue;
+        const int letter = table[(unsigned char)c];
+        if (letter < 0) return false;
+        value = (value << 6) | (unsigned)letter;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back((unsigned char)((value >> bits) & 0xFFu));
+        }
+    }
+    return true;
 }
 
 } // namespace str

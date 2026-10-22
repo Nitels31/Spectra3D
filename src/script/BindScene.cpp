@@ -3,6 +3,7 @@
 #include "assets/MeshRegistry.hpp"
 #include "core/Log.hpp"
 #include "physics/PhysicsWorld.hpp"
+#include "render/ParticleSystem.hpp"
 #include "script/BindString.hpp"
 
 #if SPECTRA_SCRIPTING
@@ -32,6 +33,8 @@ void clearScene() {
     // Every stored body index just died with them.
     state->groups.clear();
     state->groupNames.clear();
+    // And the emitters that rode on them are free now.
+    if (state->particles) state->particles->removeAllBodies();
 }
 
 int importModel(const ScriptString& path, float x, float y, float z) {
@@ -84,6 +87,9 @@ int removeBody(int index) {
 
     dropBodyFromGroups(state, index);
     state->world->remove(index);
+    // The emitters that rode on it are free now, and the ones that rode on a
+    // body after it are one index earlier: the bodies have moved down.
+    if (state->particles) state->particles->removeBody(index);
     return index;
 }
 

@@ -31,8 +31,12 @@ constexpr bool zoneIsRight(PanelZone zone) {
 }
 
 // How many panels the editor has: the hierarchy, the inspector, the console, the
-// favorites, the sounds and the landform.
-inline constexpr int kPanelCount = 6;
+// favorites, the sounds, the landform, the cloud and the particles.
+//
+// The number is one more than the number of panels: the last slot is the
+// number itself, and it is a panel that is never drawn and never occupies an
+// edge of the window.
+inline constexpr int kPanelCount = 9;
 
 // The bounds for every panel size, wherever the size came from: a drag, a layout
 // file, a hand-edited one. Shared rather than repeated, because "too small to be
@@ -65,12 +69,15 @@ struct Workspace {
     float bottomRightHeight = 156.0f;
 
     // The zone of every panel, and whether it is open. The order is the panel
-    // order: hierarchy, inspector, console, favorites, sounds, landform. The
-    // landform is a tool window: it floats and it starts closed.
+    // order: hierarchy, inspector, console, favorites, sounds, landform,
+    // cloud, particles. The landform, the cloud and the particles are tool
+    // windows: they float and they start closed. The last slot is the number
+    // of the panels and is a panel that is never drawn.
     PanelZone zones[kPanelCount] = {PanelZone::Left, PanelZone::Right, PanelZone::Bottom,
                                     PanelZone::BottomLeft, PanelZone::BottomRight,
+                                    PanelZone::Float, PanelZone::Float, PanelZone::Float,
                                     PanelZone::Float};
-    bool open[kPanelCount] = {true, true, true, true, true, false};
+    bool open[kPanelCount] = {true, true, true, true, true, false, false, false, false};
 
     // Where a floating panel is. It is part of the layout and it is saved with
     // it: a panel that floats and comes back floating comes back where it was.
@@ -107,6 +114,18 @@ enum : unsigned {
     kGripTop = 4u,
     kGripBottom = 8u,
 };
+
+// The floating panels, in the order they are drawn: the bottom one first.
+//
+// The one the pointer is on is drawn LAST, so that the window the pointer is
+// aiming at is the window on top: two windows that cover each other are two
+// windows where one of them cannot be reached, and the one the pointer is on
+// is the one the pointer is on.
+//
+// The order is the order of the guard as well: the surface that is declared
+// last is the one that owns the press, so the window under the pointer owns
+// the press that is on it - and the drag of its title bar is that press.
+int floatingPanelOrder(const Workspace& ws, float px, float py, int* out, int capacity);
 
 // Do two rectangles cover any of the same ground?
 //
