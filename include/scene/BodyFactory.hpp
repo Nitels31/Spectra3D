@@ -18,6 +18,15 @@ public:
     // Spawns `shape` in front of `camera` with a sane default size.
     static RigidBody makeInFrontOf(Shape shape, const Camera& camera, float density);
 
+    // A level of water: a flat sheet over the ground, at the height it is
+    // given, as wide and as deep as it is told to be.
+    //
+    // The colour of the water is the colour of the body, like the colour of
+    // every other body, and the alpha is how much of what is under the water
+    // shows through it.
+    static RigidBody makeWater(const Vec3& position, float width, float depth,
+                               const Vec3& color, float alpha);
+
     static int spawn(PhysicsWorld& world, Shape shape, const Vec3& position,
                      const Vec3& velocity, const Vec3& halfExtents, float density,
                      const Vec3& angularVelocity, const Quat& orientation);

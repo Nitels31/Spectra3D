@@ -12,7 +12,7 @@ enum class Language {
     Lolcat = 6, Jeb = 7, Pirate = 8, BrokenUtf8 = 9, Hex = 10, GeometryDash = 11,
     Portuguese = 12, Minecraft = 13, Undertale = 14, Celeste = 15, Doom = 16,
     WolfOfWallStreet = 17, AmongUs = 18, Leet = 19, Klingon = 20, Gopnik = 21,
-    Shakespeare = 22,
+    Shakespeare = 22, Bengali = 23,
 };
 
 // Byte-wise FNV-1a, used for both the stored keys and the `const char*` probes so

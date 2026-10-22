@@ -152,6 +152,7 @@ void Editor::buildMenuRows() {
     add(Action::SaveProject, 0, text("file.saveProject"));
     add(Action::BuildSettings, 0, text("file.buildSettings"));
     add(Action::BuildRun, 0, text("file.buildRun"));
+    add(Action::ReloadScripts, 0, text("file.reloadScripts"));
     add(Action::None, 0, nullptr, false, true);
     add(Action::Exit, 0, text("file.exit"));
     close(kMenuFile);
@@ -169,6 +170,20 @@ void Editor::buildMenuRows() {
     open(kMenuView);
     add(Action::Grid, 0, text("view.grid"), showGrid_);
     add(Action::Vectors, 0, text("view.vectors"), showVectors_);
+    // The two ways of looking at a scene. 2D is the world measured and not
+    // seen; the interface is the GUI of the game, laid out instead of the
+    // world.
+    add(Action::None, 0, nullptr, false, true);
+    add(Action::Mode2D, 0, text("view.mode2d"), mode2D_);
+    add(Action::GuiMode, 0, text("view.guiMode"), guiMode_);
+    if (mode2D_) {
+        // Which plane of the world the flat picture is of. The picture is a
+        // picture of a plane, and a plane has three sides to be seen from.
+        add(Action::None, 0, nullptr, false, true);
+        add(Action::FlatAxis, 2, text("view.flatFront"), flatAxis_ == 2);
+        add(Action::FlatAxis, 1, text("view.flatTop"), flatAxis_ == 1);
+        add(Action::FlatAxis, 0, text("view.flatSide"), flatAxis_ == 0);
+    }
     add(Action::None, 0, nullptr, false, true);
     // No field of view here, on purpose. It is a property of a game camera, and
     // the editor camera has one job: look at the scene. Camera::fovDeg still
@@ -214,10 +229,20 @@ void Editor::buildMenuRows() {
         add(Action::None, 0, nullptr, false, true);
         add(Action::ShadowSettings, 0, text("view.shadowSettings"));
     }
+    // The fog: the air between the eye and the thing. Four numbers that want
+    // to be dragged, so it is a dialog of its own - and it is here, next to
+    // the shadows, because the two are the same kind of thing: the weather of
+    // a scene.
+    add(Action::None, 0, nullptr, false, true);
+    add(Action::Fog, 0, text("view.fog"));
     add(Action::None, 0, nullptr, false, true);
     // Which panels are on screen. Closed with the X in a panel's header, reopened
     // from here - so "I do not need this panel" is one click and not a restart.
-    for (int i = 0; i < kPanelCount; ++i)
+    //
+    // The panels and not the number of the panels: the last slot is the
+    // number itself, and a row with no name in it is a row that cannot be
+    // read.
+    for (int i = 0; i < (int)PanelId::PanelCount; ++i)
         add(Action::TogglePanel, i, panelTitle((PanelId)i), panels_[i].open);
     close(kMenuView);
 
@@ -227,10 +252,29 @@ void Editor::buildMenuRows() {
     // The camera is not a shape - it has no volume and is never collided - so
     // it gets its own row rather than a place in the shape list.
     add(Action::Camera, 0, text("shape.camera"));
+    // The square in the XY plane: the workhorse of a flat world. It is a shape
+    // and not one of the seven primitives, so it gets its own row.
+    add(Action::Shape, (int)Shape::Quad, text("shape.quad"));
     add(Action::None, 0, nullptr, false, true);
     // The ground. It is not a shape - it is made, and the panel that says how
     // is where it is made.
     add(Action::Landform, 0, text("tab.landform"));
+    // And the water. It is not a shape either: it is a level of water over
+    // the ground, and it is made here.
+    add(Action::Water, 0, text("create.water"));
+    // And the cloud. The same thing: it is made, and the panel that says how
+    // is where it is made.
+    add(Action::Cloud, 0, text("tab.cloud"));
+    // And the effects of the world. The same thing: they are made, and the
+    // panel that says how is where they are made.
+    add(Action::Particles, 0, text("tab.particles"));
+    // The pieces of an interface. A panel, a picture, a line of letters and a
+    // button: what the interface of a game is made of.
+    add(Action::None, 0, nullptr, false, true);
+    add(Action::GuiPanel, 0, text("gui.panel"));
+    add(Action::GuiImage, 0, text("gui.image"));
+    add(Action::GuiText, 0, text("gui.text"));
+    add(Action::GuiButton, 0, text("gui.button"));
     const std::vector<std::string>& models = assets_.files();
     add(Action::None, 0, nullptr, false, true);
     if (models.empty()) {
@@ -305,6 +349,9 @@ int Editor::findMenuRows(const char* query, MenuHit* out, int capacity) const {
 // the frame. Yaw and pitch are left alone: framing something is not the same
 // request as looking at it from a new angle, and the user still has the orbit
 // gizmo for that.
+//
+// A flat picture has no distance to the ground: the zoom says how much of the
+// world is on it, and the middle of the picture is put where the thing is.
 void Editor::frameSelection(PhysicsWorld& world, Camera& camera) {
     Vec3 centre{0.0f, 0.0f, 0.0f};
     float radius = 0.0f;
@@ -319,6 +366,20 @@ void Editor::frameSelection(PhysicsWorld& world, Camera& camera) {
     if (counted == 0) return;
 
     centre = centre / (float)counted;
+
+    if (camera.orthographic) {
+        // The zoom of the flat picture is the half-height of it in world
+        // units, so the thing has to fit in the height and in the width: the
+        // narrower of the two is what decides.
+        const Rect view = layout_.viewport;
+        const float aspect =
+            view.height > 1.0f ? view.width / view.height : 1.0f;
+        camera.orthoSize = clampf(radius * 1.6f / std::fmin(1.0f, aspect), 0.25f, 2000.0f);
+        // And the middle of the picture is the thing itself.
+        setFlatCentre(camera, centre);
+        return;
+    }
+
     const float halfFov = camera.fovDeg * 0.5f * kPi / 180.0f;
     // Half the frame's height has to cover the radius, plus a margin so the object
     // does not sit against the edge.
@@ -371,6 +432,7 @@ void Editor::openModal(Modal dialog) {
         break;
     case Modal::SaveFirst:
     case Modal::ShadowSettings:
+    case Modal::Fog:
     case Modal::None:
         break;
     }
@@ -455,6 +517,11 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         assets_.refresh();
         loadScene(world);
         break;
+    case Action::ReloadScripts:
+        // The scripts belong to the game, not to the editor, so the editor
+        // asks the shell around it to compile and run them again.
+        shellRequest_ = ShellRequest::ReloadScripts;
+        break;
     case Action::Exit:
         window.requestClose();
         break;
@@ -484,7 +551,10 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         break;
     }
     case Action::Delete:
-        deleteSelection(world);
+        // What is deleted is what is selected, and in the interface mode what
+        // is selected is an element of the interface.
+        if (guiMode_ && selectedGui_ >= 0) deleteGuiElement();
+        else deleteSelection(world);
         break;
     case Action::Undo:
         undo(world);
@@ -503,6 +573,54 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         }
         break;
     case Action::Landform:
+        // The window that makes the ground. It is opened and not toggled: the
+        // row says "the ground", and a row that closes the window it opened a
+        // moment ago is a row that undoes itself.
+        openToolPanel((int)PanelId::Landform);
+        break;
+    case Action::Water: {
+        // The water is a level of water over the ground: as wide as the
+        // ground is, and at the bottom of it, because the level of the sea is
+        // the level the ground begins at.
+        float width = 200.0f;
+        float depth = 200.0f;
+        float level = 0.0f;
+        float waterDepth = 6.0f;
+        if (landform_.ready()) {
+            width = landform_.settings().width * 1.5f;
+            depth = landform_.settings().depth * 1.5f;
+            level = landform_.settings().minHeight;
+            // How deep the water is: the height of the ground under it, plus
+            // a little, so that the water is deeper than the ground is high
+            // and the shore is under the water and not above it.
+            waterDepth = std::fmax(2.0f, landform_.settings().maxHeight -
+                                              landform_.settings().minHeight + 2.0f);
+        }
+        // Whatever was being changed before is finished first: one change is
+        // one entry on the undo stack.
+        commitUndo();
+        RigidBody body = BodyFactory::makeWater(Vec3{0.0f, level, 0.0f}, width, depth,
+                                                 Vec3{0.10f, 0.32f, 0.45f}, 0.65f);
+        body.water.depth = waterDepth;
+        world.bodies.push_back(body);
+        world.wakeAll();
+        const int index = (int)world.bodies.size() - 1;
+        // Selected on creation, like everything else that is made: a thing
+        // that was just made and cannot be got rid of is the worst kind.
+        activeBody_ = index;
+        selectedBodies_.assign(1, index);
+        // Remembered, so that Ctrl+Z can take the water away again.
+        rememberAddition(world, index);
+        commitUndo();
+        markSceneDirty();
+        break;
+    }
+    case Action::Cloud:
+        openToolPanel((int)PanelId::Cloud);
+        break;
+    case Action::Particles:
+        openToolPanel((int)PanelId::Particles);
+        break;
     case Action::TogglePanel:
         if (param >= 0 && param < kPanelCount) {
             Panel& panel = panels_[param];
@@ -532,6 +650,43 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
     case Action::Vectors:
         showVectors_ = !showVectors_;
         break;
+    case Action::Mode2D: {
+        // The world measured and not seen: an orthographic camera looking down
+        // one of the world's axes and a grid in the plane it looks at.
+        const bool on = !mode2D_;
+        mode2D_ = on;
+        applyMode2D(camera, on);
+        break;
+    }
+    case Action::FlatAxis: {
+        // Which plane of the world the flat picture is of. The picture does
+        // not turn - it is a picture of a plane, and a plane has three sides
+        // to be seen from.
+        if (!mode2D_) {
+            mode2D_ = true;
+            applyMode2D(camera, true);
+        }
+        setFlatAxis(camera, param);
+        break;
+    }
+    case Action::GuiMode:
+        setGuiMode(!guiMode_);
+        break;
+    case Action::GuiPanel:
+    case Action::GuiImage:
+    case Action::GuiText:
+    case Action::GuiButton: {
+        // Making a piece of the interface puts the editor in the mode that
+        // lays it out: a thing that is made and cannot be seen is a thing that
+        // was made for nothing.
+        setGuiMode(true);
+        gui::ElementKind kind = gui::ElementKind::Panel;
+        if (action == Action::GuiImage) kind = gui::ElementKind::Image;
+        else if (action == Action::GuiText) kind = gui::ElementKind::Text;
+        else if (action == Action::GuiButton) kind = gui::ElementKind::Button;
+        createGuiElement(kind);
+        break;
+    }
     case Action::ShadowMap:
         showShadowMap_ = !showShadowMap_;
         break;
@@ -560,11 +715,19 @@ void Editor::runAction(Action action, int param, PhysicsWorld& world, Camera& ca
         // cannot be dragged, and these are three numbers that want to be.
         openModal(Modal::ShadowSettings);
         break;
+    case Action::Fog:
+        // The fog is four numbers that want to be dragged, and a menu row
+        // cannot be dragged.
+        openModal(Modal::Fog);
+        break;
     case Action::FrameSelection:
         frameSelection(world, camera);
         break;
     case Action::ResetCamera:
         camera = homeCamera_;
+        // And back into the view the mode asks for: the 2D view is the XY
+        // plane and no other.
+        if (mode2D_) applyMode2D(camera, true);
         viewRay_.valid = false;
         break;
     case Action::Shape: {

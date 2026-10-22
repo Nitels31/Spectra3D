@@ -4,15 +4,23 @@
 
 #include <GL/gl.h>
 
+#include "core/TextCoverage.hpp"
+
 namespace s3d {
 
-// FreeType-backed glyph atlas for the editor UI. Covers printable ASCII, the
-// Cyrillic range the localisations need, and Latin-1 for German, French, Italian
-// and Spanish - umlauts, accents, cedilla, guillemets, oe ligature, inverted
-// marks - which keeps the atlas at a fixed 1024x1024 single page.
+// FreeType-backed glyph atlas for the editor UI. The letters it holds are the
+// ones the table in core/TextCoverage.hpp names: printable ASCII, the Cyrillic
+// the localisations need, Latin-1 for German, French, Italian and Spanish, and
+// the Bengali block for the Bengali pack - which keeps the atlas at a fixed
+// 1024x1024 single page.
+//
+// A letter that no font has is not drawn. It is not drawn as a box either: an
+// empty box in the middle of a word is worse than no letter at all, and a
+// question mark in the middle of a word is worse still. The atlas says so, and
+// the test that reads the language files says it out loud.
 class TextAtlas {
 public:
-    static constexpr int kGlyphCount = 239;
+    static constexpr int kGlyphCount = text::kGlyphCount;
     static constexpr int kPixelSize = 18;
     // The height of one line of text, in pixels. The interface lays its text out
     // in lines of this height, and the font is baked bigger than that - the
@@ -27,6 +35,10 @@ public:
         float width = 0, height = 0;
         float offsetX = 0, offsetY = 0;
         float advance = 0;
+        // False when no font of the chain has this letter. The letter is then
+        // not drawn and takes no room: a space has no ink but has an advance,
+        // and a letter that does not exist has neither.
+        bool hasGlyph = false;
     };
 
     TextAtlas() = default;
@@ -52,6 +64,8 @@ public:
     const Glyph& glyph(int index) const { return glyphs_[index]; }
 
     // Maps a code point to a slot in the atlas, or -1 when unsupported.
+    // The slot is where the letter would live; whether a font actually has it
+    // is asked of the glyph itself (`hasGlyph`).
     static int glyphIndex(unsigned codePoint);
     // The code point in a slot: the other direction of the same table.
     static unsigned codepointAt(int index);

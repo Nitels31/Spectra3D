@@ -181,7 +181,16 @@ void toggleFavorite(int index);
         // A stable key for items whose value is not an enum - a file name, say.
         // Empty for the rest, which are identified by `value` alone.
         const char* id = nullptr;
+        // Which column of the open list the item belongs to. Zero is the first
+        // column: a list that is one column wide is a list with one column.
+        int column = 0;
     };
+
+    // A list can be in two columns. The languages of the interface are on one
+    // side and the meme languages on the other: they are different things, and
+    // a list of twenty-three rows that has to be scrolled to find the language
+    // of the interface is a list that hides what it is for.
+    static constexpr int kMaxColumns = 2;
 
     // A dropdown is drawn in two halves, and the split is not cosmetic. Drawn in
     // one pass, the open list is painted where the row is and every row below it
@@ -194,10 +203,14 @@ void toggleFavorite(int index);
         int count = 0;
         int current = 0;
         int id = -1;  // -1 when the row was not drawn at all
+        // How many columns the open list has, and the caption of each one.
+        int columns = 1;
+        const char* columnTitles[kMaxColumns] = {nullptr, nullptr};
     };
     SelectPaint drawSelectField(UiRenderer& ui, UiContext& ctx, const Rect& rect,
                                 const char* caption, const SelectItem* items, int count,
-                                int current, int id, int fbWidth);
+                                int current, int id, int fbWidth, int columns = 1,
+                                const char* const* columnTitles = nullptr);
     // The open list, over everything. Returns the chosen value or -1, and opens
     // upwards when there is no room below - a list that runs off the bottom of
     // the window cannot be reached with the mouse at all.
@@ -289,6 +302,10 @@ void toggleFavorite(int index);
     // the last entries sit off the bottom of the window with no way to reach them.
     int selectScroll_ = 0;
     int selectHoverRow_ = -1;  // index into the items of the row the pointer is on
+    // Which column that row is in. A list with two columns has a row number
+    // in each of them, and the row under the pointer is only a row number
+    // together with the column it belongs to.
+    int selectHoverColumn_ = 0;
     // Rows and maximum scroll of the list that is currently open, published by the
     // draw pass so the key handler can page through the same list the mouse sees.
     // Keeping a private copy per dropdown would mean storing the whole geometry

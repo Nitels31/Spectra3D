@@ -234,6 +234,25 @@ bool UiContext::checkbox(UiRenderer& ui, int id, float x, float y, float w,
     return changed;
 }
 
+bool UiContext::chip(UiRenderer& ui, int id, const Rect& rect, bool& isHovered) {
+    isHovered = hovered(rect);
+    if (isHovered) markHovered(id);
+
+    // The press belongs to the widget that took it, and to no other - the
+    // same rule the buttons follow.
+    if (activeId_ == id) {
+        if (!isHovered || captured()) activeId_ = 0;
+    } else if (!captured() && !pressOnOverlay() && pointerPressed_ && isHovered) {
+        activeId_ = id;
+    }
+
+    if (activeId_ == id && pointerReleased_) {
+        activeId_ = 0;
+        return isHovered;
+    }
+    return false;
+}
+
 void UiContext::takeTextFocus(TextField& field) {
     // Whoever had the keyboard loses it. The text they typed stays - a field
     // that loses the caret keeps what was written in it - but the caret goes,
@@ -380,18 +399,26 @@ bool UiContext::propertyNumeric(UiRenderer& ui, int id, float x, float y, float 
     // number's box gives room back when there is not enough: a name that is
     // laid over a number is a name nobody can read, and a panel that is too
     // narrow for both of them is a panel whose numbers cannot be read either.
+    //
+    // A field with no name at all takes the whole of its space: a number in a
+    // list of rows has no room for a name of its own, because the name of the
+    // row is in the row.
+    const bool nameless = label[0] == '\0';
     const float labelX = x + 8.0f;
     float fieldX = x + w * 0.40f;
     float fieldW = w - w * 0.40f - 6.0f;
     constexpr float kMinLabelRoom = 54.0f;
-    if (fieldX - labelX - 6.0f < kMinLabelRoom) {
+    if (nameless) {
+        fieldX = x;
+        fieldW = w;
+    } else if (fieldX - labelX - 6.0f < kMinLabelRoom) {
         fieldX = labelX + kMinLabelRoom + 6.0f;
         fieldW = std::max(30.0f, x + w - 6.0f - fieldX);
     }
     const bool fieldHovered = hovered(Rect{fieldX, y, fieldW, theme::fieldHeight});
 
     const float labelRoom = std::max(0.0f, fieldX - labelX - 6.0f);
-    ui.textFit(labelX, y + 2.0f, labelRoom, label, theme::textDim);
+    if (!nameless) ui.textFit(labelX, y + 2.0f, labelRoom, label, theme::textDim);
     if (fieldHovered) markHovered(id);
 
     // --- inline text editor -------------------------------------------------

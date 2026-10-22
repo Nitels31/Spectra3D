@@ -1,0 +1,40 @@
+// The level of the game: the format SPL.
+{
+    // the name of the level
+    name = "level_01"
+    version = 3
+    ratio = 0.5
+    enabled = true
+
+    // the tags are shown in the menu
+    tags = ["engine", "script", "3d"]
+
+    // the player at the start
+    player = {
+        hp = 100
+        name = 'hero'
+        position = [0.0, 1.0, 0.0]
+        size = [2.0, 2.0, 2.0]
+    }
+
+    // the camera of the level
+    camera = {
+        fov = 60.0
+        position = [0.0, 5.0, 10.0]
+        look_at = [0.0, 1.0, 0.0]
+    }
+
+    // the materials of the level
+    materials = {
+        ground = { texture = "assets/ground.png", shininess = 0.0 }
+        wall = { texture = "assets/wall.png", shininess = 32.0 }
+    }
+
+    /* the coins are placed along the path
+       and the player has to collect them */
+    coins = [
+        { x = 2.0, y = 0.5, z = 0.0 }
+        { x = 4.0, y = 0.5, z = 0.0 }
+        { x = 6.0, y = 0.5, z = 0.0 }
+    ]
+}

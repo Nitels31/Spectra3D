@@ -58,6 +58,17 @@ inline constexpr const char* kEngineCoreNames[] = {
     "libSpectraPlayer.so",
     "libSpectraPlayer.dylib",
 };
+// The player: the program that plays a game. The engine, a window and a loop,
+// with no editor and no launcher in it.
+//
+// It is built next to the editor and copied into a build under the name of the
+// game, so it is looked for next to the running program.
+inline constexpr const char* kPlayerProgramNames[] = {
+    "SpectraPlayer.exe",
+    "SpectraPlayer",
+    "spectra_player.exe",
+    "spectra_player",
+};
 // Where the editor keeps the workspace it was left in: dock sizes, which panels
 // are open and where each one floats. Per project, like the scene - two projects
 // are two workspaces.
@@ -110,7 +121,7 @@ enum class LanguageTag {
     English, Ukrainian, German, French, Italian, Spanish, Lolcat,
     Jeb, Pirate, BrokenUtf8, Hex, GeometryDash,
     Portuguese, Minecraft, Undertale, Celeste, Doom, WolfOfWallStreet,
-    AmongUs, Leet, Klingon, Gopnik, Shakespeare,
+    AmongUs, Leet, Klingon, Gopnik, Shakespeare, Bengali,
 };
 
 inline const char* languageCode(LanguageTag tag) {
@@ -137,6 +148,7 @@ inline const char* languageCode(LanguageTag tag) {
         case LanguageTag::Klingon: return "tlh";
         case LanguageTag::Gopnik: return "gop";
         case LanguageTag::Shakespeare: return "sha";
+        case LanguageTag::Bengali: return "bn";
         case LanguageTag::English:
         default: return "en";
     }
@@ -212,6 +224,21 @@ struct ProjectInfo {
     float shadowNormalOffset = 2.0f;
     // The widest the penumbra of the soft mode may get, in texels.
     float shadowRadius = 12.0f;
+    // The fog: the air between the eye and the thing.
+    //
+    // It is the project's for the same reason the shadows are: a scene that
+    // looks the same on another machine is the same scene, and the weather of
+    // a scene is a part of how it looks.
+    //
+    // The numbers are the ones the fog is made of: how thick it is where it
+    // is thickest (1/m), how fast it thins as it goes up (1/m), the height at
+    // which it is thickest (m), how much of the sun's light it carries, and
+    // how forward it throws that light. Zero density is no fog at all.
+    float fogDensity = 0.0f;
+    float fogFalloff = 0.04f;
+    float fogHeight = 0.0f;
+    float fogScatter = 0.25f;
+    float fogForward = 0.7f;
     bool valid = false;
 };
 
@@ -327,6 +354,11 @@ bool projectExists(const std::string& path);
 // folder of a project. Empty when there is none - a project that carries no
 // core is a project that runs on the engine it is opened with.
 std::string findEngineCore();
+
+// The player: the program that plays a game, next to the running program.
+// Empty when there is none - a build of a game is made of it, and without it
+// a build is a copy of the editor.
+std::string findPlayerProgram();
 
 // The data folder of a built game: "<exeDir>/<name>_Data", where <name> is the
 // name of the program without the extension.

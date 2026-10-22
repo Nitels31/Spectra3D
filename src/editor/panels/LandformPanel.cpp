@@ -2,6 +2,7 @@
 
 #include "core/Log.hpp"
 #include "core/Math.hpp"
+#include "editor/Picking.hpp"
 #include "scene/Landform.hpp"
 #include "ui/Theme.hpp"
 
@@ -46,12 +47,21 @@ int nextSeed(int seed) {
 // A body that is inside the ground is a body the physics pushes out of it, and
 // it comes out upwards - which looks exactly like a gravity that points the
 // wrong way, and is nothing of the kind.
-void liftBodiesAboveLandform(PhysicsWorld& world, const Landform& landform) {
+//
+// The ground stands where it was put, and the height of it is asked about in
+// the ground's own frame: the ground is made in the middle of the world and
+// then put where it belongs.
+void liftBodiesAboveLandform(PhysicsWorld& world, const Landform& landform, float originX,
+                             float originY, float originZ) {
     for (RigidBody& body : world.bodies) {
         // The ground itself is static and stays where it is, and so does
         // anything else that is nailed down.
         if (body.material.isStatic) continue;
-        const float surface = landform.heightAt(body.position.x, body.position.z);
+        // The height of the ground is measured from its middle, and the world
+        // is measured from the same place.
+        const float surface = landform.heightAt(body.position.x - originX,
+                                                body.position.z - originZ) +
+                               originY;
         const float bottom = body.position.y - body.halfExtents.y;
         if (bottom >= surface) continue;
         body.position.y += surface - bottom;
@@ -221,6 +231,15 @@ void Editor::drawLandformPanel(UiRenderer& ui, PhysicsWorld& world, const Rect& 
     ui_.propertyFloat(ui, kLandformSmoothing, x, y, width, text("landform.smoothing"),
                       landformSettings_.smoothing, 0.02f, 0.0f, 1.0f);
     y += kFieldHeight;
+    // The little bumps on the surface of the ground, and how much the valleys
+    // are darkened. Together they are the difference between a shape and a
+    // piece of land.
+    ui_.propertyFloat(ui, kLandformDetail, x, y, width, text("landform.detail"),
+                      landformSettings_.detail, 0.005f, 0.0f, 1.0f);
+    y += kFieldHeight;
+    ui_.propertyFloat(ui, kLandformShading, x, y, width, text("landform.shading"),
+                      landformSettings_.shading, 0.005f, 0.0f, 1.0f);
+    y += kFieldHeight;
 
     // --- the size ----------------------------------------------------------
     ui_.propertyFloat(ui, kLandformWidth, x, y, width, text("landform.width"),
@@ -239,14 +258,75 @@ void Editor::drawLandformPanel(UiRenderer& ui, PhysicsWorld& world, const Rect& 
                       landformCells_, 1.0f, 2.0f, 256.0f);
     y += kFieldHeight;
 
+    // --- where the ground lands --------------------------------------------
+    // Where the new ground is put. The ground is a body in the scene and it
+    // can be dragged where it belongs afterwards, but the ground that is made
+    // here lands where it is told to, and the middle of the world is not
+    // always where the game is.
+    ui.textFit(x, y, width, text("landform.place"), theme::textDim);
+    y += theme::textLineHeight + 4.0f;
+    {
+        const float half = (width - 8.0f) * 0.5f;
+        ui_.propertyFloat(ui, kLandformPlaceX, x, y, half, text("landform.placeX"),
+                          landformPlaceX_, 0.5f, -1000.0f, 1000.0f);
+        ui_.propertyFloat(ui, kLandformPlaceZ, x + half + 8.0f, y, half, text("landform.placeZ"),
+                          landformPlaceZ_, 0.5f, -1000.0f, 1000.0f);
+        y += kFieldHeight;
+    }
+
     // --- the colour --------------------------------------------------------
-    // Whether the ground is coloured by its height and its steepness, or all
-    // of it is one colour with the picture on it.
+    // Whether the ground is coloured by its biome, or all of it is one colour
+    // with the picture on it.
     ui_.checkbox(ui, kLandformBiomes, x, y, width, text("landform.biomes"),
                  landformSettings_.biomes);
     y += 22.0f;
 
-    if (!landformSettings_.biomes) {
+    if (landformSettings_.biomes) {
+        // --- the biome ------------------------------------------------------
+        // Which colours the ground comes out in. A biome is a set of colours
+        // and nothing else: the ground is made the same way in every one of
+        // them.
+        //
+        // The swatches are the colours of the biomes themselves, so the row
+        // is a picture of the choice rather than a list of names to be read.
+        y += 2.0f;
+        ui.textFit(x, y, width, text("landform.biome"), theme::textDim);
+        y += theme::textLineHeight + 4.0f;
+        {
+            const float swatch =
+                std::min(28.0f, (width - (float)(kLandformBiomeCount - 1) * 2.0f) /
+                                     (float)kLandformBiomeCount);
+            for (int i = 0; i < kLandformBiomeCount; ++i) {
+                const float sx = x + (float)i * (swatch + 2.0f);
+                const Rect hit{sx, y, swatch, swatch};
+                if (ui_.button(ui, kLandformBiome + i, hit.x, hit.y, hit.width, hit.height, ""))
+                    landformSettings_.biome = (LandformBiome)i;
+
+                // The swatch is the biome itself in three bands: the bottom of
+                // the ground, the ground, and the top of it. A row of eight of
+                // them is a picture of the choice, and a picture needs no
+                // reading.
+                const LandformPalette& palette = landformPalette((LandformBiome)i);
+                const float band = hit.height / 3.0f;
+                const float* const bands[3] = {palette.low, palette.mid, palette.high};
+                for (int b = 0; b < 3; ++b)
+                    ui.fillRect(hit.x, hit.y + hit.height - (float)(b + 1) * band, hit.width,
+                                band, Color{bands[b][0], bands[b][1], bands[b][2]});
+
+                // The one that is chosen is the one with a frame around it.
+                if ((int)landformSettings_.biome == i) {
+                    ui.fillRect(hit.x - 2.0f, hit.y - 2.0f, hit.width + 4.0f, 1.0f, theme::accent);
+                    ui.fillRect(hit.x - 2.0f, hit.y + hit.height + 1.0f, hit.width + 4.0f, 1.0f,
+                                theme::accent);
+                }
+            }
+            y += swatch + 8.0f;
+            // The name of the biome that is chosen, under the swatches: the
+            // colours are a picture, and the picture needs a word under it.
+            ui.textFit(x, y, width, text(landformBiomeName(landformSettings_.biome)), theme::text);
+            y += theme::textLineHeight + 4.0f;
+        }
+    } else {
         y += 2.0f;
         ui.textFit(x, y, width, text("landform.color"), theme::textDim);
         y += theme::textLineHeight + 4.0f;
@@ -254,8 +334,13 @@ void Editor::drawLandformPanel(UiRenderer& ui, PhysicsWorld& world, const Rect& 
         for (int i = 0; i < kLandformColors; ++i) {
             const float sx = x + (float)i * (swatch + 2.0f);
             const Rect hit{sx, y, swatch, swatch};
-            if (ui_.button(ui, kLandformColor + i, hit.x, hit.y, hit.width, hit.height, ""))
+            if (ui_.button(ui, kLandformColor + i, hit.x, hit.y, hit.width, hit.height, "")) {
+                // All three of the numbers: a colour that is only red is not
+                // the colour of the swatch that was pressed.
                 landformSettings_.color[0] = kLandformColorValues[i][0];
+                landformSettings_.color[1] = kLandformColorValues[i][1];
+                landformSettings_.color[2] = kLandformColorValues[i][2];
+            }
             ui.fillRect(hit.x, hit.y, hit.width, hit.height,
                         Color{kLandformColorValues[i][0], kLandformColorValues[i][1],
                               kLandformColorValues[i][2]});
@@ -269,6 +354,43 @@ void Editor::drawLandformPanel(UiRenderer& ui, PhysicsWorld& world, const Rect& 
             }
         }
         y += swatch + 8.0f;
+    }
+
+    // --- the brush ----------------------------------------------------------
+    // What a stroke of the hand does to the ground. The brush is armed with
+    // the button at the end of it, and then the hand in the viewport paints
+    // the ground instead of picking it.
+    y += 2.0f;
+    ui.textFit(x, y, width, text("landform.brush"), theme::textDim);
+    y += theme::textLineHeight + 4.0f;
+    {
+        // Four brushes in a row: the names are words, and a word does not fit
+        // in a quarter of a panel.
+        const float brushWidth = (width - 12.0f) / 4.0f;
+        for (int i = 0; i < 4; ++i) {
+            const Rect hit{x + (float)i * (brushWidth + 4.0f), y, brushWidth, kShapeRowHeight};
+            const bool on = (int)landformBrush_ == i;
+            if (ui_.button(ui, kLandformBrush + i, hit.x, hit.y, hit.width, hit.height,
+                           text(landformBrushName((LandformBrush)i)), on))
+                landformBrush_ = (LandformBrush)i;
+        }
+        y += kShapeRowHeight + 4.0f;
+    }
+    // How wide the stroke is, and how much it does.
+    ui_.propertyFloat(ui, kLandformBrushRadius, x, y, width, text("landform.brushRadius"),
+                      landformBrushRadius_, 0.1f, 0.5f, 60.0f);
+    y += kFieldHeight;
+    ui_.propertyFloat(ui, kLandformBrushStrength, x, y, width, text("landform.brushStrength"),
+                      landformBrushStrength_, 0.05f, 0.1f, 40.0f);
+    y += kFieldHeight;
+    {
+        // The button that puts the brush in the hand.
+        const Rect hit{x, y, width, kButtonHeight};
+        if (ui_.button(ui, kLandformPaint, hit.x, hit.y, hit.width, hit.height,
+                       text(landformPainting_ ? "landform.paintStop" : "landform.paint"),
+                       landformPainting_))
+            landformPainting_ = !landformPainting_;
+        y += kButtonHeight + 4.0f;
     }
 
     // How tall the panel wanted to be, measured on the way out.
@@ -325,6 +447,11 @@ void Editor::makeLandform(PhysicsWorld& world) {
     // first one with a different name on it, and the button would look like
     // it did nothing.
     asset.name = "landform " + std::to_string(settings.seed);
+    // The settings the ground was made of travel with the mesh, so a scene
+    // that is saved says how the ground was made and the ground is made again
+    // when the scene is opened. Without them the ground would come back as a
+    // box the size of the ground.
+    asset.landform = landform_.settings();
 
     // The picture on the ground. The texture tiles, so the grass is grass and
     // not one photograph stretched over a hundred metres. The biomes carry
@@ -339,15 +466,22 @@ void Editor::makeLandform(PhysicsWorld& world) {
         Log::error("Landform: the ground could not be made");
         return;
     }
+    // The ground the panel is working on: the brush paints this one until the
+    // hand is over another ground.
+    landformMesh_ = mesh;
 
-    // The body it becomes: a mesh body, at the origin, with the size the mesh
-    // says it has.
+    // The body it becomes: a mesh body, with the size the mesh says it has,
+    // where the panel says the ground lands.
+    //
+    // The body stands at the middle of the ground: the mesh is drawn around
+    // its own middle, and the ground is the height it was asked to be.
     const MeshAsset* made = meshes_.at(mesh);
     RigidBody body;
     body.shape = Shape::Mesh;
     body.mesh = mesh;
     body.halfExtents = made ? made->half : Vec3{1.0f, 1.0f, 1.0f};
-    body.position = Vec3{0.0f, settings.minHeight, 0.0f};
+    body.position = Vec3{landformPlaceX_, (settings.minHeight + settings.maxHeight) * 0.5f,
+                         landformPlaceZ_};
     // The ground does not fall. A piece of ground that falls is a box, and a box
     // that falls through the floor takes the scene with it.
     body.material.isStatic = true;
@@ -360,7 +494,8 @@ void Editor::makeLandform(PhysicsWorld& world) {
     commitUndo();
 
     // And whatever was standing where the ground now is is put on top of it.
-    liftBodiesAboveLandform(world, landform_);
+    liftBodiesAboveLandform(world, landform_, landformPlaceX_,
+                            (settings.minHeight + settings.maxHeight) * 0.5f, landformPlaceZ_);
 
     // And it is selected, so the inspector shows what was just made.
     activeBody_ = (int)world.bodies.size() - 1;
@@ -368,6 +503,148 @@ void Editor::makeLandform(PhysicsWorld& world) {
     markSceneDirty();
     Log::info("Landform: %dx%d ground made, %d squares, %d thread(s)", (int)settings.width,
               (int)settings.depth, settings.cells * settings.cells, settings.threads);
+}
+
+// Paints the ground under the pointer.
+//
+// The brush follows the hand, and the hand is over the ground. The ground
+// under the ray is found with the box of the ground first - it is cheap, and
+// it says where a ground could be - and then with the heights of it, because
+// a box is not a hill and the brush paints hills.
+void Editor::paintGround(PhysicsWorld& world, const Vec3& origin, const Vec3& direction,
+                         float dt) {
+    // The ground the ray is over: the nearest one whose box the ray meets.
+    int found = -1;
+    float nearest = 0.0f;
+    for (int i = 0; i < (int)world.bodies.size(); ++i) {
+        const RigidBody& body = world.bodies[i];
+        if (!body.hasMesh()) continue;
+        const MeshAsset* asset = meshes_.at(body.mesh);
+        if (!asset || !asset->landform) continue;
+        float distance = 0.0f;
+        if (!picking::intersectObb(origin, direction, body, distance)) continue;
+        if (found < 0 || distance < nearest) {
+            nearest = distance;
+            found = i;
+        }
+    }
+    if (found < 0) return;
+
+    RigidBody& body = world.bodies[(size_t)found];
+    const MeshAsset* asset = meshes_.at(body.mesh);
+    if (!asset) return;
+
+    // The ground the panel is working on: the one that was made last, or the
+    // one under the hand. The mesh it belongs to is remembered, so that the
+    // ground is not read again for every frame of a stroke.
+    if (landformMesh_ != body.mesh) {
+        landform_.build(*asset->landform);
+        if (!asset->landformHeights.empty()) landform_.setHeights(asset->landformHeights);
+        landformMesh_ = body.mesh;
+    }
+
+    // The ray in the ground's own frame: the ground is made in the middle of
+    // the world and then put where it belongs.
+    const Quat inverse = body.orientation.conjugate();
+    const Vec3 localOrigin = rotate(inverse, origin - body.position);
+    const Vec3 localDirection = rotate(inverse, direction);
+
+    float distance = 0.0f;
+    if (!landform_.rayHit(localOrigin, localDirection, distance)) return;
+
+    // Where the ray met the ground, in the ground's own frame.
+    const Vec3 point = localOrigin + localDirection * distance;
+    const float x = point.x;
+    const float z = point.z;
+
+    // The stroke begins where the hand was put down, and the flatten brush
+    // levels the ground to the height it had there.
+    if (ui_.pointerPressed()) {
+        landform_.beginStroke(x, z);
+        // The ground as it was before the stroke: it is what the stroke is
+        // taken back to.
+        paintBefore_ = landform_.heights();
+        paintMesh_ = body.mesh;
+    }
+
+    // How much the stroke does. The strength is in metres a second, so the
+    // brush does the same amount of work on a slow machine and on a fast one.
+    const float amount = landformBrushStrength_ * dt;
+    if (!landform_.paint(x, z, landformBrushRadius_, amount, landformBrush_)) return;
+
+    // The mesh of the ground is the ground now. It is put back where it was -
+    // the body that stands on it keeps pointing at it - and the picture on it
+    // is the picture it had.
+    MeshAsset mesh = landform_.toMesh();
+    mesh.name = meshes_.nameOf(body.mesh);
+    if (const MeshAsset* before = meshes_.at(body.mesh))
+        for (size_t part = 0; part < mesh.parts.size() && part < before->parts.size(); ++part)
+            mesh.parts[part].texture = before->parts[part].texture;
+    mesh.landform = *asset->landform;
+    mesh.landformHeights = landform_.heights();
+    meshes_.update(body.mesh, std::move(mesh));
+
+    // And the body: the ground is a little taller now, and the box of it with
+    // it.
+    if (const MeshAsset* made = meshes_.at(body.mesh)) body.halfExtents = made->half;
+    body.syncPrevTransform();
+    markSceneDirty();
+}
+
+// Puts the heights of a ground back into its mesh.
+//
+// The ground is a heightfield inside a mesh, and the mesh is in the registry
+// of meshes and not in the world: this is what takes a stroke of the brush
+// back, and what makes it again.
+void Editor::restoreGroundHeights(PhysicsWorld& world, int meshIndex,
+                                  const std::vector<float>& heights) {
+    if (meshIndex < 0 || heights.empty()) return;
+    const MeshAsset* asset = meshes_.at(meshIndex);
+    if (!asset || !asset->landform) return;
+
+    // The ground is made again with the heights that are given to it, and the
+    // mesh is put back where it was.
+    Landform ground;
+    ground.build(*asset->landform);
+    ground.setHeights(heights);
+
+    MeshAsset mesh = ground.toMesh();
+    mesh.name = meshes_.nameOf(meshIndex);
+    for (size_t part = 0; part < mesh.parts.size() && part < asset->parts.size(); ++part)
+        mesh.parts[part].texture = asset->parts[part].texture;
+    mesh.landform = *asset->landform;
+    mesh.landformHeights = ground.heights();
+    meshes_.update(meshIndex, std::move(mesh));
+
+    // And the body that stands on the ground: the ground is a little taller
+    // or shorter now, and the box of it with it.
+    for (RigidBody& body : world.bodies) {
+        if (body.mesh != meshIndex) continue;
+        if (const MeshAsset* made = meshes_.at(meshIndex)) body.halfExtents = made->half;
+        body.syncPrevTransform();
+    }
+    markSceneDirty();
+}
+
+// The stroke is over: what it did is one entry on the undo stack.
+void Editor::endPaintStroke() {
+    if (paintMesh_ < 0 || paintBefore_.empty()) {
+        paintMesh_ = -1;
+        paintBefore_.clear();
+        return;
+    }
+    // The ground as it is now, and the ground as it was: the two are swapped
+    // as the stroke is taken back and made again.
+    UndoStep step;
+    step.kind = UndoStep::Kind::Painted;
+    step.index = paintMesh_;
+    step.heightsBefore = paintBefore_;
+    step.heightsAfter = landform_.heights();
+    pending_.steps.push_back(std::move(step));
+    commitUndo();
+
+    paintMesh_ = -1;
+    paintBefore_.clear();
 }
 
 } // namespace s3d

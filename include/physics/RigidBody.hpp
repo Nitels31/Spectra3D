@@ -1,9 +1,12 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "core/Math.hpp"
+#include "physics/CustomParam.hpp"
 #include "physics/Material.hpp"
+#include "physics/WaterSettings.hpp"
 
 namespace s3d {
 
@@ -23,6 +26,15 @@ enum class Shape {
     // a new shape has to be appended or every scene written before it changes
     // what it means.
     Camera,
+    // A flat square in the XY plane: the 2D workhorse. It is a box that is
+    // very thin, and it is collided as one - a sprite in a flat world is a
+    // rectangle.
+    Quad,
+    // Water: a surface, not a thing. It is a level of water over the ground,
+    // and it is looked at and not collided with - a body that fell into it
+    // falls through it, which is what a body does when there is no water in
+    // the game yet.
+    Water,
 };
 
 // Collision primitive of a rigid body plus everything the simulation needs to
@@ -67,6 +79,19 @@ struct RigidBody {
     // measure the engine's own view camera uses, so the two mean the same
     // thing and a camera entity needs no conversion to be looked through.
     float cameraFov = 70.0f;
+
+    // The water of a body that is water: how much of what is under it can be
+    // seen through it. One is clear water and zero is a wall of it.
+    //
+    // The colour of the water is the colour of the body, like every other
+    // body's colour, and the level it stands at is where the body stands.
+    float waterAlpha = 0.65f;
+
+    // Everything else about the water: the waves, the colours, the foam and
+    // the light. It is here and not in the renderer because the water is a
+    // property of the body that is water - two sheets of water in one scene
+    // can look nothing alike.
+    WaterSettings water;
 
     // `mesh` indexes MeshRegistry, which lives one layer up in `assets`. The
     // physics layer therefore only carries the opaque handle, never the type.
@@ -124,6 +149,41 @@ struct RigidBody {
 
     Material material;
 
+    // The parameters of the thing, as the person who built it said them.
+    //
+    // The engine knows nothing about what they mean: it carries them, saves
+    // them with the body and hands them to the scripts. A crate with a
+    // "health" of 100 and a door with an "open" of true are the same kind of
+    // thing to the engine, and both are things a person put there on purpose.
+    std::vector<CustomParam> params;
+
+    // The volume of the body in cubic metres, from its shape and its size.
+    //
+    // It is what the density of the material is multiplied by to make the
+    // mass, so it is the bridge between "what is it made of" and "how heavy
+    // is it".
+    float volume() const;
+
+    // The mass of the body, and the density of its material.
+    //
+    // They are two ways of saying the same thing, and keeping them in step
+    // is the point: a mass that was typed in changes the density to match,
+    // and a density that was changed changes the mass to match. A body whose
+    // mass and density disagree is a body whose weight is a lie.
+    void setMass(float newMass);
+    void setDensity(float newDensity);
+
+    // The parameter with this name, or null. The name is the identity of the
+    // parameter, so the first one with the name is the one that is found.
+    CustomParam* findParam(const std::string& name);
+    const CustomParam* findParam(const std::string& name) const;
+
+    // The value of the parameter with this name, as a number, and the number
+    // it is set to. A parameter that is not there is zero, and setting a
+    // parameter that is not there makes one.
+    float paramNumber(const std::string& name) const;
+    void setParamNumber(const std::string& name, float value);
+
     // There is no warm-start cache here. The walls are gone - the world has no
     // box around it - and the impulses of a body against another body live in
     // the physics world's pair table, which outlives the contacts of a step.
@@ -148,6 +208,9 @@ struct RigidBody {
 
     bool hasMesh() const { return mesh >= 0; }
     bool isCamera() const { return shape == Shape::Camera; }
+    // Water is looked at and not collided with, like a camera is looked
+    // through and not collided with.
+    bool isWater() const { return shape == Shape::Water; }
 };
 
 const char* shapeName(Shape s);

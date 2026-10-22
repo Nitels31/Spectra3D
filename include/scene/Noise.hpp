@@ -61,9 +61,32 @@ float cellularNoise(float x, float y, unsigned int seed);
 // The noise, read at coordinates that another noise has moved.
 //
 // The warp is two noises reading two more noises, and the shape that comes
-// out has edges that bend and folds in on themselves. Without it the ground
+// out has edges that bend and fold in on themselves. Without it the ground
 // looks like a sponge; with it, it looks like something the wind has been
 // working on for a long time. 0..1.
 float warpedFbm(float x, float y, unsigned int seed, int octaves = 4, float strength = 1.0f);
+
+// THE SAME NOISE, IN THREE DIMENSIONS
+//
+// The ground is a picture of the world seen from above, and two dimensions are
+// enough for it. A cloud is not: a puff of cloud has a place in the world, and
+// the noise that decides where the puffs are has to know the height as well -
+// or the cloud is one puff pasted up and down, and it is a sheet of it.
+unsigned int hashLattice3(int x, int y, int z, unsigned int seed);
+
+// The direction at a lattice point in three dimensions: one of the twelve
+// edges of a cube, chosen by the hash. The same point always has the same
+// direction, for every seed and on every machine.
+void latticeGradient3(int x, int y, int z, unsigned int seed, float& gx, float& gy, float& gz);
+
+// Perlin's gradient noise in three dimensions: -1..1.
+//
+// The same rule as in two: zero at the lattice points, and it fades to zero
+// there, so a cloud has no seams in it where the samples happen to land.
+float perlinNoise3(float x, float y, float z, unsigned int seed);
+
+// The noise in octaves, in three dimensions. 0..1.
+float fbm3(float x, float y, float z, unsigned int seed, int octaves = 4, float lacunarity = 2.0f,
+           float gain = 0.5f);
 
 } // namespace s3d

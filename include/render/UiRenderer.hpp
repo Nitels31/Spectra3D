@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 #include <vector>
 
 #include <GL/gl.h>
@@ -52,6 +53,19 @@ void begin(int width, int height);
     // below kMinTextScale. Returns the scale used, so a caller can put a caret or
     // a second column right after the text.
     float textFit(float x, float y, float maxWidth, const char* utf8, const Color& color);
+
+    // The lines `utf8` is broken into when it does not fit in `maxWidth`.
+    //
+    // A word is kept whole where it can be, and a word that is longer than the
+    // whole line is broken between its letters. Nothing is cut: every
+    // character of the text is in one of the lines, and the lines together are
+    // the text.
+    //
+    // This is what a shrinking place asks for. A name that is cut off at the
+    // edge of a column is a name nobody can read, and a name shrunk to fit is
+    // a name in letters too small to read either - two lines of the same
+    // words are better than either.
+    std::vector<std::string> wrapText(const char* utf8, float maxWidth) const;
 
 private:
     // Scissor box in GL coordinates, which is the same rectangle with the origin

@@ -93,6 +93,14 @@ void Editor::rebuildFilter(const PhysicsWorld& world, const char* query) {
 
 void Editor::drawHierarchyDock(UiRenderer& ui, PhysicsWorld& world, Window& window,
                                const Rect& dock) {
+    // The interface of the game is a tree like the world is, and it is shown
+    // in the same panel: the panel on the left is "what is in this project",
+    // and what is in it depends on what is being laid out.
+    if (guiMode_) {
+        drawGuiHierarchyDock(ui, dock);
+        return;
+    }
+
     dockHeader(ui, dock, text("tab.hierarchy"));
 
     // The star in the header filters the tree down to favourites, the way it does

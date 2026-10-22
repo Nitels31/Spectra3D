@@ -18,6 +18,12 @@
 #include "platform/Window.hpp"
 
 namespace s3d {
+
+class ParticleSystem;
+namespace gui {
+struct Canvas;
+}
+
 namespace script {
 
 // AngelScript host for the `engine::` scripting layer.
@@ -88,8 +94,17 @@ public:
     // `sound` is null when there is no device - a machine with no sound card -
     // and every sound binding then answers "no" instead of touching a device
     // that is not there.
+    //
+    // `particles` is null when there is no particle system, and every
+    // particle binding then answers quietly: a script that asks for a fire
+    // in a game that has no particles is not a mistake worth a crash.
+    //
+    // `canvas` is null when there is no interface, and every interface
+    // binding then answers quietly: a script that asks a label to change in
+    // a game that has no labels is not a mistake worth a crash.
     Host(PhysicsWorld& world, MeshRegistry& meshes, Camera& camera, Window* window,
-         SoundDevice* sound = nullptr);
+         SoundDevice* sound = nullptr, ParticleSystem* particles = nullptr,
+         gui::Canvas* canvas = nullptr);
     ~Host();
     Host(const Host&) = delete;
     Host& operator=(const Host&) = delete;
@@ -184,6 +199,8 @@ private:
     Camera& camera_;
     Window* window_ = nullptr;
     SoundDevice* sound_ = nullptr;
+    ParticleSystem* particles_ = nullptr;
+    gui::Canvas* canvas_ = nullptr;
 
     // asIScriptEngine* and asIScriptContext*, hidden so this header never has to
     // include AngelScript.

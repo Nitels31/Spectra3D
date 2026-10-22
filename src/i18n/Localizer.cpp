@@ -29,7 +29,7 @@ const Bundle kBundles[] = {
     {Language::Doom, "dm.lang"}, {Language::WolfOfWallStreet, "wows.lang"},
     {Language::AmongUs, "sus.lang"}, {Language::Leet, "leet.lang"},
     {Language::Klingon, "tlh.lang"}, {Language::Gopnik, "gop.lang"},
-    {Language::Shakespeare, "sha.lang"},
+    {Language::Shakespeare, "sha.lang"}, {Language::Bengali, "bn.lang"},
 };
 
 } // namespace
@@ -131,8 +131,9 @@ const std::string& Localizer::languageName() const {
     static const std::string kAmongUs = "Among Us";
     static const std::string kLeet = "1337";
     static const std::string kKlingon = "Klingon";
-    static const std::string kGopnik = "Пацан";
-    static const std::string kShakespeare = "Shakespeare";
+static const std::string kGopnik = "Пацан";
+static const std::string kShakespeare = "Shakespeare";
+static const std::string kBengali = "বাংলা";
     switch (language_) {
     case Language::Ukrainian: return kUkrainian;
     case Language::German: return kGerman;
@@ -156,6 +157,7 @@ const std::string& Localizer::languageName() const {
     case Language::Klingon: return kKlingon;
     case Language::Gopnik: return kGopnik;
     case Language::Shakespeare: return kShakespeare;
+    case Language::Bengali: return kBengali;
     case Language::English:
     default: return kEnglish;
     }

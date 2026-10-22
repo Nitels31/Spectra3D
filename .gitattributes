@@ -14,3 +14,36 @@
 # The one exception, because the platform's own ending is the one that works: a
 # .bat file with LF line endings is not guaranteed to run on Windows.
 *.bat text eol=crlf
+
+# The binaries are not text at all, and `* text eol=lf` was eating them: the
+# normalization removes every CR byte, and a file that has lost them is a file
+# that is not what it was. A static library that has lost two bytes is a
+# library the linker cannot read ("file too short"), a font that has lost
+# twenty-nine draws thirty-five of its two hundred and thirty-nine letters,
+# and a mesh that has lost a few does not parse at all.
+#
+# `-text` and nothing else: the file is left exactly as it is, in the
+# repository and on the checkout.
+*.a -text
+*.lib -text
+*.dll -text
+*.exe -text
+*.o -text
+*.pdb -text
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.bmp -text
+*.ico -text
+*.ttf -text
+*.otf -text
+*.ttc -text
+*.wav -text
+*.mp3 -text
+*.ogg -text
+*.zip -text
+*.glb -text
+*.fbx -text
+*.ply -text
+*.blend -text
+*.psd -text

@@ -2,29 +2,27 @@
 #include <string>
 #include <vector>
 
+#include "assets/LandformSettings.hpp"
 #include "assets/MeshAsset.hpp"
 
 namespace s3d {
 
-// The shape the ground takes.
+// The shape of the ground, and the noise it is made of.
 //
-// The noise under every one of them is the same; what differs is what is done
-// to the noise afterwards. That is why the shapes are here and not inside the
-// noise: the noise knows how to make hills, and it does not know what a
-// plateau is.
-enum class LandformShape {
-    Hills,     // rolling ground, the plainest of them
-    Mountains, // ridges and peaks, with the ground falling away at the sides
-    Island,    // ground that sinks into the water at the edges
-    Plateau,   // flat tops with steps between them
-    Canyon,    // a river cut through the ground
-    Dunes,     // round hills, stretched along one axis
-};
-
-// How many shapes there are, and the name of each. The panel asks for the
-// name and the index, so the two cannot get out of step.
-inline constexpr int kLandformShapeCount = 6;
+// The description of the ground - what shape it takes and the numbers it is
+// made of - is in `assets/LandformSettings.hpp`, because a ground is a mesh
+// and the mesh carries the settings it was made of: a scene that is saved
+// says how the ground was made, and the ground is made again when the scene
+// is opened.
+//
+// What is here is the making of it: the heightfield, and the mesh that is
+// cut from it.
 const char* landformShapeName(LandformShape shape);
+
+// The name of a biome, as the localisation table spells it. The panel shows
+// the name and the colours of the biome, and the two come from the same
+// place.
+const char* landformBiomeName(LandformBiome biome);
 
 // A RANDOM NUMBER FOR THE VARIATION OF A GROUND.
 //
@@ -35,132 +33,19 @@ const char* landformShapeName(LandformShape shape);
 // twice, and a ground made with the same number is the same ground.
 float landformVariation();
 
-// A LANDFORM
+// The brush: what a stroke of the pointer does to the ground.
 //
-// The shape of the ground, made of noise.
-//
-// The settings are what a person sets before the ground is made: how low and
-// how high it goes, how big it is, how finely it is cut into squares, and
-// what the noise is made of.
-struct LandformSettings {
-    // The height of the lowest and the highest square, in the world's units.
-    float minHeight = 0.0f;
-    float maxHeight = 12.0f;
-
-    // The size of the ground, along X and along Z.
-    float width = 40.0f;
-    float depth = 40.0f;
-
-    // How many squares across and down. More squares is a finer ground and a
-    // slower one to make.
-    int cells = 96;
-
-    // The seed of the noise. The same seed is the same landform on every
-    // machine.
-    unsigned seed = 1;
-
-    // How many threads the making may use. The squares are cut in rows and a
-    // row does not depend on the next, so the work spreads.
-    int threads = 4;
-
-    // What shape the ground takes.
-    LandformShape shape = LandformShape::Hills;
-
-    // --- the shape ---------------------------------------------------------
-    //
-    // The numbers the shapes are made of. They were written down once and
-    // were the same for every ground, which is a way of saying that every
-    // ground looked the same; they are asked for now, and the ground comes
-    // out the way the one who asks for it wants it.
-    //
-    // How many steps the plateau is cut into.
-    int levels = 6;
-
-    // How wide the step between one step and the next is, as a part of the
-    // step itself. A narrow step is a wall and a wide one is a slope.
-    float roundness = 0.16f;
-
-    // How much of the ordinary ground is mixed into the flat shapes, 0..1.
-    //
-    // A plateau with nothing on it is a table, and a table is not a piece of
-    // land: this is the ground that is put on it. Zero leaves the shape bare
-    // and the tops as flat as they were.
-    float ground = 0.35f;
-
-    // How deep the canyon is cut into the ground, 0..1.
-    float cut = 0.80f;
-
-    // How wide the bed of the river is, as a part of the width of the ground.
-    float river = 0.07f;
-
-    // How far the river wanders from the middle, as a part of the depth of
-    // the ground. A river that runs straight is a ditch.
-    float meander = 0.90f;
-
-    // How far from the middle the island starts to sink into the water, as a
-    // part of the way to the corner.
-    float shore = 0.35f;
-
-    // How much of the mountain range is lowland rather than mountain, 0..1.
-    float lowland = 0.30f;
-
-    // How much the dunes are stretched along one axis.
-    float stretch = 1.30f;
-
-    // How much the ground is allowed to differ from the ground that was made
-    // before it.
-    //
-    // The number is a random one and it is added to the frequency of the
-    // noise: the features of the ground come out a little bigger or a little
-    // smaller, and two grounds made one after the other are not the same
-    // ground twice. Zero is the same ground every time.
-    float variation = 0.0f;
-
-    // How large the features are: the size in world units of the biggest
-    // shape on the ground. A hill is a few metres across, a mountain range
-    // is a few hundred.
-    float frequency = 0.055f;
-
-    // How many octaves the noise is made of. More is more detail, and a
-    // slower ground to make.
-    int octaves = 6;
-
-    // How much each octave is larger than the one before it, and how much
-    // weaker. Two is the usual answer; a little under two gives softer
-    // shapes.
-    float lacunarity = 2.0f;
-    float gain = 0.5f;
-
-    // How much the shapes are bent by another noise. Zero is straight and
-    // regular, one is ground that has been folded about.
-    float warp = 0.8f;
-
-    // How sharp the ridges are: zero is round hills, one is mountains.
-    float ridge = 0.0f;
-
-    // How many times the ground is let slide downhill. Material above the
-    // angle of repose falls until it lies flat, and that is what takes the
-    // spikes off a field of noise and leaves ridges and valleys.
-    int erosion = 4;
-
-    // How much the ground is smoothed afterwards, 0..1.
-    float smoothing = 0.5f;
-
-    // The colour of the ground when the biomes are off, as the three numbers
-    // of a colour. The picture is multiplied by it, so a white ground is the
-    // picture as it is and a green one is the picture in green.
-    float color[3] = {0.55f, 0.72f, 0.42f};
-
-    // The picture on the ground, relative to the assets. The grass that ships
-    // with the engine is "image/textures/grass.jpg", and it tiles: a hundred
-    // metres of ground is not one picture stretched over it.
-    std::string texture = "image/textures/grass.jpg";
-
-    // Whether the ground is coloured by its height and its steepness - sand
-    // at the bottom, grass on the slopes, stone on what is too steep to hold
-    // anything, snow at the top.
-    bool biomes = true;
+// The ground is a heightfield, so everything the brush can do is done to the
+// heights.
+enum class LandformBrush {
+    Raise,   // the ground goes up
+    Lower,   // and down
+    Smooth,  // and the bumps are taken off it
+    Flatten, // and it is made level with the height the stroke began at
 };
+
+// The name of a brush, as the localisation table spells it.
+const char* landformBrushName(LandformBrush brush);
 
 // A BUILT LANDFORM
 //
@@ -193,11 +78,68 @@ public:
     float lowest() const { return lowest_; }
     float highest() const { return highest_; }
 
+    // --- the brush ----------------------------------------------------------
+
+    // Paints the ground. `x` and `z` are in the ground's own frame: the
+    // middle of the ground is 0,0. `radius` is how wide the stroke is and
+    // `amount` is how much it does, both in the world's units.
+    //
+    // Returns true when the ground changed.
+    bool paint(float x, float z, float radius, float amount, LandformBrush brush);
+
+    // Starts a stroke. The height the flatten brush levels the ground to is
+    // the height the ground has where the stroke began - and it is the height
+    // it had then, not the height it has now, or the ground would follow the
+    // brush as it rises.
+    void beginStroke(float x, float z);
+
+    // Where a ray meets the ground, if it meets it. The ground is a height
+    // field, so the ray is walked along until it goes under the ground, and
+    // the crossing is found between the two steps it fell between.
+    //
+    // The ray is in the ground's own frame, like the brush.
+    bool rayHit(const Vec3& origin, const Vec3& direction, float& outDistance) const;
+
+    // The heightfield: one height per vertex, 0..1.
+    const std::vector<float>& heights() const { return heights_; }
+
+    // Puts a ground that was painted back into the landform, so that it can
+    // be painted again. The heights are the ones of the mesh: they live in
+    // the mesh because the mesh is what the scene shows.
+    //
+    // False when the heights are not the ones of a ground of this size.
+    bool setHeights(const std::vector<float>& heights);
+
+    // True when the ground is not the ground the settings make: it has been
+    // painted, and its heights are its own.
+    bool painted() const { return painted_; }
+
 private:
+    // How much of the ground around each square stands above it, 0..1. The
+    // valleys are the ones that are surrounded, and they are darker because
+    // the sky does not reach them.
+    std::vector<float> shade_;
+    // Stretches the heights so that the lowest of them is 0 and the highest
+    // is 1.
+    void normalizeHeights();
+    // Measures the shade of every square. Done before the detail is put on,
+    // so that a bump does not make every square look like a hole.
+    void measureShade();
+    // Puts the little bumps on the surface of the ground.
+    void addDetail(float halfWidth, float halfDepth, float stepX, float stepZ);
+
     // The heights, one per vertex of the grid, in 0..1. The world heights come
     // from them, so the shape of the ground does not change when the ground is
     // made bigger: a hill is a hill, it is just further away.
     std::vector<float> heights_;
+    // The heights as they were before the stroke that is being made now: the
+    // brush smooths towards the average of the neighbours, and the average
+    // must be the one of the ground before the brush touched it.
+    std::vector<float> scratch_;
+    // The height the flatten brush levels the ground to.
+    float strokeHeight_ = 0.0f;
+    // True when the ground has been painted.
+    bool painted_ = false;
     int side_ = 0;
     LandformSettings settings_;
     float lowest_ = 0.0f;

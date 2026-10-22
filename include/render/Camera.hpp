@@ -10,6 +10,18 @@ struct Camera {
     float pitch = -0.06f;
     float fovDeg = 70.0f;
 
+    // The orthographic projection: the world measured and not seen.
+    //
+    // A perspective camera makes a thing that is further away smaller, and a
+    // 2D scene is a picture of a world that is flat: the tiles are the same
+    // size whether they are at the front or at the back. So the projection
+    // has no vanishing point, and the picture is the world measured.
+    bool orthographic = false;
+    // The half-height of the picture, in world units. This is the zoom of the
+    // orthographic view, and it is the only number that says how much of the
+    // world is on the screen.
+    float orthoSize = 10.0f;
+
     Vec3 forward() const;
     Vec3 right() const;
     Vec3 up() const;

@@ -30,6 +30,33 @@ struct Vec3 {
     }
 };
 
+// A pair of numbers.
+//
+// The wind is a direction in the plane of the water, and the plane has two
+// directions and not three: a Vec3 with an unused Y would be a number that
+// says nothing and is copied around anyway.
+struct Vec2 {
+    float x = 0.0f, y = 0.0f;
+    Vec2() = default;
+    Vec2(float ix, float iy) : x(ix), y(iy) {}
+
+    Vec2 operator+(const Vec2& o) const { return {x + o.x, y + o.y}; }
+    Vec2 operator-(const Vec2& o) const { return {x - o.x, y - o.y}; }
+    Vec2 operator*(float s) const { return {x * s, y * s}; }
+    Vec2 operator/(float s) const { return *this * (1.0f / s); }
+    Vec2& operator+=(const Vec2& o) { x += o.x; y += o.y; return *this; }
+    Vec2& operator*=(float s) { x *= s; y *= s; return *this; }
+
+    float lengthSq() const { return x * x + y * y; }
+    float length() const { return std::sqrt(lengthSq()); }
+    Vec2 normalized() const {
+        const float l = length();
+        return l > 1e-12f ? *this * (1.0f / l) : Vec2{};
+    }
+};
+
+inline Vec2 operator*(float s, const Vec2& v) { return v * s; }
+
 inline Vec3 operator*(float s, const Vec3& v) { return v * s; }
 inline float dot(const Vec3& a, const Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 inline Vec3 cross(const Vec3& a, const Vec3& b) {

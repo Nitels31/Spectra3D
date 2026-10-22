@@ -1,6 +1,7 @@
 #include "render/UiRenderer.hpp"
 
 #include "core/Math.hpp"
+#include "core/Str.hpp"
 
 #include <algorithm>
 
@@ -252,6 +253,81 @@ float UiRenderer::textFit(float x, float y, float maxWidth, const char* utf8,
     const float scale = std::max(kMinTextScale, maxWidth / full);
     atlas_.appendQuads(textBatch_, x, y, utf8, color.r, color.g, color.b, scale);
     return scale;
+}
+
+std::vector<std::string> UiRenderer::wrapText(const char* utf8, float maxWidth) const {
+    std::vector<std::string> lines;
+    if (!utf8 || !*utf8) return lines;
+    // A place with no width has one line: the text, in full, and the caller
+    // decides what to do with it.
+    if (maxWidth <= 0.0f) {
+        lines.emplace_back(utf8);
+        return lines;
+    }
+
+    const float spaceWidth = atlas_.textWidth(" ");
+    std::string current;
+    float currentWidth = 0.0f;
+    // Whether anything has been put on the line yet. A line that starts with a
+    // space is a line with something on it, and the space is part of it.
+    bool hasContent = false;
+
+    // A word longer than the whole line is broken between its letters: a word
+    // that does not fit is a word that is cut off, and a cut off word is a
+    // word nobody can read.
+    const auto breakLongWord = [&](const std::string& word) {
+        const char* p = word.c_str();
+        while (*p) {
+            const char* start = p;
+            str::nextCodepoint(p);
+            const std::string piece(start, (size_t)(p - start));
+            const float pieceWidth = atlas_.textWidth(piece.c_str());
+            if (hasContent && currentWidth + pieceWidth > maxWidth) {
+                lines.push_back(current);
+                current.clear();
+                currentWidth = 0.0f;
+                hasContent = false;
+            }
+            current += piece;
+            currentWidth += pieceWidth;
+            hasContent = true;
+        }
+    };
+
+    const char* p = utf8;
+    while (*p) {
+        // A word is the letters up to the next space. A space is one byte and
+        // no letter of a multi-byte script is made of it, so the split is safe.
+        const char* start = p;
+        while (*p && *p != ' ') ++p;
+        const std::string word(start, (size_t)(p - start));
+        if (*p == ' ') ++p;
+
+        const float wordWidth = atlas_.textWidth(word.c_str());
+        if (hasContent) {
+            if (currentWidth + spaceWidth + wordWidth <= maxWidth) {
+                current += ' ';
+                current += word;
+                currentWidth += spaceWidth + wordWidth;
+                continue;
+            }
+            // The word does not fit on this line: the line is done and the word
+            // starts the next one.
+            lines.push_back(current);
+            current.clear();
+            currentWidth = 0.0f;
+            hasContent = false;
+        }
+        if (wordWidth <= maxWidth) {
+            current = word;
+            currentWidth = wordWidth;
+            hasContent = true;
+        } else {
+            breakLongWord(word);
+        }
+    }
+    if (hasContent) lines.push_back(current);
+    return lines;
 }
 
 } // namespace s3d

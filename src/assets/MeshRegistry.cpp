@@ -147,6 +147,18 @@ int MeshRegistry::importMesh(MeshAsset asset) {
     return index;
 }
 
+// Puts a new mesh in the place of an old one, under the old name.
+//
+// The name stays the name it was: the registry finds meshes by name, and a
+// mesh that changed its name under the bodies that point at it would be a
+// mesh nobody can find any more.
+bool MeshRegistry::update(int index, MeshAsset asset) {
+    if (index < 0 || index >= (int)assets_.size()) return false;
+    asset.name = names_[(size_t)index];
+    assets_[(size_t)index] = std::move(asset);
+    return true;
+}
+
 int MeshRegistry::find(const std::string& name) const {
     const auto it = byName_.find(name);
     return it == byName_.end() ? -1 : it->second;

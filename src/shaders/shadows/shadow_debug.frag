@@ -11,8 +11,6 @@
 // light is. Everything past that line is past the light, and the map says
 // nothing about it.
 
-precision highp float;
-
 uniform sampler2DArray uShadowMap;
 uniform int uLayer;
 // The far plane of the light, in the map's units.

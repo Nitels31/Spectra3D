@@ -19,7 +19,7 @@ namespace {
 
 // Broadphase cell size in metres.
 constexpr float kCellSize = 2.0f;
-constexpr int kSolverIterations = 8;
+constexpr int kSolverIterations = 10;
 
 // Contacts are created while the surfaces are still this far apart, so a resting
 // body keeps its contact (and therefore its solver impulse) instead of dropping
@@ -34,6 +34,28 @@ constexpr float kPenetrationSlop = 0.005f;
 // pairs respectively.
 constexpr float kWallCorrection = 0.6f;
 constexpr float kPairCorrection = 0.4f;
+
+// The thinnest thing in the world that a body is expected to hit.
+//
+// A step is cut into pieces so that no body travels further in one piece than
+// the thinnest collider is thick - that is what stops a fast body from
+// passing through a thin wall. The floor is here because a collider thinner
+// than this is a sheet of paper, and cutting a step into twenty pieces for a
+// sheet of paper is a cost nobody asked for.
+constexpr float kMinThickness = 0.08f;
+
+// How many pieces a step may be cut into. A body that is so fast that it needs
+// more than this still goes through the thinnest wall in the world, and that is
+// the price of not letting one fast body make the whole frame expensive.
+constexpr int kMaxSubsteps = 8;
+
+// The speed below which a hit does not bounce at all, in metres per second.
+//
+// A thing that is set down on the floor is not hitting it, and a thing that
+// hits it gently is not bouncing either. The bounce is scaled by how much
+// harder than this the hit was, so a soft material does not turn a gentle
+// touch into a hop.
+constexpr float kRestitutionThreshold = 1.0f;
 
 // --- Oriented-box vs oriented-box (SAT) ------------------------------------
 //
@@ -232,7 +254,7 @@ int collideBoxes(const RigidBody& A, const RigidBody& B, SatPoint out[4]) {
     // Keep points at or below the reference plane (penetrating, or within a
     // small speculative margin so a fast approach still gets a contact).
     const Vec3 normal = refIsA ? -refNormal : refNormal; // from B toward A
-    const float margin = 0.02f;
+    const float margin = kContactMargin;
     int n = 0;
     for (int i = 0; i < count && n < 4; ++i) {
         const float depth = dot(refFaceCentre - poly[i], refNormal);
@@ -365,7 +387,65 @@ void PhysicsWorld::refreshDerived(RigidBody& body) const {
     body.aabbMax = mx;
 }
 
+int PhysicsWorld::substepCount(float dt) const {
+    if (dt <= 0.0f || bodies.empty()) return 1;
+
+    // The furthest anything travels in this step.
+    float travel = 0.0f;
+    // The thinnest thing in the world that can be hit.
+    float thickness = 1e30f;
+
+    for (const RigidBody& b : bodies) {
+        // A camera is not in the world and a level of water is not a thing in
+        // it: neither of them is ever hit, and neither of them is ever the
+        // thing that goes through something.
+        if (b.isCamera() || b.isWater()) continue;
+
+        // How thick the body is, at its thinnest.
+        const float thin = 2.0f * std::fmin(b.halfExtents.x,
+                                            std::fmin(b.halfExtents.y, b.halfExtents.z));
+        if (thin > 1e-4f) thickness = std::fmin(thickness, thin);
+
+        if (b.asleep || b.material.isStatic) continue;
+        const float speed = b.velocity.length();
+        if (speed > travel) travel = speed;
+    }
+
+    if (thickness > 1e29f) return 1;
+    thickness = std::fmax(thickness, kMinThickness);
+    if (travel <= 0.0f) return 1;
+
+    // The distance the body travels in the whole step.
+    const float move = travel * dt;
+    // A body may travel half the thickness of the thinnest thing and still
+    // not go through it: the contact is found while there is still something
+    // in between.
+    const float allowed = thickness * 0.5f;
+    if (move <= allowed) return 1;
+
+    const int pieces = (int)std::ceil(move / allowed);
+    return std::clamp(pieces, 1, kMaxSubsteps);
+}
+
 void PhysicsWorld::step(float dt) {
+    // The contacts of the whole step, every piece of it. The list is rebuilt
+    // from scratch, so it says nothing about the step before this one.
+    stepContacts_.clear();
+    lastStepDt_ = dt;
+
+    const int pieces = substepCount(dt);
+    const float piece = dt / (float)pieces;
+    for (int i = 0; i < pieces; ++i) {
+        stepOnce(piece);
+        // The contacts of this piece join the ones of the whole step. A body
+        // resting on the floor carries its weight in every piece, and the sum
+        // of them is the impulse of the step - which is what the sound of a
+        // hit is measured against.
+        stepContacts_.insert(stepContacts_.end(), contacts_.begin(), contacts_.end());
+    }
+}
+
+void PhysicsWorld::stepOnce(float dt) {
     integrateForces(dt);
 
     contacts_.clear();
@@ -373,7 +453,7 @@ void PhysicsWorld::step(float dt) {
         contacts_.reserve(bodies.size() * 8 + 64);
     generateContacts();
 
-currentStepDt_ = dt;
+    currentStepDt_ = dt;
     applyWarmStart();
     for (int i = 0; i < kSolverIterations; ++i)
         if (!solveIteration()) break;
@@ -393,8 +473,10 @@ currentStepDt_ = dt;
         // drift and it does not spin. It is still anchored, though - a camera
         // that follows a moving body is the whole point of having a camera in
         // the scene.
+        // Water is placed too: a level of water does not fall either, and it
+        // is not something the simulation has an opinion about.
         if (b.asleep) continue;
-        if (!b.isCamera()) {
+        if (!b.isCamera() && !b.isWater()) {
             if (b.material.isStatic) continue;
             b.position += b.velocity * dt;
             b.orientation = integrate(b.orientation, b.angularVelocity, dt);
@@ -434,6 +516,23 @@ void PhysicsWorld::integrateForces(float dt) {
             b.force += gravity * b.mass;
             b.velocity += b.force * b.invMass * dt;
             b.angularVelocity += b.invInertiaCached * (b.torque * dt);
+
+            // THE AIR TAKES THE SPEED OUT
+            //
+            // Everything that moves through the world is slowed down by it, and
+            // how much of it is taken away is a property of the material: a
+            // feather loses its speed at once and a stone does not lose it at
+            // all. The number is a fraction per second - 0.5 means half of
+            // what there was is left after a second - so a step takes out
+            // 1/60th of it and a hundred steps take out about half.
+            //
+            // The spin is taken out the same way, and separately: a body that
+            // spins in the air keeps spinning, and one that rolls on the
+            // ground does not.
+            const float linear = std::fmax(0.0f, 1.0f - b.material.linearDamping * dt);
+            b.velocity *= linear;
+            const float angular = std::fmax(0.0f, 1.0f - b.material.angularDamping * dt);
+            b.angularVelocity *= angular;
         }
         b.force = Vec3{};
         b.torque = Vec3{};
@@ -500,7 +599,9 @@ void PhysicsWorld::collectPairContacts() {
         // never be found as a collision partner. This is the one place that
         // decides what collides with what, which is why it is here and not
         // scattered through the contact code.
-        if (b.isCamera()) continue;
+        // Water is not in the world either: it is a surface that is looked at,
+        // and a body that was stopped by it would be stopped by the sea.
+        if (b.isCamera() || b.isWater()) continue;
         // Static bodies are inserted too. They never drive a query (see the loop
         // below) but they must be findable as collision partners, or an immovable
         // body collides with nothing at all and everything slides straight through
@@ -706,10 +807,6 @@ void PhysicsWorld::applyWarmStart() {
 }
 
 bool PhysicsWorld::solveIteration() {
-    constexpr float kRestitution = 0.22f;
-    constexpr float kFriction = 0.6f;
-    constexpr float kRestitutionThreshold = -1.2f;
-
     const float invStepTime = 1.0f / std::fmax(1e-6f, currentStepDt_);
 
     bool applied = false;
@@ -746,9 +843,44 @@ const float vn = dot(relative, c.normal);
             dot(c.normal, cross(wB, c.armB));
         if (kNormal < 1e-10f) continue;
 
-const float restitution =
-            (vn < kRestitutionThreshold && c.accumulatedNormal <= 0.0f) ? kRestitution : 0.0f;
-        const float jn = -(1.0f + restitution) * vn / kNormal;
+// THE MATERIAL OF THE TWO SURFACES
+        //
+        // The friction and the bounce of a contact are not the friction and
+        // the bounce of the engine: they are the friction and the bounce of
+        // the two things that are touching. A ball of rubber on a floor of
+        // ice slides a little and bounces a lot, and a crate of wood on the
+        // same floor slides a lot and bounces a little - and none of that is
+        // decided by a number that is written down in the middle of the
+        // solver.
+        const Material& otherMaterial = B ? B->material : A.material;
+        const float friction = combineFriction(A.material, otherMaterial);
+
+        // The bounce, and how hard the hit has to be for there to be one.
+        //
+        // A thing that is set down on the floor is not hitting it, and the
+        // bounce of a thing that is barely touched is scaled down by how
+        // barely it was touched - so a soft material does not turn a gentle
+        // touch into a hop, and a hard one does not turn a resting body into
+        // a hummingbird.
+        float restitution = 0.0f;
+        if (vn < -kRestitutionThreshold && c.accumulatedNormal <= 0.0f) {
+            const float impact = -vn;
+            const float hardness =
+                std::min(1.0f, (impact - kRestitutionThreshold) / kRestitutionThreshold);
+            restitution = combineRestitution(A.material, otherMaterial) * hardness;
+        }
+
+        // The impulse along the normal.
+        //
+        // A contact that is still a gap away is a SPECULATIVE one: the
+        // surfaces are not touching yet, and the impulse is the one that
+        // stops the body exactly at the surface instead of where it is now.
+        // The bias is the speed that closes the gap in one step, so the body
+        // travels that far and no further.
+        const float jn = c.penetration < 0.0f
+                             ? (c.penetration * invStepTime - vn) / kNormal
+                             : (-(1.0f + restitution) * vn) / kNormal;
+        if (jn <= 0.0f) continue;
         const Vec3 pNormal = c.normal * jn;
         if (aAwake) {
             A.velocity += pNormal * invMassA;
@@ -775,7 +907,10 @@ const Vec3 tangentVel = relative - c.normal * dot(relative, c.normal);
                 invMassA + invMassB + dot(dir, cross(wtA, c.armA)) + dot(dir, cross(wtB, c.armB));
             if (kTangent > 1e-10f) {
                 float jt = -tangentSpeed / kTangent;
-                const float maxFriction = kFriction * std::fabs(c.accumulatedNormal);
+                // The friction of the pair is the cap on the friction
+                // impulse: a surface that grips hard can hold a body still,
+                // and a surface that slides lets it go.
+                const float maxFriction = friction * std::fabs(c.accumulatedNormal);
                 jt = std::clamp(jt, -maxFriction, maxFriction);
                 const Vec3 pTangent = dir * jt;
                 if (aAwake) {
@@ -806,7 +941,14 @@ void PhysicsWorld::storeWarmStart() {
                             (size_t)(c.slot & (kPairSlots - 1));
         if (cell >= pairWarmNextValues_.size()) continue;
         pairWarmNextValues_[cell].normal = std::clamp(c.accumulatedNormal, 0.0f, 1e6f);
-        const float maxTangent = 0.6f * std::fabs(c.accumulatedNormal);
+        // The friction of the pair caps the friction impulse here as well as
+        // in the solver: a seed that is bigger than the cap would let a body
+        // slide on the next step with a force the material does not allow.
+        const Material& materialA = bodies[c.bodyA].material;
+        const Material& materialB = c.bodyB != Contact::kNoBody && c.bodyB < bodies.size()
+                                       ? bodies[c.bodyB].material
+                                       : materialA;
+        const float maxTangent = combineFriction(materialA, materialB) * std::fabs(c.accumulatedNormal);
         pairWarmNextValues_[cell].tangent =
             std::clamp(c.accumulatedTangent, -maxTangent, maxTangent);
     }

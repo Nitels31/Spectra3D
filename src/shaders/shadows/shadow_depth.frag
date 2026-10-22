@@ -8,8 +8,6 @@
 // the red one, so the shader writes one channel and the driver writes one
 // channel.
 
-precision highp float;
-
 in float vDistance;
 
 layout(location = 0) out vec4 oDistance;

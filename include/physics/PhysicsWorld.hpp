@@ -29,6 +29,12 @@ public:
 
     void step(float dt);
 
+    // The length of the last step, in seconds - the whole step, not the piece
+    // of it the solver ran. The sound of a hit is measured against the impulse
+    // of a step, and a step that was cut into pieces has the same length as
+    // one that was not.
+    float lastStepDt() const { return lastStepDt_; }
+
     Vec3 upDirection() const;
     int sleepingCount() const;
 
@@ -77,7 +83,11 @@ public:
 
     // The contacts of the last step. The list is rebuilt from scratch every
     // step, so it says nothing about the step before this one.
-    const std::vector<Contact>& contacts() const { return contacts_; }
+    //
+    // A step that was cut into pieces has the contacts of all of them, so the
+    // sum of the impulses here is the impulse of the whole step and not of
+    // one piece of it.
+    const std::vector<Contact>& contacts() const { return stepContacts_; }
 
 private:
     void integrateForces(float dt);
@@ -91,7 +101,23 @@ private:
     void updateSleep(float dt);
     void refreshDerived(RigidBody& body) const;
 
-std::vector<Contact> contacts_;
+    // One piece of a step. The whole step is one of these, unless something in
+    // the world moves so fast that it has to be cut into several.
+    void stepOnce(float dt);
+
+    // How many pieces the step has to be cut into.
+    //
+    // A body that travels further in one step than the thinnest thing it can
+    // hit goes through it: the contact is made after the body has already
+    // passed. So the step is cut, and each piece moves the body less far than
+    // the thinnest thing in the world is thick.
+    int substepCount(float dt) const;
+
+    // The contacts the solver is working on right now: the ones of the piece
+    // of the step being run.
+    std::vector<Contact> contacts_;
+    // The contacts of the whole step, every piece of it.
+    std::vector<Contact> stepContacts_;
     std::vector<std::pair<uint64_t, uint32_t>> cellEntries_;
     std::vector<uint64_t> pairKeys_;
 
@@ -133,6 +159,8 @@ std::vector<Contact> contacts_;
     std::vector<float> pairDeepest_;
     std::vector<Vec3> pairPush_;
     float currentStepDt_ = 1.0f / 60.0f;
+    // The length of the last step, in seconds.
+    float lastStepDt_ = 1.0f / 60.0f;
 };
 
 const char* gravityName(GravityAxis axis);

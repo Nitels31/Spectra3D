@@ -35,7 +35,9 @@ extern PFNGLGETUNIFORMLOCATIONPROC GetUniformLocation;
 extern PFNGLGETATTRIBLOCATIONPROC GetAttribLocation;
 extern PFNGLUNIFORM1IPROC Uniform1i;
 extern PFNGLUNIFORM1FPROC Uniform1f;
+extern PFNGLUNIFORM2FPROC Uniform2f;
 extern PFNGLUNIFORM3FPROC Uniform3f;
+extern PFNGLUNIFORM4FPROC Uniform4f;
 extern PFNGLUNIFORM1FVPROC Uniform1fv;
 extern PFNGLUNIFORM4FVPROC Uniform4fv;
 extern PFNGLUNIFORMMATRIX4FVPROC UniformMatrix4fv;
@@ -53,6 +55,28 @@ extern PFNGLRENDERBUFFERSTORAGEPROC RenderbufferStorage;
 
 extern PFNGLACTIVETEXTUREPROC ActiveTexture;
 extern PFNGLTEXIMAGE3DPROC TexImage3D;
+
+// The buffers, and the attributes that read them.
+//
+// The particles are drawn from a buffer and not from an array in the
+// program's own memory: there are four thousand of them and they change
+// every frame, and a picture that is written into the program's memory is a
+// picture that is copied there first.
+//
+// The divisor is what makes a particle one particle: the four corners of the
+// quad are one vertex each, and the centre, the size and the colour of the
+// particle are the same for all four of them - so they are read once per
+// particle and not once per corner.
+extern PFNGLGENBUFFERSPROC GenBuffers;
+extern PFNGLDELETEBUFFERSPROC DeleteBuffers;
+extern PFNGLBINDBUFFERPROC BindBuffer;
+extern PFNGLBUFFERDATAPROC BufferData;
+extern PFNGLBUFFERSUBDATAPROC BufferSubData;
+extern PFNGLVERTEXATTRIBPOINTERPROC VertexAttribPointer;
+extern PFNGLENABLEVERTEXATTRIBARRAYPROC EnableVertexAttribArray;
+extern PFNGLDISABLEVERTEXATTRIBARRAYPROC DisableVertexAttribArray;
+extern PFNGLVERTEXATTRIBDIVISORPROC VertexAttribDivisor;
+extern PFNGLDRAWARRAYSINSTANCEDPROC DrawArraysInstanced;
 
 // The sampler objects: the filter of a texture, kept apart from the texture.
 //

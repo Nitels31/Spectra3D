@@ -39,6 +39,14 @@ public:
 
     int importMesh(MeshAsset asset);
 
+    // Puts a new mesh in the place of an old one, under the old name.
+    //
+    // A ground that has been painted is the same mesh as it was, only
+    // different, and the body that stands on it keeps pointing at it: the
+    // index of a mesh is a thing other things hold, and it must not change
+    // under them.
+    bool update(int index, MeshAsset asset);
+
     int find(const std::string& name) const;
     const MeshAsset* at(int index) const;
 

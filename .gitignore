@@ -1,6 +1,7 @@
 # Build output
 build/
 build-*/
+build_*/
 
 # Editor / OS noise
 .vs/
@@ -10,6 +11,12 @@ build-*/
 # Runtime output produced next to the binary
 scene.txt
 engine.log
+settings.ini
+
+# Leftovers of a build session, written by the shell that ran the build
+build_out.txt
+build_err.txt
+cfg.txt
 
 # Test folder
 test_screenshot

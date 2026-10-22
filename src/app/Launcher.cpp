@@ -226,6 +226,7 @@ void Launcher::applySettings() {
     case LanguageTag::Klingon: language = i18n::Language::Klingon; break;
     case LanguageTag::Gopnik: language = i18n::Language::Gopnik; break;
     case LanguageTag::Shakespeare: language = i18n::Language::Shakespeare; break;
+    case LanguageTag::Bengali: language = i18n::Language::Bengali; break;
     case LanguageTag::English:
     default: language = i18n::Language::English; break;
     }
@@ -630,7 +631,8 @@ void Launcher::drawNewProject(UiRenderer& ui, UiContext& ctx, Window& window, in
 // test that opens it. Drawn among the other rows; the list comes later.
 Launcher::SelectPaint Launcher::drawSelectField(UiRenderer& ui, UiContext& ctx, const Rect& rect,
                                                const char* caption, const SelectItem* items,
-                                               int count, int current, int id, int fbWidth) {
+                                               int count, int current, int id, int fbWidth,
+                                               int columns, const char* const* columnTitles) {
     textClipRight_ = rect.x + rect.width;
     const Rect field{rect.x, rect.y + kTextHeight + 4.0f, rect.width, kFieldHeight + 6.0f};
 
@@ -639,6 +641,9 @@ Launcher::SelectPaint Launcher::drawSelectField(UiRenderer& ui, UiContext& ctx, 
     paint.items = items;
     paint.count = count;
     paint.current = current;
+    paint.columns = std::clamp(columns, 1, kMaxColumns);
+    for (int i = 0; i < paint.columns; ++i)
+        paint.columnTitles[i] = columnTitles ? columnTitles[i] : nullptr;
     if (field.width <= 0.0f || field.height <= 0.0f) return paint;
     paint.id = id;
 
@@ -661,9 +666,21 @@ Launcher::SelectPaint Launcher::drawSelectField(UiRenderer& ui, UiContext& ctx, 
         // place. Scrolling to the current value instead means "Minecraft" is
         // visible the moment twenty-three languages open.
         if (opening) {
-            int currentRow = 0;
+            // The row of the current value - in its own column. A list with two
+            // columns has a row number in each of them, and the value is found
+            // by its column first and by its row after that.
+            int currentColumn = 0;
             for (int i = 0; i < count; ++i)
-                if (items[i].value == current) { currentRow = i; break; }
+                if (items[i].value == current) {
+                    currentColumn = std::clamp(items[i].column, 0, paint.columns - 1);
+                    break;
+                }
+            int currentRow = 0;
+            for (int i = 0; i < count; ++i) {
+                if (std::clamp(items[i].column, 0, paint.columns - 1) != currentColumn) continue;
+                if (items[i].value == current) break;
+                ++currentRow;
+            }
             selectScroll_ = currentRow;
             selectHoverRow_ = -1;
             selectOpenedFrame_ = frame_;
@@ -694,8 +711,60 @@ int Launcher::drawSelectList(UiRenderer& ui, UiContext& ctx, const SelectPaint& 
                              const Rect& bounds, int fbWidth) {
     if (paint.id < 0 || openSelect_ != paint.id || paint.count <= 0) return -1;
 
-    const float rowH = kRowHeight + 2.0f;
-    const float fullHeight = rowH * (float)paint.count;
+    const int columns = std::clamp(paint.columns, 1, kMaxColumns);
+    // The gutter on the right is where the scrollbar goes, so the columns do
+    // not grow over it.
+    const float gutter = 6.0f;
+    const float gap = columns > 1 ? 10.0f : 0.0f;
+    const float columnWidth = std::fmax(
+        40.0f, (paint.field.width - gutter - gap * (float)(columns - 1)) / (float)columns);
+    // The text of a row has the tick in the gutter and a little air beside it.
+    const float textRoom = columnWidth - 18.0f;
+
+    // THE ITEMS OF EACH COLUMN.
+    //
+    // A list of languages has two kinds of entry in it: the languages an
+    // interface is written in, and the meme languages - the ones that are there
+    // to be funny. They are different things, so they go in different columns.
+    // One list of twenty-three rows that has to be scrolled to find the language
+    // of the interface is a list that hides what it is for.
+    std::vector<int> order[kMaxColumns];
+    for (int i = 0; i < paint.count; ++i) {
+        const int c = std::clamp(paint.items[i].column, 0, columns - 1);
+        order[c].push_back(i);
+    }
+
+    // THE LINES OF EVERY ITEM.
+    //
+    // A name that does not fit its column is broken into two lines instead of
+    // being cut off: a cut off name is a name nobody can read, and a name
+    // shrunk until it fits is a name in letters too small to read either.
+    std::vector<std::vector<std::string>> lines((size_t)paint.count);
+    std::vector<float> heights((size_t)paint.count, 0.0f);
+    for (int i = 0; i < paint.count; ++i) {
+        lines[(size_t)i] = ui.wrapText(paint.items[i].label, textRoom);
+        if (lines[(size_t)i].empty()) lines[(size_t)i].push_back(paint.items[i].label);
+        heights[(size_t)i] = (float)lines[(size_t)i].size() * (float)kTextHeight + 4.0f;
+    }
+
+    // Where every row of every column starts, and how tall the columns are.
+    std::vector<float> tops[kMaxColumns];
+    float contentHeight = 0.0f;
+    for (int c = 0; c < columns; ++c) {
+        float top = 0.0f;
+        for (int index : order[c]) {
+            tops[c].push_back(top);
+            top += heights[(size_t)index];
+        }
+        contentHeight = std::fmax(contentHeight, top);
+    }
+
+    // The caption of the columns, when the list has any.
+    float headerH = 0.0f;
+    for (int c = 0; c < columns; ++c)
+        if (paint.columnTitles[c]) headerH = (float)kTextHeight + 4.0f;
+
+    const float fullHeight = headerH + contentHeight;
     const float below = paint.field.y + paint.field.height + 2.0f;
     const float above = paint.field.y - 2.0f - fullHeight;
     // Down when it fits, up when it does not. Six languages on a short panel do fit
@@ -726,25 +795,64 @@ int Launcher::drawSelectList(UiRenderer& ui, UiContext& ctx, const SelectPaint& 
     // Whichever side it opened towards, it may not grow past the field or past the
     // panel; a list clipped by its own scroll offset reads as a short list.
     const float room = std::max(0.0f, y < paint.field.y ? roomAbove : roomBelow);
-    const float maxHeight = std::fmax(rowH, std::min(room, bounds.height));
-    const int visibleRows = std::max(1, (int)std::floor((maxHeight + 1.0f) / rowH));
-    const int maxScroll = std::max(0, paint.count - visibleRows);
+    const float maxHeight = std::fmax((float)kRowHeight, std::min(room, bounds.height));
+
+    // How many rows of each column are on screen. Every column is scrolled by
+    // the same number of rows, so the two of them are read together.
+    int visibleRows[kMaxColumns] = {0, 0};
+    float usedHeight = 0.0f;
+    for (int c = 0; c < columns; ++c) {
+        const int count = (int)order[c].size();
+        const int start = std::min(selectScroll_, std::max(0, count - 1));
+        float used = 0.0f;
+        int shown = 0;
+        for (int r = start; r < count; ++r) {
+            const int index = order[c][(size_t)r];
+            if (shown > 0 && used + heights[(size_t)index] > maxHeight - headerH) break;
+            used += heights[(size_t)index];
+            ++shown;
+        }
+        visibleRows[c] = shown;
+        usedHeight = std::fmax(usedHeight, used);
+    }
+    const int shownRows = std::max(1, std::max(visibleRows[0], visibleRows[1]));
+    int maxScroll = 0;
+    for (int c = 0; c < columns; ++c)
+        maxScroll = std::max(maxScroll, (int)order[c].size() - visibleRows[c]);
+
     // Opening on the current value would put a language near the end of a
     // twenty-three row list below the fold with everything after it. Start one
     // screen higher, so the choice and its neighbours are all on screen: the
     // point of opening the list is to see what else there is.
     if (frame_ == selectOpenedFrame_)
-        selectScroll_ = std::clamp(selectScroll_ - visibleRows / 2, 0, maxScroll);
+        selectScroll_ = std::clamp(selectScroll_ - shownRows / 2, 0, maxScroll);
     else
         selectScroll_ = std::clamp(selectScroll_, 0, maxScroll);
     // Published for the key handler, which runs outside this draw and would
     // otherwise be paging a list whose height it cannot know.
-    openSelectRows_ = visibleRows;
+    openSelectRows_ = shownRows;
     openSelectScrollMax_ = maxScroll;
 
-    const float height = rowH * (float)std::min(paint.count, visibleRows);
+    const float height = headerH + usedHeight;
     const Rect list{paint.field.x, y, paint.field.width, height};
     ui.fillRect(list.x, list.y, list.width, list.height, theme::panel);
+
+    // The text of a column stops at the edge of the column: a name that runs
+    // into the column next to it is a name nobody can read.
+    const float clipBefore = textClipRight_;
+
+    // The captions of the columns.
+    for (int c = 0; c < columns; ++c) {
+        if (!paint.columnTitles[c]) continue;
+        const float x = paint.field.x + (float)c * (columnWidth + gap);
+        textClipRight_ = std::fmin(clipBefore, x + columnWidth - 2.0f);
+        drawText(ui, x + 18.0f, list.y + 2.0f, paint.columnTitles[c], theme::textDim, fbWidth);
+    }
+    // A line between the columns, so that the two of them are two.
+    if (columns > 1) {
+        const float x = paint.field.x + columnWidth + gap * 0.5f;
+        ui.fillRect(x, list.y + headerH, 1.0f, list.height - headerH, theme::field);
+    }
 
     // Swallow the click while the pointer is over the list. The list is painted
     // last, after every row of the panel has already tested this frame's press and
@@ -760,50 +868,68 @@ int Launcher::drawSelectList(UiRenderer& ui, UiContext& ctx, const SelectPaint& 
     const bool justOpened = frame_ == selectOpenedFrame_;
     const bool overList = ctx.hovered(list);
 
-    const int rows = std::min(paint.count, visibleRows);
     int chosen = -1;
-    for (int i = 0; i < rows; ++i) {
-        const int item = selectScroll_ + i;
-        const Rect row{list.x, list.y + (float)i * rowH, list.width, rowH - 1.0f};
-        const bool hovered = ctx.hovered(row);
-        const bool selected = paint.items[item].value == paint.current;
-        if (hovered) {
-            ui.fillRect(row.x, row.y, row.width, row.height, theme::buttonHover);
-            ctx.markHovered(paint.id + 100 + i);
-            if (!justOpened) selectHoverRow_ = item;
-        }
-        // The selection is stated three ways, because one is not enough to read at a
-        // glance: the accent bar, the accent text, and a tick in the gutter. The
-        // bar alone is easy to miss on a row that is also hovered.
-        const Color color = selected ? theme::accent : theme::text;
-        drawText(ui, row.x + 18.0f, row.y + (row.height - kTextHeight) * 0.5f,
-                 paint.items[item].label, color, fbWidth);
-        if (selected) {
-            ui.fillRect(row.x + 2.0f, row.y, 2.0f, row.height, theme::accent);
-            // The tick is drawn from rows, not printed. U+2713 is outside the
-            // atlas - the alphabet stops at Latin-1 plus a handful of extras - so
-            // printing it yields a blank box, which is worse than no tick.
-            const float tickX = row.x + 7.0f;
-            const float tickY = row.y + row.height * 0.5f;
-            for (int s = 0; s < 4; ++s) {
-                const float t = (float)s / 3.0f;
-                // Short arm down-right, long arm up-right: a check without a glyph.
-                const float ax = tickX + (t * 3.0f);
-                const float ay = tickY + (2.0f - t * 2.0f);
-                ui.fillRect(ax, ay, 1.4f, 1.4f, theme::accent);
-                const float bx = tickX + 2.6f + t * 4.4f;
-                const float by = tickY + (1.0f - t * 4.4f);
-                ui.fillRect(bx, by, 1.4f, 1.4f, theme::accent);
+    for (int c = 0; c < columns; ++c) {
+        const int count = (int)order[c].size();
+        if (count == 0) continue;
+        const float x = paint.field.x + (float)c * (columnWidth + gap);
+        textClipRight_ = std::fmin(clipBefore, x + columnWidth - 2.0f);
+        const int start = std::min(selectScroll_, std::max(0, count - 1));
+        int shown = 0;
+        for (int r = start; r < count && shown < visibleRows[c]; ++r) {
+            const int item = order[c][(size_t)r];
+            const float rowY = list.y + headerH + tops[c][(size_t)r] - tops[c][(size_t)start];
+            const Rect row{x, rowY, columnWidth, heights[(size_t)item]};
+            const bool hovered = ctx.hovered(row);
+            const bool selected = paint.items[item].value == paint.current;
+            if (hovered) {
+                ui.fillRect(row.x, row.y, row.width, row.height, theme::buttonHover);
+                ctx.markHovered(paint.id + 100 + item);
+                if (!justOpened) {
+                    selectHoverRow_ = r;
+                    selectHoverColumn_ = c;
+                }
             }
-        }
+            // The selection is stated three ways, because one is not enough to read at
+            // a glance: the accent bar, the accent text, and a tick in the gutter. The
+            // bar alone is easy to miss on a row that is also hovered.
+            const Color color = selected ? theme::accent : theme::text;
+            // The lines of the name, one under the other. A name that did not fit
+            // its column is two lines now, and both of them are read.
+            float lineY = row.y + 2.0f;
+            for (const std::string& line : lines[(size_t)item]) {
+                drawText(ui, row.x + 18.0f, lineY, line.c_str(), color, fbWidth);
+                lineY += (float)kTextHeight;
+            }
+            if (selected) {
+                ui.fillRect(row.x + 2.0f, row.y, 2.0f, row.height, theme::accent);
+                // The tick is drawn from rows, not printed. U+2713 is outside the
+                // atlas - the alphabet stops at Latin-1 plus a handful of extras - so
+                // printing it yields a blank box, which is worse than no tick.
+                const float tickX = row.x + 7.0f;
+                const float tickY = row.y + row.height * 0.5f;
+                for (int s = 0; s < 4; ++s) {
+                    const float t = (float)s / 3.0f;
+                    // Short arm down-right, long arm up-right: a check without a glyph.
+                    const float ax = tickX + (t * 3.0f);
+                    const float ay = tickY + (2.0f - t * 2.0f);
+                    ui.fillRect(ax, ay, 1.4f, 1.4f, theme::accent);
+                    const float bx = tickX + 2.6f + t * 4.4f;
+                    const float by = tickY + (1.0f - t * 4.4f);
+                    ui.fillRect(bx, by, 1.4f, 1.4f, theme::accent);
+                }
+            }
 
-        if (hovered && ctx.pointerPressed() && !justOpened) {
-            openSelect_ = -1;
-            selectHoverRow_ = -1;
-            chosen = paint.items[item].value;
-            ctx.consumePointerClick();
+            if (hovered && ctx.pointerPressed() && !justOpened) {
+                openSelect_ = -1;
+                selectHoverRow_ = -1;
+                chosen = paint.items[item].value;
+                ctx.consumePointerClick();
+            }
+            ++shown;
         }
     }
+    textClipRight_ = clipBefore;
 
     // A scrollbar, only when there is more to scroll to. Drawn as a plain trough so
     // it cannot be mistaken for a draggable widget: the list scrolls with the wheel
@@ -811,7 +937,8 @@ int Launcher::drawSelectList(UiRenderer& ui, UiContext& ctx, const SelectPaint& 
     if (maxScroll > 0) {
         const float trackX = list.x + list.width - 4.0f;
         ui.fillRect(trackX, list.y, 2.0f, list.height, theme::field);
-        const float thumb = std::fmax(18.0f, list.height * ((float)rows / (float)paint.count));
+        const float thumb =
+            std::fmax(18.0f, list.height * (usedHeight / std::fmax(1.0f, contentHeight)));
         const float span = list.height - thumb;
         const float thumbY = list.y + span * ((float)selectScroll_ / (float)maxScroll);
         ui.fillRect(trackX, thumbY, 2.0f, thumb, theme::accent);
@@ -824,7 +951,7 @@ int Launcher::drawSelectList(UiRenderer& ui, UiContext& ctx, const SelectPaint& 
     // row. Dividing the number by forty and rounding it up made half of the
     // notches disappear: a notch down was a quarter of a row, rounded up to
     // nothing, and the list would only go up.
-    if (overList && ctx.scrollDelta() != 0.0) {
+    if (overList && ctx.scrollDelta() != 0.0f) {
         const int notches = (int)ctx.scrollDelta();
         selectScroll_ = std::clamp(selectScroll_ - notches, 0, maxScroll);
     }
@@ -834,8 +961,10 @@ int Launcher::drawSelectList(UiRenderer& ui, UiContext& ctx, const SelectPaint& 
     if (ctx.pointerDown() && selectHoverRow_ >= 0) {
         // Keep the row under the pointer in view, so the list can be walked with
         // the mouse held down rather than requiring a fresh click on every row.
+        const int rows = visibleRows[std::clamp(selectHoverColumn_, 0, columns - 1)];
         if (selectHoverRow_ < selectScroll_) selectScroll_ = selectHoverRow_;
-        else if (selectHoverRow_ >= selectScroll_ + rows) selectScroll_ = selectHoverRow_ - rows + 1;
+        else if (selectHoverRow_ >= selectScroll_ + rows)
+            selectScroll_ = selectHoverRow_ - rows + 1;
         selectScroll_ = std::clamp(selectScroll_, 0, maxScroll);
     }
 
@@ -903,6 +1032,12 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
 
     // Row 3: language. A list, like the theme below it, because there are six of
     // them now and a row of buttons would have to shrink the names to nothing.
+    //
+    // The list has two columns. The languages an interface is written in are on
+    // one side, and the meme languages - the ones that are there to be funny -
+    // on the other. They are different things, and a list of twenty-three rows
+    // that has to be scrolled to find the language of the interface hides what
+    // it is for.
     rowY += kRowHeight + 6.0f;
     const SelectItem languages[] = {
         {text("settings.languageEnglish"), (int)LanguageTag::English},
@@ -911,29 +1046,36 @@ void Launcher::drawSettingsPanel(UiRenderer& ui, UiContext& ctx, Window& window,
         {text("settings.languageFrench"), (int)LanguageTag::French},
         {text("settings.languageItalian"), (int)LanguageTag::Italian},
         {text("settings.languageSpanish"), (int)LanguageTag::Spanish},
-        {text("settings.languageLolcat"), (int)LanguageTag::Lolcat},
-        {text("settings.languageJeb"), (int)LanguageTag::Jeb},
-        {text("settings.languagePirate"), (int)LanguageTag::Pirate},
-        {text("settings.languageBrokenUtf8"), (int)LanguageTag::BrokenUtf8},
-        {text("settings.languageHex"), (int)LanguageTag::Hex},
-        {text("settings.languageGD"), (int)LanguageTag::GeometryDash},
         {text("settings.languagePortuguese"), (int)LanguageTag::Portuguese},
-        {text("settings.languageMinecraft"), (int)LanguageTag::Minecraft},
-        {text("settings.languageUndertale"), (int)LanguageTag::Undertale},
-        {text("settings.languageCeleste"), (int)LanguageTag::Celeste},
-        {text("settings.languageDoom"), (int)LanguageTag::Doom},
-        {text("settings.languageWows"), (int)LanguageTag::WolfOfWallStreet},
-        {text("settings.languageAmongUs"), (int)LanguageTag::AmongUs},
-        {text("settings.languageLeet"), (int)LanguageTag::Leet},
-        {text("settings.languageKlingon"), (int)LanguageTag::Klingon},
-        {text("settings.languageGopnik"), (int)LanguageTag::Gopnik},
-        {text("settings.languageShakespeare"), (int)LanguageTag::Shakespeare},
+        {text("settings.languageBengali"), (int)LanguageTag::Bengali},
+        // The meme languages, in the second column.
+        {text("settings.languageLolcat"), (int)LanguageTag::Lolcat, nullptr, 1},
+        {text("settings.languageJeb"), (int)LanguageTag::Jeb, nullptr, 1},
+        {text("settings.languagePirate"), (int)LanguageTag::Pirate, nullptr, 1},
+        {text("settings.languageBrokenUtf8"), (int)LanguageTag::BrokenUtf8, nullptr, 1},
+        {text("settings.languageHex"), (int)LanguageTag::Hex, nullptr, 1},
+        {text("settings.languageGD"), (int)LanguageTag::GeometryDash, nullptr, 1},
+        {text("settings.languageMinecraft"), (int)LanguageTag::Minecraft, nullptr, 1},
+        {text("settings.languageUndertale"), (int)LanguageTag::Undertale, nullptr, 1},
+        {text("settings.languageCeleste"), (int)LanguageTag::Celeste, nullptr, 1},
+        {text("settings.languageDoom"), (int)LanguageTag::Doom, nullptr, 1},
+        {text("settings.languageWows"), (int)LanguageTag::WolfOfWallStreet, nullptr, 1},
+        {text("settings.languageAmongUs"), (int)LanguageTag::AmongUs, nullptr, 1},
+        {text("settings.languageLeet"), (int)LanguageTag::Leet, nullptr, 1},
+        {text("settings.languageKlingon"), (int)LanguageTag::Klingon, nullptr, 1},
+        {text("settings.languageGopnik"), (int)LanguageTag::Gopnik, nullptr, 1},
+        {text("settings.languageShakespeare"), (int)LanguageTag::Shakespeare, nullptr, 1},
     };
-    const SelectPaint languagePaint =
-        drawSelectField(ui, ctx, Rect{body.x, rowY, std::fmin(240.0f, body.width), kRowHeight},
-                        text("settings.language"), languages,
-                        (int)(sizeof(languages) / sizeof(languages[0])),
-                        (int)settings_.language, kLanguageSelect, fbWidth);
+    // The captions of the two columns. The list says what the two sides of it
+    // are, because a list of languages with sixteen jokes in it does not say it
+    // by itself.
+    const char* columnTitles[Launcher::kMaxColumns] = {text("settings.languageGroup"),
+                                                      text("settings.languageMemeGroup")};
+    const SelectPaint languagePaint = drawSelectField(
+        ui, ctx, Rect{body.x, rowY, std::fmin(460.0f, body.width), kRowHeight},
+        text("settings.language"), languages,
+        (int)(sizeof(languages) / sizeof(languages[0])),
+        (int)settings_.language, kLanguageSelect, fbWidth, 2, columnTitles);
 
     // Row 4: rescan + the root actually in use.
     rowY += kRowHeight + 6.0f;

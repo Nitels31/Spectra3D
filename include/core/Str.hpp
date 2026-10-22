@@ -1,7 +1,9 @@
 #pragma once
+#include <array>
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace s3d {
 
@@ -10,7 +12,17 @@ namespace s3d {
 namespace str {
 
 // Decodes one UTF-8 code point starting at `p`, advances `p` past it.
-// Invalid bytes decode as '?' and consume one byte.
+//
+// All four lengths are decoded, because a language is not written in ASCII: a
+// Ukrainian letter is two bytes, a Bengali one is three and an emoji is four.
+// A decoder that stops at two bytes turns every letter of those scripts into a
+// question mark - a Bengali interface drawn as a row of "???" - and a decoder
+// that guesses the length turns one letter into three.
+//
+// A byte that cannot start a sequence, or a sequence that is cut short, is not
+// a letter: it is garbage, and it is reported as '?' and skipped over one byte
+// at a time. The bundle that is deliberately broken (assets/lang/u8f.lang)
+// relies on exactly that: it must come out as garbage, not as nothing.
 inline unsigned nextCodepoint(const char*& p) {
     const unsigned char b0 = (unsigned char)*p;
     if (b0 == '\0') return 0;
@@ -18,21 +30,84 @@ inline unsigned nextCodepoint(const char*& p) {
         p += 1;
         return b0;
     }
-    if ((b0 & 0xE0) == 0xC0 && p[1] != '\0') {
-        const unsigned cp = ((unsigned)(b0 & 0x1F) << 6) | (unsigned)(p[1] & 0x3F);
-        p += 2;
-        return cp;
+
+    // How many bytes the sequence has, and the bits of the first one that are
+    // not part of the value. 0 means the byte cannot start a sequence at all.
+    int length = 0;
+    unsigned value = 0;
+    if ((b0 & 0xE0) == 0xC0) {
+        length = 2;
+        value = (unsigned)(b0 & 0x1F);
+    } else if ((b0 & 0xF0) == 0xE0) {
+        length = 3;
+        value = (unsigned)(b0 & 0x0F);
+    } else if ((b0 & 0xF8) == 0xF0) {
+        length = 4;
+        value = (unsigned)(b0 & 0x07);
+    } else {
+        p += 1;
+        return '?';
     }
-    p += 1;
-    return '?';
+
+    for (int i = 1; i < length; ++i) {
+        const unsigned char b = (unsigned char)p[i];
+        if (b == '\0' || (b & 0xC0) != 0x80) {
+            // The sequence stops early. The bytes read so far are not a letter.
+            p += 1;
+            return '?';
+        }
+        value = (value << 6) | (unsigned)(b & 0x3F);
+    }
+    p += length;
+
+    // Overlong forms, surrogates and values above U+10FFFF are not letters
+    // either - they are ways of writing one letter twice. They are reported as
+    // garbage rather than drawn as something the author never wrote.
+    if (value < 0x80u) return '?';
+    if (value >= 0xD800u && value <= 0xDFFFu) return '?';
+    if (value > 0x10FFFFu) return '?';
+    return value;
 }
 
 inline unsigned nextCodepoint(const char* p, const char* end) {
     const unsigned char b0 = (unsigned char)*p;
     if (b0 < 0x80) return b0;
-    if ((b0 & 0xE0) == 0xC0 && p + 1 < end)
-        return ((unsigned)(b0 & 0x1F) << 6) | (unsigned)(p[1] & 0x3F);
-    return '?';
+
+    int length = 0;
+    unsigned value = 0;
+    if ((b0 & 0xE0) == 0xC0) {
+        length = 2;
+        value = (unsigned)(b0 & 0x1F);
+    } else if ((b0 & 0xF0) == 0xE0) {
+        length = 3;
+        value = (unsigned)(b0 & 0x0F);
+    } else if ((b0 & 0xF8) == 0xF0) {
+        length = 4;
+        value = (unsigned)(b0 & 0x07);
+    } else {
+        return '?';
+    }
+    if (p + length > end) return '?';
+
+    for (int i = 1; i < length; ++i) {
+        const unsigned char b = (unsigned char)p[i];
+        if ((b & 0xC0) != 0x80) return '?';
+        value = (value << 6) | (unsigned)(b & 0x3F);
+    }
+    if (value < 0x80u) return '?';
+    if (value >= 0xD800u && value <= 0xDFFFu) return '?';
+    if (value > 0x10FFFFu) return '?';
+    return value;
+}
+
+// How many bytes the code point takes when it is written as UTF-8. Zero for a
+// value that cannot be written at all.
+inline int utf8Length(unsigned cp) {
+    if (cp < 0x80u) return 1;
+    if (cp < 0x800u) return 2;
+    if (cp < 0x10000u) return 3;
+    if (cp <= 0x10FFFFu) return 4;
+    return 0;
 }
 
 inline char lowerAscii(char c) {
@@ -151,8 +226,79 @@ inline std::string join(const std::string& a, const std::string& b) {
     if (a.empty()) return b;
     if (b.empty()) return a;
     const char last = a[a.size() - 1];
-    if (last == '/' || last == '\\') return a + b;
+    if (last == '/' || last == '\\') return a + "/" + b;
     return a + "/" + b;
+}
+
+// BASE64: BINARY IN A TEXT FILE.
+//
+// A heightfield is thousands of numbers, and a scene file is a file a person
+// reads. The numbers go into the file as one line of letters instead of as
+// thousands of lines of numbers: the file stays readable, and the ground it
+// describes is still the ground.
+//
+// The alphabet is the usual one, and the padding is the usual '='.
+inline std::string toBase64(const void* data, size_t bytes) {
+    static const char kAlphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const unsigned char* in = (const unsigned char*)data;
+    std::string out;
+    out.reserve((bytes + 2) / 3 * 4);
+
+    size_t at = 0;
+    while (at + 3 <= bytes) {
+        const unsigned value = ((unsigned)in[at] << 16) | ((unsigned)in[at + 1] << 8) |
+                               (unsigned)in[at + 2];
+        out += kAlphabet[(value >> 18) & 0x3Fu];
+        out += kAlphabet[(value >> 12) & 0x3Fu];
+        out += kAlphabet[(value >> 6) & 0x3Fu];
+        out += kAlphabet[value & 0x3Fu];
+        at += 3;
+    }
+    if (at < bytes) {
+        const unsigned value = (unsigned)in[at] << 16;
+        out += kAlphabet[(value >> 18) & 0x3Fu];
+        out += kAlphabet[(value >> 12) & 0x3Fu];
+        out += (at + 1 < bytes) ? kAlphabet[(value >> 6) & 0x3Fu] : '=';
+        out += '=';
+    }
+    return out;
+}
+
+// The other direction. False when the text is not base64: a file that was
+// written by something else is a file that is not read, and saying so is
+// better than reading it as noise.
+inline bool fromBase64(const std::string& text, std::vector<unsigned char>& out) {
+    // What every letter of the alphabet stands for. -1 is "not a letter".
+    //
+    // Built once, when the first thing is decoded: the table is the same for
+    // every call, and building it again for every ground in a scene would be
+    // work nobody asked for.
+    static const std::array<int, 256> table = [] {
+        std::array<int, 256> letters;
+        letters.fill(-1);
+        const char* alphabet =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (int i = 0; i < 64; ++i) letters[(unsigned char)alphabet[i]] = i;
+        return letters;
+    }();
+
+    out.clear();
+    out.reserve(text.size() / 4 * 3);
+    unsigned value = 0;
+    int bits = 0;
+    for (char c : text) {
+        if (c == '=' || c == '\n' || c == '\r') continue;
+        const int letter = table[(unsigned char)c];
+        if (letter < 0) return false;
+        value = (value << 6) | (unsigned)letter;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back((unsigned char)((value >> bits) & 0xFFu));
+        }
+    }
+    return true;
 }
 
 } // namespace str

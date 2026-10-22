@@ -24,19 +24,21 @@ constexpr float kPanelHeaderHeight = 24.0f;
 const char* const kDefaultSceneFile = "scenes/scene.json";
 
 // Navigation balls: camera orientation presets, offsets from the widget centre.
-struct NavBall {
-    float dx, dy;
-    float yaw, pitch;
-};
+// They live in the editor's own header, because the drawing of them and the
+// hit test of them have to be the same balls.
 
-const NavBall kNavBalls[6] = {
-    {0.0f, -30.0f, 0.0f, -1.55f},      // look down +Y
-    {0.0f, 30.0f, 0.0f, 1.55f},       // look up -Y
-    {30.0f, 8.0f, -kPi * 0.5f, 0.0f}, // +X
-    {-30.0f, 8.0f, kPi * 0.5f, 0.0f}, // -X
-    {-26.0f, 26.0f, kPi, 0.0f},       // +Z
-    {26.0f, -26.0f, 0.0f, 0.0f},      // -Z
-};
+// A copy of a point with one of its coordinates taken out.
+//
+// The flat picture is a plane, and a point of a plane has no coordinate along
+// the axis the picture looks down: that is the direction the eye is in, and
+// the picture does not measure it.
+Vec3 withoutAxis(const Vec3& point, int axis) {
+    Vec3 out = point;
+    if (axis == 0) out.x = 0.0f;
+    else if (axis == 1) out.y = 0.0f;
+    else out.z = 0.0f;
+    return out;
+}
 
 // Which way is down, for the number keys: 1 and 2 are up and down, and then
 // the four sides, so that the keys go round the way the arrows on a keypad do.
@@ -44,6 +46,41 @@ const GravityAxis kGravityAxes[6] = {GravityAxis::NegY, GravityAxis::PosY, Gravi
                                       GravityAxis::PosX, GravityAxis::NegZ, GravityAxis::PosZ};
 
 } // namespace
+
+// The unit vector from the plane of the flat picture to the eye.
+//
+// The eye is on one side of the plane it looks at, and which side that is
+// depends on the axis: the front view looks from +Z, the top view from +Y and
+// the side view from -X.
+Vec3 Editor::flatNormal(int axis) {
+    switch (axis) {
+    case 0: return Vec3{-1.0f, 0.0f, 0.0f};
+    case 1: return Vec3{0.0f, 1.0f, 0.0f};
+    default: return Vec3{0.0f, 0.0f, 1.0f};
+    }
+}
+
+// The turn of the eye for each flat view.
+//
+// The camera looks down the axis, and the picture is the plane it cannot see
+// into. The three of them: the plane XY seen from the front, the plane XZ
+// seen from above and the plane YZ seen from the side.
+void Editor::flatTurn(int axis, float& yaw, float& pitch) {
+    switch (axis) {
+    case 0:  // the YZ plane, seen from -X
+        yaw = kPi * 0.5f;
+        pitch = 0.0f;
+        break;
+    case 1:  // the XZ plane, seen from above
+        yaw = 0.0f;
+        pitch = -kPi * 0.5f;
+        break;
+    default:  // the XY plane, seen from the front
+        yaw = 0.0f;
+        pitch = 0.0f;
+        break;
+    }
+}
 
 // Whether two bodies are the same body in the same state, as far as the
 // editor is concerned.
@@ -54,7 +91,30 @@ const GravityAxis kGravityAxes[6] = {GravityAxis::NegY, GravityAxis::PosY, Gravi
 // among them: they change on their own, and a change the user did not make is
 // not a change that belongs on the undo stack.
 bool sameBodyState(const RigidBody& a, const RigidBody& b) {
-    return a.position.x == b.position.x && a.position.y == b.position.y &&
+    // The water of a body that is water: the waves, the colours, the foam
+    // and the light. It is a part of the body like the rest of it, and a
+    // wave that was changed is a change the user did.
+    const WaterSettings& wa = a.water;
+    const WaterSettings& wb = b.water;
+    const bool sameWater =
+        wa.depthColour == wb.depthColour && wa.depthFade == wb.depthFade &&
+        wa.depth == wb.depth && wa.clarity == wb.clarity && wa.opacity == wb.opacity &&
+        wa.shoreFade == wb.shoreFade && wa.waveHeight == wb.waveHeight &&
+        wa.waveLength == wb.waveLength && wa.waveSpeed == wb.waveSpeed &&
+        wa.waveSteepness == wb.waveSteepness && wa.detailStrength == wb.detailStrength &&
+        wa.detailScale == wb.detailScale && wa.detailSpeed == wb.detailSpeed &&
+        wa.reflectivity == wb.reflectivity && wa.fresnelPower == wb.fresnelPower &&
+        wa.fresnelIntensity == wb.fresnelIntensity && wa.specular == wb.specular &&
+        wa.shininess == wb.shininess && wa.foam == wb.foam && wa.refraction == wb.refraction &&
+        wa.refractionStrength == wb.refractionStrength && wa.darkening == wb.darkening &&
+        wa.windDirection.x == wb.windDirection.x && wa.windDirection.y == wb.windDirection.y &&
+        wa.shallowColour.x == wb.shallowColour.x && wa.shallowColour.y == wb.shallowColour.y &&
+        wa.shallowColour.z == wb.shallowColour.z && wa.deepColour.x == wb.deepColour.x &&
+        wa.deepColour.y == wb.deepColour.y && wa.deepColour.z == wb.deepColour.z &&
+        wa.foamColour.x == wb.foamColour.x && wa.foamColour.y == wb.foamColour.y &&
+        wa.foamColour.z == wb.foamColour.z;
+
+    return sameWater && a.position.x == b.position.x && a.position.y == b.position.y &&
            a.position.z == b.position.z && a.orientation.w == b.orientation.w &&
            a.orientation.x == b.orientation.x && a.orientation.y == b.orientation.y &&
            a.orientation.z == b.orientation.z && a.halfExtents.x == b.halfExtents.x &&
@@ -123,10 +183,42 @@ Editor::Editor(MeshRegistry& meshes, i18n::Localizer& localizer, SoundDevice& so
     // The landform is a tool window: it makes a piece of ground and is in the
     // way of nothing. It starts closed, so a window that opens the editor is
     // not a window with a tool in it; the View menu brings it back.
+    //
+    // It is a window like any other: it is dragged by its title bar, it is
+    // resized by its edges, and where it is left is where it comes back - the
+    // layout file keeps it, like every other panel.
     Panel& landform = panels_[(int)PanelId::Landform];
     landform.zone = PanelZone::Float;
     landform.open = false;
-    landform.floatRect = Rect{600.0f, 60.0f, 360.0f, 430.0f};
+    landform.floatRect = Rect{520.0f, 40.0f, 400.0f, 700.0f};
+
+    // The particles are a tool window as well: they make the effects of the
+    // world and they are in the way of nothing. It starts closed, like the
+    // landform, and the View menu brings it back.
+    Panel& particles = panels_[(int)PanelId::Particles];
+    particles.zone = PanelZone::Float;
+    particles.open = false;
+    particles.floatRect = Rect{660.0f, 60.0f, 340.0f, 520.0f};
+
+    // And the cloud is another tool window: it makes the sky. It floats, it
+    // starts closed, and the View menu brings it back - the same as the two
+    // above it, because it is the same kind of thing: a thing that makes a
+    // piece of the world and then gets out of the way.
+    Panel& cloud = panels_[(int)PanelId::Cloud];
+    cloud.zone = PanelZone::Float;
+    cloud.open = false;
+    cloud.floatRect = Rect{420.0f, 60.0f, 360.0f, 480.0f};
+
+    // The last slot is the number of the panels and not a panel. It is closed
+    // and it floats, so that it never occupies an edge of the window: a
+    // sentinel that claims the left column is a column that is there even
+    // when the hierarchy is closed.
+    Panel& sentinel = panels_[(int)PanelId::PanelCount];
+    sentinel.zone = PanelZone::Float;
+    sentinel.open = false;
+
+    // The recipe the panel starts with: the first of the effects, unchanged.
+    particleSettings_ = particlePresetSettings(ParticlePreset::Fire);
 }
 
 bool Editor::consumeSingleStep() {
@@ -188,9 +280,36 @@ const char* Editor::panelTitle(PanelId id) const {
     case PanelId::Favorites: return text("tab.favorites");
     case PanelId::Sounds: return text("tab.sounds");
     case PanelId::Landform: return text("tab.landform");
+    case PanelId::Cloud: return text("tab.cloud");
+    case PanelId::Particles: return text("tab.particles");
     case PanelId::PanelCount: break;
     }
     return "";
+}
+
+// Opens a tool window - the landform, the cloud - and puts it where it covers
+// nothing.
+//
+// The window comes back where it was left, and it comes back on top of
+// nothing: a window that opens over another one hides it, and the one
+// underneath cannot be reached.
+void Editor::openToolPanel(int index) {
+    if (index < 0 || index >= kPanelCount) return;
+    Panel& panel = panels_[index];
+    panel.open = true;
+    if (panel.zone != PanelZone::Float) {
+        // Two panels never share an edge: one of them floats instead.
+        for (int i = 0; i < kPanelCount; ++i)
+            if (i != index && panels_[i].open && panels_[i].zone == panel.zone) {
+                panel.zone = PanelZone::Float;
+                break;
+            }
+    }
+    if (panel.zone == PanelZone::Float)
+        panel.floatRect = findFreeSpot(workspace(), index, panel.floatRect);
+    // Which panels are on screen is part of the workspace, so the window comes
+    // back the way it was left.
+    markLayoutDirty();
 }
 
 // Which zone the pointer is over. The bottom row is tested first and split at the
@@ -350,51 +469,81 @@ void Editor::handlePanelDrag(PhysicsWorld& world) {
         return;
     }
 
-    if (ui_.pointerPressed() && pointerArmed_) {
-        // A press on a window that is over this one is a press on that window.
-        // The floating panels and the dialog are in the guard, and a press that
-        // belongs to them is not a press on the panel underneath.
-        if (ui_.pressOnOverlay()) return;
-
-        // Grips are tested BEFORE the title bar, and that order is the whole
-        // reason the console can be resized at all: its only grip is its top
-        // edge, which is also the first five pixels of its title bar. Tested the
-        // other way round, a press on the console's border picked the panel up
-        // and dragged it away instead of making it taller.
-        for (int i = 0; i < kPanelCount; ++i) {
-            const unsigned grips = panelGripsAt(i, px, py);
-            if (!grips) continue;
-            resizePanel_ = i;
-            resizeEdges_ = grips;
-            resizeStartRect_ = panels_[i].floatRect;
-            resizeStartPointerX_ = px;
-            resizeStartPointerY_ = py;
-            const PanelZone zone = panels_[i].zone;
-            // The number the drag starts from is the one the grip moves: the
-            // height of a panel in the bottom row, or the width of the column
-            // it shares with the panel above it.
-            if (resizeEdges_ & kGripTop) {
-                resizeStartSize_ = zone == PanelZone::BottomLeft ? bottomLeftHeight_
-                                   : zone == PanelZone::BottomRight ? bottomRightHeight_
-                                                                   : bottomHeight_;
-            } else {
-                resizeStartSize_ = zoneIsLeft(zone) ? leftWidth_ : rightWidth_;
-            }
-            return;
-        }
-        for (int i = 0; i < kPanelCount; ++i) {
-            if (!panels_[i].open) continue;
+    // The panel the press would go to: the grip of a panel, or the title bar
+    // of one.
+    //
+    // It is found BEFORE the guard is asked, because the guard's answer
+    // depends on who is asking. A floating window is a surface - the guard
+    // says that a press on it belongs to it, so that a click on a window does
+    // not also pick the body behind it - and a surface does not take the
+    // press from the widgets inside it. The drag of a window's title bar IS a
+    // press of that window: asked as anybody else, the window takes the press
+    // away from itself, the drag never starts, and no floating window can be
+    // moved at all.
+    //
+    // The floating windows come first, and the one on top of the others comes
+    // first of all: they are over everything else, so their title bars and
+    // their edges are the ones under the pointer.
+    int candidate = -1;
+    unsigned candidateGrips = 0;
+    int order[kPanelCount];
+    const int count = panelPickOrder(order);
+    // Grips are tested BEFORE the title bar, and that order is the whole
+    // reason the console can be resized at all: its only grip is its top
+    // edge, which is also the first five pixels of its title bar. Tested the
+    // other way round, a press on the console's border picked the panel up
+    // and dragged it away instead of making it taller.
+    for (int i = 0; i < count; ++i) {
+        const unsigned grips = panelGripsAt(order[i], px, py);
+        if (!grips) continue;
+        candidate = order[i];
+        candidateGrips = grips;
+        break;
+    }
+    if (candidate < 0) {
+        for (int i = 0; i < count; ++i) {
+            const int panel = order[i];
+            if (!panels_[panel].open) continue;
             // The X closes; anything else in the header drags.
-            if (ui_.hovered(panelCloseRect((PanelId)i))) continue;
-            if (ui_.hovered(panelHeader((PanelId)i))) {
-                dragPanel_ = i;
-                const Rect header = panelHeader((PanelId)i);
-                dragGrabX_ = px - header.x;
-                dragGrabY_ = py - header.y;
-                dragRect_ = panelRect((PanelId)i);
-                dropZone_ = panels_[i].zone;
+            if (ui_.hovered(panelCloseRect((PanelId)panel))) continue;
+            if (!ui_.hovered(panelHeader((PanelId)panel))) continue;
+            candidate = panel;
+            break;
+        }
+    }
+    if (candidate >= 0 && pointerArmed_) {
+        // The press, asked as the panel asks. A docked panel is not a surface
+        // and owns nothing: the press under it is the editor's.
+        const int owner = panels_[candidate].zone == PanelZone::Float
+                              ? kOwnerFloatingPanel + candidate
+                              : 0;
+        if (ui_.pointerPressedBy(owner)) {
+            if (candidateGrips) {
+                resizePanel_ = candidate;
+                resizeEdges_ = candidateGrips;
+                resizeStartRect_ = panels_[candidate].floatRect;
+                resizeStartPointerX_ = px;
+                resizeStartPointerY_ = py;
+                const PanelZone zone = panels_[candidate].zone;
+                // The number the drag starts from is the one the grip moves: the
+                // height of a panel in the bottom row, or the width of the column
+                // it shares with the panel above it.
+                if (resizeEdges_ & kGripTop) {
+                    resizeStartSize_ = zone == PanelZone::BottomLeft ? bottomLeftHeight_
+                                       : zone == PanelZone::BottomRight ? bottomRightHeight_
+                                                                       : bottomHeight_;
+                } else {
+                    resizeStartSize_ = zoneIsLeft(zone) ? leftWidth_ : rightWidth_;
+                }
                 return;
             }
+
+            dragPanel_ = candidate;
+            const Rect header = panelHeader((PanelId)candidate);
+            dragGrabX_ = px - header.x;
+            dragGrabY_ = py - header.y;
+            dragRect_ = panelRect((PanelId)candidate);
+            dropZone_ = panels_[candidate].zone;
         }
     }
 
@@ -404,7 +553,15 @@ void Editor::handlePanelDrag(PhysicsWorld& world) {
     dragRect_.x = px - dragGrabX_;
     dragRect_.y = py - dragGrabY_;
     dropZone_ = zoneAt(px, py);
-    if (ui_.pointerReleased()) {
+    // The release that ends the drag is the drag's own: the window that is
+    // being dragged is under the pointer by definition, and the guard that
+    // says "a press on a window belongs to the window" must not swallow the
+    // release - the drag would go on for ever and the window would follow the
+    // pointer after the hand had let go of it.
+    //
+    // The popup capture is still there: a dropdown that opened during the drag
+    // owns the pointer.
+    if (ui_.rawPointerReleased() && !ui_.captured()) {
         commitPanelDrop();
         dragPanel_ = -1;
     }
@@ -573,6 +730,23 @@ void Editor::recomputeLayout(int fbWidth, int fbHeight) {
     ws.fbWidth = fbWidth;
     ws.fbHeight = fbHeight;
     layout_ = computeLayout(ws);
+
+    // A floating window is kept inside the window. The drag does the same, and
+    // a panel that came back from the layout file is clamped when it is read -
+    // this is the one that was never moved at all, and a window that hangs off
+    // the edge of the screen is a window the user has to hunt for.
+    for (int i = 0; i < kPanelCount; ++i) {
+        Panel& panel = panels_[i];
+        if (panel.zone != PanelZone::Float) continue;
+        Rect rect = panel.floatRect;
+        if (rect.width <= 0.0f || rect.height <= 0.0f) continue;
+        rect.width = std::fmin(rect.width, (float)fbWidth);
+        rect.height = std::fmin(rect.height, (float)fbHeight);
+        rect.x = clampf(rect.x, 0.0f, std::fmax(0.0f, (float)fbWidth - rect.width));
+        rect.y = clampf(rect.y, (float)theme::menuBarHeight,
+                        std::fmax(0.0f, (float)fbHeight - rect.height));
+        panel.floatRect = rect;
+    }
 }
 
 void Editor::pruneSelection(const PhysicsWorld& world) {
@@ -604,6 +778,10 @@ void Editor::deleteSelection(PhysicsWorld& world) {
         // Remembered before it goes, so that Ctrl+Z can bring it back.
         rememberRemoval(world, index);
         world.remove(index);
+        // The emitters that rode on it are free now, and the ones that rode
+        // on a body after it are one index earlier: the bodies have moved
+        // down.
+        if (particles_) particles_->removeBody(index);
         markSceneDirty();
     }
     commitUndo();
@@ -613,7 +791,6 @@ void Editor::deleteSelection(PhysicsWorld& world) {
 
 void Editor::updateViewRay(const Camera& camera) {
     if (viewRay_.valid) return;
-    camera.basis(viewRay_.forward, viewRay_.right, viewRay_.up);
 
     // The ray is built for the viewport, because that is the space the scene is
     // drawn in and the space the projection works in. The camera's field of view
@@ -621,15 +798,14 @@ void Editor::updateViewRay(const Camera& camera) {
     // aspect: the same two numbers the projection matrix is built from, so the
     // pointer and the picture cannot disagree about where a thing is.
     const Rect view = layout_.viewport;
-    picking::viewRayTangents(camera, view.width, view.height, viewRay_.tanX, viewRay_.tanY);
+    picking::viewProjection(camera, view.width, view.height, viewRay_);
     viewRay_.valid = true;
 }
 
-Vec3 Editor::viewportRay(const Camera& camera) {
+void Editor::viewportRay(const Camera& camera, Vec3& originOut, Vec3& directionOut) {
     updateViewRay(camera);
-    return picking::rayFromViewport(ui_.pointerX(), ui_.pointerY(), layout_.viewport,
-                                    viewRay_.forward, viewRay_.right, viewRay_.up,
-                                    viewRay_.tanX, viewRay_.tanY);
+    picking::rayFromViewport(ui_.pointerX(), ui_.pointerY(), layout_.viewport, viewRay_, originOut,
+                             directionOut);
 }
 
 void Editor::appendDecimal(char* out, int& at, unsigned long long value, int minDigits) {
@@ -767,7 +943,10 @@ void Editor::handleInput(PhysicsWorld& world, Camera& camera, Window& window, in
         ui_.overlays().push(0.0f, 0.0f, (float)fbWidth, (float)fbHeight, kOwnerModal);
     handleHotkeys(world, camera, window, dt);
     handlePanelDrag(world);
-    handleViewport(world, camera, window);
+    // The interface of the game is laid out in the viewport, and a click there
+    // picks an element of it instead of a body of the world.
+    if (guiMode_) handleGuiInput(layout_.viewport);
+    handleViewport(world, camera, window, dt);
 }
 
 void Editor::handleHotkeys(PhysicsWorld& world, Camera& camera, Window& window, float dt) {
@@ -803,7 +982,10 @@ void Editor::handleHotkeys(PhysicsWorld& world, Camera& camera, Window& window, 
     // Delete throws the selection away. The menu has done this for as long as
     // there has been a menu, and the key is the one everybody reaches for.
     if (window.takeKeyPress(GLFW_KEY_DELETE)) {
-        if (!selectedBodies_.empty()) deleteSelection(world);
+        // What is deleted is what is selected, and in the interface mode what
+        // is selected is an element of the interface.
+        if (guiMode_ && selectedGui_ >= 0) deleteGuiElement();
+        else if (!selectedBodies_.empty()) deleteSelection(world);
         return;
     }
 
@@ -825,8 +1007,15 @@ void Editor::handleHotkeys(PhysicsWorld& world, Camera& camera, Window& window, 
     // so a key moves the same amount of the picture at any distance.
     Vec3 reference{0.0f, 0.0f, 0.0f};
     if (const RigidBody* body = world.find(activeBody_)) reference = body->position;
-    const float distance = std::fmax(1.0f, (camera.position - reference).length());
-    float speed = clampf(distance * 0.35f, 3.0f, 120.0f);
+    float speed = 0.0f;
+    if (camera.orthographic) {
+        // An orthographic picture has no distance to the ground: what says how
+        // much of the world is on the screen is the zoom.
+        speed = clampf(camera.orthoSize * 0.6f, 1.0f, 60.0f);
+    } else {
+        const float distance = std::fmax(1.0f, (camera.position - reference).length());
+        speed = clampf(distance * 0.35f, 3.0f, 120.0f);
+    }
     if (window.keyDown(GLFW_KEY_LEFT_SHIFT) || window.keyDown(GLFW_KEY_RIGHT_SHIFT)) speed *= 4.0f;
     camera.position += move.normalized() * (speed * dt);
     viewRay_.valid = false;
@@ -878,6 +1067,9 @@ void Editor::commitUndo() {
         // A new change clears the way back: the redo stack belongs to a
         // history that has just been broken.
         redoStack_.clear();
+        // The world was the last thing that was changed, and Ctrl+Z takes
+        // that back first.
+        lastChange_ = LastChange::Body;
     }
     pending_.steps.clear();
     bodyBeforeValid_ = false;
@@ -933,6 +1125,13 @@ void Editor::finishUndoIfDone(const PhysicsWorld& world) {
 
 // Takes the last change back, and puts it on the redo stack.
 void Editor::undo(PhysicsWorld& world) {
+    // The interface of the game and the world have their own undo stacks, and
+    // Ctrl+Z takes back the change that was made last - whichever of the two
+    // it was.
+    if (lastChange_ == LastChange::Gui && !guiUndo_.empty()) {
+        undoGui();
+        return;
+    }
     if (undoStack_.empty()) return;
     // A change that is still being made is finished first: the thing that is
     // being changed right now is the newest thing, and the one before it is
@@ -949,7 +1148,7 @@ void Editor::undo(PhysicsWorld& world) {
     // was removed goes back to the place it came from.
     int restored = -1;
     for (int i = (int)action.steps.size() - 1; i >= 0; --i) {
-        const UndoStep& step = action.steps[(size_t)i];
+        UndoStep& step = action.steps[(size_t)i];
         switch (step.kind) {
         case UndoStep::Kind::Changed:
             if (step.index < 0 || step.index >= (int)world.bodies.size()) break;
@@ -965,6 +1164,13 @@ void Editor::undo(PhysicsWorld& world) {
             if (step.index < 0 || step.index > (int)world.bodies.size()) break;
             world.bodies.insert(world.bodies.begin() + step.index, step.body);
             if (restored < 0) restored = step.index;
+            break;
+        case UndoStep::Kind::Painted:
+            // A stroke of the brush on a ground. The two states of the ground
+            // are swapped, and the one that is now the "before" is the one
+            // that is put back - so the stroke can be made again.
+            step.heightsBefore.swap(step.heightsAfter);
+            restoreGroundHeights(world, step.index, step.heightsBefore);
             break;
         }
     }
@@ -983,18 +1189,23 @@ void Editor::undo(PhysicsWorld& world) {
     }
     world.wakeAll();
     markSceneDirty();
+    lastChange_ = LastChange::Body;
     Log::info("Undo: %d change(s) taken back", (int)redoStack_.back().steps.size());
 }
 
 // Puts the last change back the other way.
 void Editor::redo(PhysicsWorld& world) {
+    if (lastChange_ == LastChange::Gui && !guiRedo_.empty()) {
+        redoGui();
+        return;
+    }
     if (redoStack_.empty()) return;
     UndoAction action = std::move(redoStack_.back());
     redoStack_.pop_back();
 
     undoing_ = true;
     for (int i = (int)action.steps.size() - 1; i >= 0; --i) {
-        const UndoStep& step = action.steps[(size_t)i];
+        UndoStep& step = action.steps[(size_t)i];
         switch (step.kind) {
         case UndoStep::Kind::Changed:
             if (step.index < 0 || step.index >= (int)world.bodies.size()) break;
@@ -1010,6 +1221,13 @@ void Editor::redo(PhysicsWorld& world) {
             if (step.index < 0 || step.index > (int)world.bodies.size()) break;
             world.bodies.insert(world.bodies.begin() + step.index, step.body);
             break;
+        case UndoStep::Kind::Painted:
+            // The stroke of the brush again: the two states of the ground are
+            // swapped, and the one that is now the "before" is the one that is
+            // put back.
+            step.heightsBefore.swap(step.heightsAfter);
+            restoreGroundHeights(world, step.index, step.heightsBefore);
+            break;
         }
     }
     undoing_ = false;
@@ -1018,6 +1236,74 @@ void Editor::redo(PhysicsWorld& world) {
     pruneSelection(world);
     world.wakeAll();
     markSceneDirty();
+    lastChange_ = LastChange::Body;
+}
+
+// The world in 2D: measured and not seen.
+//
+// The camera becomes orthographic and looks down one of the world's axes, so
+// the picture is one of the world's planes with no vanishing point in it. The
+// camera as it was in 3D is kept, because going back to 3D has to put it back
+// where it was: a mode that forgets where the eye was is a mode that loses
+// the view.
+void Editor::applyMode2D(Camera& camera, bool on) {
+    if (on) {
+        // The camera as it was in the 3D view, and not the flat one: a camera
+        // that is already flat is not the camera that has to be put back.
+        if (!camera.orthographic) camera3D_ = camera;
+        camera.orthographic = true;
+        camera.orthoSize = k2DOrthoSize;
+        // The middle of the picture is where the eye was: the eye's own place
+        // in the plane it is going to look at.
+        Vec3 centre = camera.position;
+        centre = withoutAxis(centre, flatAxis_);
+        flatTurn(flatAxis_, camera.yaw, camera.pitch);
+        // The eye stands a picture's worth of distance off the plane, so that
+        // nothing is behind it, and no further: the picture does not depend
+        // on how far away it is.
+        camera.position = centre + flatNormal(flatAxis_) * k2DEyeDistance;
+    } else {
+        camera = camera3D_;
+        camera.orthographic = false;
+    }
+    viewRay_.valid = false;
+}
+
+// The world in 2D, seen from another side.
+//
+// The picture is the plane the eye looks at, and the eye looks down one of
+// the world's axes: the XY plane from the front, the XZ plane from above and
+// the YZ plane from the side. The middle of the picture does not move - it is
+// the same piece of the world, measured from another direction - and the two
+// planes share one axis, and that is the one that stays.
+void Editor::setFlatAxis(Camera& camera, int axis) {
+    if (axis < 0 || axis > 2) return;
+    if (!mode2D_) {
+        applyMode2D(camera, true);
+        if (flatAxis_ == axis) return;
+    }
+    // The middle of the picture now: the eye's own place in the plane it
+    // looks at, a picture's worth of distance off the plane.
+    Vec3 centre = camera.position - flatNormal(flatAxis_) * k2DEyeDistance;
+    // And the middle of the picture in the new plane: the same place, with
+    // the coordinate the new plane does not have taken out of it.
+    centre = withoutAxis(centre, axis);
+    flatAxis_ = axis;
+    camera.orthographic = true;
+    flatTurn(flatAxis_, camera.yaw, camera.pitch);
+    camera.position = centre + flatNormal(flatAxis_) * k2DEyeDistance;
+    viewRay_.valid = false;
+}
+
+// The middle of the flat picture, at a place in the plane.
+//
+// The coordinate the picture does not have is taken out of the place: the
+// plane of the picture is the one the eye looks at, and the place is in it.
+void Editor::setFlatCentre(Camera& camera, const Vec3& centre) {
+    Vec3 middle = centre;
+    middle = withoutAxis(middle, flatAxis_);
+    camera.position = middle + flatNormal(flatAxis_) * k2DEyeDistance;
+    viewRay_.valid = false;
 }
 
 bool Editor::tryNavigationGizmo(Camera& camera) {
@@ -1025,6 +1311,21 @@ bool Editor::tryNavigationGizmo(Camera& camera) {
     const float centerX = viewport.x + viewport.width - 52.0f;
     const float centerY = viewport.y + 52.0f;
     if (!pressAccepted()) return false;
+
+    if (mode2D_) {
+        // The flat picture does not turn: the balls say which plane of the
+        // world it is of. There are three of them, one for each axis, and
+        // they are the positive half of the widget.
+        for (int axis = 0; axis < 3; ++axis) {
+            const NavBall& ball = kNavBalls[axis * 2];
+            const float dx = ui_.pointerX() - (centerX + ball.dx);
+            const float dy = ui_.pointerY() - (centerY + ball.dy);
+            if (dx * dx + dy * dy >= 144.0f) continue;
+            setFlatAxis(camera, axis);
+            return true;
+        }
+        return false;
+    }
 
     for (const NavBall& ball : kNavBalls) {
         const float dx = ui_.pointerX() - (centerX + ball.dx);
@@ -1063,18 +1364,19 @@ bool Editor::tryGizmoGrip(PhysicsWorld& world, Camera& camera) {
     // scene is drawn in and the space the projection works in: the handles have
     // to be where the things they belong to are drawn.
     const Rect area = layout_.viewport;
-    const Vec3 rayOrigin = camera.position;
-    const Vec3 rayDir = viewportRay(camera);
+    Vec3 rayOrigin, rayDir;
+    viewportRay(camera, rayOrigin, rayDir);
     const float pointerX = ui_.pointerX() - area.x;
     const float pointerY = ui_.pointerY() - area.y;
 
+    // The flat picture has two directions to move in and one to turn about,
+    // and the third handle is neither drawn nor picked.
+    const int flatAxis = mode2D_ ? flatAxis_ : -1;
     dragAxis_ = mode == gizmo::Mode::Rotate
-                    ? gizmo::pickRing(pointerX, pointerY, rayOrigin, rayDir, camera.position,
-                                      viewRay_.forward, viewRay_.right, viewRay_.up,
-                                      viewRay_.tanX, viewRay_.tanY, area, *body)
-                    : gizmo::pickAxis(pointerX, pointerY, rayOrigin, rayDir, camera.position,
-                                      viewRay_.forward, viewRay_.right, viewRay_.up,
-                                      viewRay_.tanX, viewRay_.tanY, area, *body, mode);
+                    ? gizmo::pickRing(pointerX, pointerY, rayOrigin, rayDir, viewRay_, area,
+                                      *body, flatAxis)
+                    : gizmo::pickAxis(pointerX, pointerY, rayOrigin, rayDir, viewRay_, area,
+                                      *body, mode, flatAxis);
     if (dragAxis_ < 0) return false;
 
     // Whatever was being changed before is finished first, and then the body
@@ -1128,9 +1430,7 @@ bool Editor::ringScreenAngle(const Vec3& centre, const Camera& camera, float& an
     // space the projection works in.
     const Rect area = layout_.viewport;
     float cx = 0.0f, cy = 0.0f;
-    if (!picking::projectToViewport(centre, camera.position, viewRay_.forward, viewRay_.right,
-                                    viewRay_.up, viewRay_.tanX, viewRay_.tanY, area.width,
-                                    area.height, cx, cy))
+    if (!picking::projectToViewport(centre, viewRay_, area.width, area.height, cx, cy))
         return false;
 
     const float px = ui_.pointerX() - area.x;
@@ -1148,8 +1448,8 @@ void Editor::applyGizmoDrag(PhysicsWorld& world, Camera& camera) {
     RigidBody* body = world.find(activeBody_);
     if (!body) return;
 
-    const Vec3 rayOrigin = camera.position;
-    const Vec3 rayDir = viewportRay(camera);
+    Vec3 rayOrigin, rayDir;
+    viewportRay(camera, rayOrigin, rayDir);
 
     gizmo::Mode mode = gizmo::Mode::Move;
     if (!gizmoModeFor(tool_, mode)) return;
@@ -1264,11 +1564,17 @@ void Editor::drawCameraIcon(UiRenderer& ui, float x, float y, float size,
     }
 }
 
-void Editor::handleViewport(PhysicsWorld& world, Camera& camera, Window& window) {
+void Editor::handleViewport(PhysicsWorld& world, Camera& camera, Window& window, float dt) {
     if (ui_.cameraCaptured()) {
         dragAxis_ = -1;
         return;
     }
+
+    // The interface of the game is being laid out: a click in the viewport
+    // picks an element of it and not a body of the world. The world is still
+    // there and still drawn - it is what the interface is drawn over - and the
+    // camera is still the user's, so the pan and the zoom are still there.
+    const bool layingOut = guiMode_;
 
     // A press on a window that is over the scene belongs to the window: a
     // click on a floating panel must not also pick the body behind it, and a
@@ -1290,7 +1596,37 @@ const Rect viewport = layout_.viewport;
         return;
     }
 
+    // The brush paints the ground instead of picking it. The hand in the
+    // viewport is a brush, and what is under it is the ground: nothing else
+    // in the viewport happens while the brush is in the hand.
+    if (landformPainting_) {
+        if (ui_.pointerDown() || ui_.pointerPressed()) {
+            Vec3 rayOrigin, rayDir;
+            viewportRay(camera, rayOrigin, rayDir);
+            paintGround(world, rayOrigin, rayDir, dt);
+            return;
+        }
+        // And the hand is up: the stroke is over, and what it did is one
+        // entry on the undo stack.
+        if (ui_.pointerReleased()) {
+            endPaintStroke();
+            return;
+        }
+    }
+
     if (tryNavigationGizmo(camera)) return;
+
+    // The wheel zooms in the 2D view. There is nothing to zoom in a
+    // perspective view here - the wheel is not the zoom of the editor, it is
+    // the scroll of the panels - but an orthographic picture has a zoom, and
+    // a 2D scene that cannot be made bigger is a 2D scene that can only be
+    // looked at from far away.
+    if (camera.orthographic && ui_.scrollDelta() != 0.0f) {
+        const float factor = std::pow(0.9f, (float)ui_.scrollDelta());
+        camera.orthoSize = clampf(camera.orthoSize * factor, 0.25f, 2000.0f);
+        viewRay_.valid = false;
+        return;
+    }
 
     // Pan is a viewport drag, not a UI press: start it here and keep feeding it
     // below, so the camera tracks the pointer for as long as the button is down.
@@ -1304,10 +1640,18 @@ const Rect viewport = layout_.viewport;
             // one, otherwise the origin.
             Vec3 reference{0.0f, 0.0f, 0.0f};
             if (const RigidBody* body = world.find(activeBody_)) reference = body->position;
-            const float distance = (camera.position - reference).length();
-            panPixelsPerUnit_ = std::fmax(0.001f, distance * 2.0f *
-                                                        std::tan(camera.fovDeg * 0.5f * kPi / 180.0f) /
-                                                        std::fmax(1.0f, viewport.height));
+            if (camera.orthographic) {
+                // An orthographic picture has no focal plane: the whole picture
+                // is at the same distance, and the zoom says how much of the
+                // world is on it.
+                panPixelsPerUnit_ = std::fmax(0.0001f, viewport.height /
+                                                        (2.0f * std::fmax(0.01f, camera.orthoSize)));
+            } else {
+                const float distance = (camera.position - reference).length();
+                panPixelsPerUnit_ = std::fmax(0.001f, distance * 2.0f *
+                                                            std::tan(camera.fovDeg * 0.5f * kPi / 180.0f) /
+                                                            std::fmax(1.0f, viewport.height));
+            }
             viewRay_.valid = false;
             return;
         }
@@ -1324,7 +1668,7 @@ const Rect viewport = layout_.viewport;
         return;
     }
 
-    if (pressAccepted()) {
+    if (!layingOut && pressAccepted()) {
         if (tryGizmoGrip(world, camera)) {
             const RigidBody* body = world.find(activeBody_);
             gizmo::Mode mode = gizmo::Mode::Move;
@@ -1355,13 +1699,19 @@ if (ui_.pointerDown() && dragAxis_ >= 0 && world.find(activeBody_)) {
         commitUndo();
         return;
     }
-    if (pressAccepted())
-        handleSelectionClick(world, camera.position, viewportRay(camera));
+    if (!layingOut && pressAccepted()) {
+        Vec3 rayOrigin, rayDir;
+        viewportRay(camera, rayOrigin, rayDir);
+        handleSelectionClick(world, rayOrigin, rayDir);
+    }
 }
 
 void Editor::handleSelectionClick(PhysicsWorld& world, const Vec3& rayOrigin,
                                   const Vec3& rayDir) {
     const int hit = picking::pickBody(rayOrigin, rayDir, world);
+    Log::info("DIAG click ray (%.2f,%.2f,%.2f) dir (%.2f,%.2f,%.2f) hit %d bodies %d",
+              rayOrigin.x, rayOrigin.y, rayOrigin.z, rayDir.x, rayDir.y, rayDir.z, hit,
+              (int)world.bodies.size());
 
     if (!ui_.ctrlHeld()) selectedBodies_.clear();
     if (hit < 0) {
@@ -1417,7 +1767,14 @@ void Editor::saveScene(const PhysicsWorld& world) {
         target = str::join(scenesDir(), name + ".json");
     }
 
-    if (!scenes::save(world, meshes_, target)) return;
+    // The canvas is a part of the scene, and the scene is what is written out:
+    // an interface that is not in the scene file is an interface that is not in
+    // the game. The canvas is the game's own - the editor edits it in place.
+    if (!canvas_) {
+        Log::error("Editor: no canvas to save the scene with");
+        return;
+    }
+    if (!scenes::save(world, meshes_, *canvas_, target, particles_)) return;
     if (target != scenePath_) {
         scenePath_ = target;
         // The project has to say which file its scene is in, or the next time it
@@ -1430,10 +1787,19 @@ void Editor::saveScene(const PhysicsWorld& world) {
 }
 
 void Editor::loadScene(PhysicsWorld& world) {
-    if (!scenes::load(world, meshes_, scenePath()))
+    if (!canvas_) {
+        Log::error("Editor: no canvas to load the scene into");
+        return;
+    }
+    if (!scenes::load(world, meshes_, *canvas_, scenePath(), 1, particles_))
         return;
     activeBody_ = -1;
     selectedBodies_.clear();
+    // The meshes of the scene that was opened are new ones, and the ground the
+    // brush was working on is a mesh of the scene that was closed.
+    landformMesh_ = -1;
+    paintMesh_ = -1;
+    paintBefore_.clear();
     sceneDirty_ = false;
     Log::info(text("log.loaded"), (int)world.bodies.size());
 }
@@ -1464,8 +1830,24 @@ void Editor::renderOverlay(SceneRenderer& scene, PhysicsWorld& world, int hidden
     if (mode == gizmo::Mode::Rotate) shape = SceneRenderer::GizmoShape::Rings;
     else if (mode == gizmo::Mode::Scale) shape = SceneRenderer::GizmoShape::Cubes;
 
+    // The handles that are drawn and the handles that can be grabbed are one
+    // list: a handle that is not drawn must not be grabbable. A flat picture
+    // has two directions to move in, and it turns about the axis it looks
+    // down and about nothing else.
+    int drawAxes[3] = {0, 1, 2};
+    int drawCount = 3;
+    if (mode2D_) {
+        if (mode == gizmo::Mode::Rotate) {
+            drawAxes[0] = flatAxis_;
+            drawCount = 1;
+        } else {
+            drawCount = gizmo::flatDrawAxes(axes, flatAxis_, drawAxes);
+        }
+    }
+
     scene.renderGizmo(body->position, axes, gizmo::handleLength(*body),
-                      gizmo::ringRadius(*body), ringU, ringV, dragAxis_, shape);
+                      gizmo::ringRadius(*body), ringU, ringV, dragAxis_, shape, drawAxes,
+                      drawCount);
 }
 
 bool Editor::popupOpen() const {
@@ -1476,6 +1858,11 @@ bool Editor::popupOpen() const {
 void Editor::renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Window& window,
                       int fbWidth, int fbHeight) {
     ui.begin(fbWidth, fbHeight);
+
+    // The camera of this frame, kept for the panels that need to know where
+    // the eye is: an emitter is put where the eye is, because that is the
+    // only place a person can say "here".
+    frameCamera_ = camera;
 
     // A dialog takes the whole frame, bar included - it is modal, and a "Save" in
     // the top bar while a "Save As?" is on screen is two answers to one click. The
@@ -1492,6 +1879,10 @@ void Editor::renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Windo
     drawSceneHeader(ui, world, camera, window);
     drawViewportTools(ui, camera);
     drawDockedPanels(ui, world, window);
+    // The handles around the element of the interface that is being worked on.
+    // They are drawn over the canvas - which the game drew - and under the
+    // floating panels, which are windows over the scene.
+    drawGuiSelection(ui, layout_.viewport);
     // Everything below floats above the docked panels, and the batcher emits every
     // rectangle before any text: without a flush between the two, a floating
     // window's background lands under the console's log lines and the text shows
@@ -1532,6 +1923,16 @@ void Editor::renderUi(UiRenderer& ui, PhysicsWorld& world, Camera& camera, Windo
     // and it becomes one entry on the undo stack. The body as it is now is
     // also where the next change goes back to.
     finishUndoIfDone(world);
+    // And the same for the interface of the game.
+    finishGuiUndoIfDone();
+    if (canvas_ && selectedGui_ >= 0 && selectedGui_ < (int)canvas_->elements.size()) {
+        guiSnapshot_ = canvas_->elements[(size_t)selectedGui_];
+        guiSnapshotIndex_ = selectedGui_;
+        guiSnapshotValid_ = true;
+    } else {
+        guiSnapshotValid_ = false;
+        guiSnapshotIndex_ = -1;
+    }
     if (activeBody_ >= 0 && activeBody_ < (int)world.bodies.size()) {
         bodySnapshot_ = world.bodies[(size_t)activeBody_];
         bodySnapshotIndex_ = activeBody_;
@@ -1559,22 +1960,30 @@ void Editor::drawDockedPanels(UiRenderer& ui, PhysicsWorld& world, Window& windo
 
 // The floating panels, in the order they are drawn: the one under the pointer
 // last, so that the window the pointer is aiming at is the window on top.
-int Editor::floatingPanelOrder(int* out) const {
-    int count = 0;
-    for (int i = 0; i < kPanelCount; ++i)
-        if (panels_[i].zone == PanelZone::Float && panels_[i].open) out[count++] = i;
+//
+// The order is the order of the guard as well, and the guard is what says
+// which surface owns the press: the surface that is declared last is the one
+// on top, so the window under the pointer owns the press that is on it.
+int Editor::floatingPanelOrder(int* out, int capacity) const {
+    return s3d::floatingPanelOrder(workspace(), ui_.pointerX(), ui_.pointerY(), out, capacity);
+}
 
-    // The panel under the pointer comes to the front. Two windows that cover
-    // each other are two windows where one of them cannot be reached, and the
-    // one the pointer is on is the one the pointer is on.
-    for (int i = 0; i < count; ++i) {
-        const Rect rect = panels_[out[i]].floatRect;
-        if (!rect.contains(ui_.pointerX(), ui_.pointerY())) continue;
-        const int panel = out[i];
-        for (int j = i; j > 0; --j) out[j] = out[j - 1];
-        out[0] = panel;
-        break;
-    }
+// Every panel, in the order they are looked for: the floating ones first,
+// the one on top of the others first of all, and the docked ones after them.
+//
+// The floating windows are over everything else, so their title bars and their
+// edges are the ones under the pointer. The docked ones keep the order they
+// have always had: the two grips that meet in a corner - the edge of a column
+// and the top of the panel below it - belong to the column, as they always
+// have.
+int Editor::panelPickOrder(int* out) const {
+    int count = 0;
+    int floating[kPanelCount];
+    const int floatingCount = floatingPanelOrder(floating, kPanelCount);
+    // The one on top of the others is the first one asked.
+    for (int i = floatingCount - 1; i >= 0; --i) out[count++] = floating[i];
+    for (int i = 0; i < kPanelCount; ++i)
+        if (panels_[i].open && panels_[i].zone != PanelZone::Float) out[count++] = i;
     return count;
 }
 
@@ -1586,7 +1995,7 @@ int Editor::floatingPanelOrder(int* out) const {
 // of the panel it is covering.
 void Editor::declareFloatingPanels() {
     int order[kPanelCount];
-    const int count = floatingPanelOrder(order);
+    const int count = floatingPanelOrder(order, kPanelCount);
     for (int i = 0; i < count; ++i) {
         const int panel = order[i];
         const Rect rect = panels_[panel].floatRect;
@@ -1598,7 +2007,7 @@ void Editor::declareFloatingPanels() {
 
 void Editor::drawFloatingPanels(UiRenderer& ui, PhysicsWorld& world, Window& window) {
     int order[kPanelCount];
-    const int count = floatingPanelOrder(order);
+    const int count = floatingPanelOrder(order, kPanelCount);
     for (int i = 0; i < count; ++i) {
         const int panel = order[i];
         // While it is being dragged the ghost is drawn instead, so the panel does
@@ -1622,6 +2031,8 @@ void Editor::drawPanelById(UiRenderer& ui, PhysicsWorld& world, Window& window, 
     case PanelId::Favorites: drawFavoritesDock(ui, world, panel); break;
     case PanelId::Sounds: drawSoundsDock(ui, world, panel); break;
     case PanelId::Landform: drawLandformPanel(ui, world, panel); break;
+    case PanelId::Cloud: drawCloudPanel(ui, world, panel); break;
+    case PanelId::Particles: drawParticlesPanel(ui, panel); break;
     case PanelId::PanelCount: break;
     }
     drawPanelChrome(ui, id);

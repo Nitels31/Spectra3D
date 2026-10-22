@@ -164,6 +164,14 @@ unsigned gripsAt(const Workspace& ws, int panel, float x, float y) {
     // A floating panel is resized from any of its edges and from its corners.
     // The rectangle of a floating panel is the editor's business - it is the only
     // thing here that is - and the test works with the zone rectangles.
+    //
+    // And the edge belongs to the panel: the pointer has to be over the panel's
+    // own edge, not over a line that goes through the whole screen. A grip that
+    // answered to the whole line resized a window that was somewhere else
+    // entirely, and the drag of a window's title bar was taken away by the
+    // edge of another window standing on the same line.
+    if (x < rect.x - kFloatGrip || x > rect.x + rect.width + kFloatGrip) return 0;
+    if (y < rect.y - kFloatGrip || y > rect.y + rect.height + kFloatGrip) return 0;
     const float left = std::fabs(x - rect.x);
     const float right = std::fabs(x - (rect.x + rect.width));
     const float top = std::fabs(y - rect.y);
@@ -181,6 +189,26 @@ unsigned gripsAt(const Workspace& ws, int panel, float x, float y) {
     if (top <= kFloatCorner && (left <= kFloatCorner || right <= kFloatCorner))
         grips |= kGripTop;
     return grips;
+}
+
+int floatingPanelOrder(const Workspace& ws, float px, float py, int* out, int capacity) {
+    int count = 0;
+    for (int i = 0; i < kPanelCount && count < capacity; ++i)
+        if (ws.open[i] && ws.zones[i] == PanelZone::Float) out[count++] = i;
+    if (count <= 0) return 0;
+
+    // The window under the pointer comes to the front: it is drawn last, so it
+    // is the window on top, and the press on it belongs to it. The others keep
+    // the order they were in - a window that is not under the pointer does not
+    // change places with one that is.
+    for (int i = 0; i < count; ++i) {
+        if (!ws.floatRects[out[i]].contains(px, py)) continue;
+        const int panel = out[i];
+        for (int j = i; j + 1 < count; ++j) out[j] = out[j + 1];
+        out[count - 1] = panel;
+        break;
+    }
+    return count;
 }
 
 bool rectsOverlap(const Rect& a, const Rect& b) {

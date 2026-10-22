@@ -3,6 +3,7 @@
 #include "core/Log.hpp"
 #include "core/Str.hpp"
 #include "platform/Filesystem.hpp"
+#include "render/FontFile.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -21,104 +22,11 @@ namespace {
 
 constexpr int kAtlasSize = 1024;
 
-// The font the engine ships with, in the assets next to the program. It is
-// looked for first and it is the reason the editor looks the same on every
-// machine: a system font is a different font on every system, and on a machine
-// with none of them the editor has no letters at all.
-//
-// The name is the one the file has in the assets; the second is what a build
-// with an older assets folder may have.
-const char* const kBundledFonts[] = {
-    "fonts/JetBrainsMono-Regular.ttf",
-    "fonts/JetBrainsMono.ttf",
-};
-
-// System fonts tried after the bundled one, which is the fallback for a build
-// whose assets folder was not copied along. Windows first, then Linux, then
-// macOS - the same order on every platform, so a machine with more than one of
-// them still ends up with the same letters.
-const char* const kSystemFontPaths[] = {
-    "C:\\Windows\\Fonts\\consola.ttf",
-    "C:\\Windows\\Fonts\\CascadiaMono.ttf",
-    "C:\\Windows\\Fonts\\CascadiaCode.ttf",
-    "C:\\Windows\\Fonts\\segoeui.ttf",
-    "C:\\Windows\\Fonts\\tahoma.ttf",
-    "C:\\Windows\\Fonts\\arial.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans.ttf",
-    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
-    "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-    "/usr/share/fonts/TTF/NotoSansMono-Regular.ttf",
-    "/Library/Fonts/Arial.ttf",
-    "/System/Library/Fonts/Menlo.ttc",
-    "/System/Library/Fonts/SFNSMono.ttf",
-    "/System/Library/Fonts/Supplemental/Arial.ttf",
-    "/System/Library/Fonts/Supplemental/Courier New.ttf",
-};
-
-// The printable ASCII is 95 characters, U+0020..U+007E, and the slot table
-// counted 96 of them: the last slot was U+007F, which no font draws and
-// nothing ever asked for, and the table was one longer than the letters in it.
-// The number of slots is the number of letters now.
-constexpr int kAsciiSlots = 95;
-
-// Cyrillic extras beyond the contiguous U+0410..U+044F block.
-const unsigned kExtraCodePoints[8] = {0x404, 0x454, 0x406, 0x456,
-                                      0x407, 0x457, 0x490, 0x491};
-constexpr int kFirstExtraSlot = 161;
-
-// Latin-1, appended after the Cyrillic blocks: German umlauts and the sharp s,
-// every French vowel and the cedilla. U+00C0..U+00FF is one contiguous run, so
-// it costs a pair of lines instead of another hand-written list.
-constexpr unsigned kLatin1FirstCp = 0xC0;
-constexpr unsigned kLatin1LastCp = 0xFF;
-constexpr int kLatin1FirstSlot = 169;
-
-// Outside Latin-1 and still inside what a UI sets in those languages: the French
-// guillemets, the oe ligature (both cases), and the Spanish opening marks - all
-// of which live below U+00C0 and would otherwise be one more range each.
-const unsigned kExtraLatin[6] = {0xAB, 0xBB, 0x152, 0x153, 0xA1, 0xBF};
-constexpr int kExtraLatinSlot = 233;
-
 } // namespace
 
-int TextAtlas::glyphIndex(unsigned cp) {
-    if (cp >= 32 && cp <= 126) return (int)cp - 32;
-    // The Cyrillic block, and then the two letters outside it.
-    //
-    // The slots have to be the ones `codepointAt` bakes into, and they used to
-    // be one higher than they are now: every Cyrillic letter was drawn as the
-    // one after it, and a word in Ukrainian came out as a word in a language
-    // nobody speaks. The atlas is baked with one table and read with the
-    // other, so the two have to be the same table - and the only way to be
-    // sure of that is to have them agree by construction.
-    if (cp >= 0x410 && cp <= 0x44F) return 95 + (int)(cp - 0x410);
-    if (cp == 0x401) return 159; // Є
-    if (cp == 0x451) return 160; // є
-    for (int i = 0; i < 8; ++i)
-        if (cp == kExtraCodePoints[i]) return kFirstExtraSlot + i;
-    if (cp >= kLatin1FirstCp && cp <= kLatin1LastCp)
-        return kLatin1FirstSlot + (int)(cp - kLatin1FirstCp);
-    for (int i = 0; i < 6; ++i)
-        if (cp == kExtraLatin[i]) return kExtraLatinSlot + i;
-    return -1;
-}
+int TextAtlas::glyphIndex(unsigned cp) { return text::slotOf(cp); }
 
-unsigned TextAtlas::codepointAt(int index) {
-    if (index < kAsciiSlots) return (unsigned)(32 + index);
-    if (index == 159) return 0x401;
-    if (index == 160) return 0x451;
-    if (index >= kFirstExtraSlot && index < kLatin1FirstSlot)
-        return kExtraCodePoints[index - kFirstExtraSlot];
-    if (index >= kExtraLatinSlot) return kExtraLatin[index - kExtraLatinSlot];
-    if (index >= kLatin1FirstSlot) return kLatin1FirstCp + (unsigned)(index - kLatin1FirstSlot);
-    return 0x410u + (unsigned)(index - 95);
-}
+unsigned TextAtlas::codepointAt(int index) { return text::codepointAt(index); }
 
 float TextAtlas::baselineFor(float lineHeight, float capHeight, float descender) {
     // The middle of the line, with the cap height above the baseline and the
@@ -144,49 +52,75 @@ bool TextAtlas::build() {
     FT_Library library = nullptr;
     if (FT_Init_FreeType(&library)) return false;
 
-    FT_Face face = nullptr;
-    std::string used;
-
-    // The bundled font first, then the system ones. Every candidate is tried
-    // before the next one is: a font that cannot be read is not a font.
+    // The faces the letters come from, in the order they are asked.
     //
-    // The project's own fonts come before the engine's: a project that brings
-    // a font of its own has it baked into the atlas.
-    for (const std::string& root : fs::assetRoots()) {
-        for (const char* name : kBundledFonts) {
-            const std::string path = str::join(root, name);
-            // The font library can only be given a narrow path, so the path is
-            // handed over in the machine's own code page.
-            if (FT_New_Face(library, fs::systemPath(path).c_str(), 0, &face) == 0) {
-                used = path;
-                break;
-            }
-        }
-        if (face) break;
-    }
-    const std::string& assets = fs::assetRoot();
-    if (!face) {
-        for (const char* path : kSystemFontPaths) {
-            if (FT_New_Face(library, path, 0, &face) == 0) {
-                used = path;
-                break;
-            }
+    // The first one is the font the interface is drawn with - the bundled one,
+    // so that the editor looks the same on every machine. The ones after it
+    // are the fallbacks: a letter the first font does not have is taken from
+    // the first font that has it. That is how the Bengali letters are drawn
+    // by a font that has Bengali letters, and how a letter of a language that
+    // is added tomorrow is drawn by the font of that script.
+    std::vector<FT_Face> faces;
+    std::vector<std::string> faceNames;
+
+    for (const std::string& path : fontFileCandidates()) {
+        // The font library can only be given a narrow path, so the path is
+        // handed over in the machine's own code page.
+        FT_Face face = nullptr;
+        if (FT_New_Face(library, fs::systemPath(path).c_str(), 0, &face) == 0) {
+            faces.push_back(face);
+            faceNames.push_back(path);
+            break;
         }
     }
-    if (!face) {
+    if (faces.empty()) {
         FT_Done_FreeType(library);
         Log::warn("Text: no usable font (none in '%s/fonts' and none on this system), "
                   "falling back to metrics estimate",
-                  assets.c_str());
+                  fs::assetRoot().c_str());
         return false;
     }
-    FT_Set_Pixel_Sizes(face, 0, kPixelSize);
+
+    for (const std::string& path : fallbackFontCandidates()) {
+        FT_Face face = nullptr;
+        if (FT_New_Face(library, fs::systemPath(path).c_str(), 0, &face) == 0) {
+            faces.push_back(face);
+            faceNames.push_back(path);
+        }
+    }
+    Log::info("Text: %d fonts in the chain, the first is '%s'", (int)faces.size(),
+              faceNames[0].c_str());
 
     std::vector<unsigned char> atlas((size_t)kAtlasSize * kAtlasSize, 0);
-    int penX = 1, penY = 1, rowHeight = 0, fitted = 0;
+    int penX = 1, penY = 1, rowHeight = 0, fitted = 0, missing = 0;
+    // Which letters came from the font the interface is drawn with. The line
+    // of text is measured with those and not with the fallbacks: a Bengali
+    // letter is taller than a Latin one, and the line of every other language
+    // must not move because of it.
+    std::vector<bool> fromPrimary((size_t)kGlyphCount, false);
 
     for (int i = 0; i < kGlyphCount; ++i) {
         const unsigned cp = codepointAt(i);
+
+        // The first font that has this letter. A font that does not have it
+        // says so with a zero index, and the letter is asked of the next one.
+        FT_Face face = nullptr;
+        for (FT_Face candidate : faces) {
+            if (FT_Get_Char_Index(candidate, cp) != 0) {
+                face = candidate;
+                break;
+            }
+        }
+        if (!face) {
+            // No font of the chain has this letter. It is left empty and it is
+            // not drawn - see `appendQuads`. The count is reported at the end
+            // of the build, because a language whose letters are all missing
+            // is a language that is not there.
+            ++missing;
+            continue;
+        }
+
+        FT_Set_Pixel_Sizes(face, 0, kPixelSize);
         if (FT_Load_Char(face, (FT_ULong)cp, FT_LOAD_RENDER)) continue;
 
         FT_GlyphSlot slot = face->glyph;
@@ -196,6 +130,8 @@ bool TextAtlas::build() {
         g.offsetY = (float)slot->bitmap_top;
         g.width = (float)slot->bitmap.width;
         g.height = (float)slot->bitmap.rows;
+        g.hasGlyph = true;
+        fromPrimary[(size_t)i] = (face == faces[0]);
 
         if (penX + (int)g.width + 1 >= kAtlasSize) {
             penX = 1;
@@ -205,6 +141,7 @@ bool TextAtlas::build() {
         if (penY + (int)g.height + 1 >= kAtlasSize) {
             Log::warn("Text: atlas full, glyph U+%04X skipped", cp);
             g.width = g.height = 0.0f;
+            g.hasGlyph = false;
             continue;
         }
 
@@ -233,20 +170,26 @@ bool TextAtlas::build() {
     //
     // What the interface wants is the VISUAL box of the text centred in the
     // line: the capitals above the baseline, the descenders below it. The cap
-    // height comes from the 'H' and the descender from the deepest glyph in the
-    // atlas, and the baseline is what puts the two in the middle of the line.
+    // height comes from the 'H' and the descender from the deepest glyph in
+    // the atlas, and the baseline is what puts the two in the middle of the line.
     float capHeight = 0.0f;
     float descender = 0.0f;
     const int capIndex = glyphIndex('H');
     if (capIndex >= 0) capHeight = glyphs_[capIndex].offsetY;
     for (int i = 0; i < kGlyphCount; ++i) {
+        if (!fromPrimary[(size_t)i]) continue;
         const float below = glyphs_[i].height - glyphs_[i].offsetY;
         if (below > descender) descender = below;
     }
     baseline_ = baselineFor((float)kLineHeight, capHeight, descender);
 
-    Log::info("Text: atlas %d/%d glyphs from '%s' (%s)", fitted, kGlyphCount, face->family_name,
-              used.c_str());
+    Log::info("Text: atlas %d/%d glyphs from '%s' (%s)", fitted, kGlyphCount,
+              faces[0]->family_name, faceNames[0].c_str());
+    // The letters no font has are the ones the table has and no font does:
+    // the reserved code points of a block, mostly. They are not drawn, and the
+    // number is here so that a font that did not come with the engine - the
+    // Bengali one, say - is visible in the log instead of in the interface.
+    Log::info("Text: %d letters have no font in the chain and are not drawn", missing);
     Log::info("Text: line %dpx, baseline %.1f, capitals %.1f, descender %.1f", kLineHeight,
               baseline_, capHeight, descender);
 
@@ -263,7 +206,7 @@ bool TextAtlas::build() {
     glBindTexture(GL_TEXTURE_2D, 0);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 
-    FT_Done_Face(face);
+    for (FT_Face face : faces) FT_Done_Face(face);
     FT_Done_FreeType(library);
     ready_ = true;
     return true;
@@ -276,15 +219,36 @@ float TextAtlas::textWidth(const char* utf8) const {
     }
     float width = 0.0f;
     for (const char* p = utf8; *p;) {
-        const int index = glyphIndex(str::nextCodepoint(p));
-        if (index >= 0) width += glyphs_[index].advance;
+        const unsigned cp = str::nextCodepoint(p);
+        const int index = glyphIndex(cp);
+        // A letter of a script the engine has no slot for is drawn as one
+        // question mark, and it takes the room of that mark.
+        if (index < 0) {
+            width += glyphs_[glyphIndex('?')].advance;
+            continue;
+        }
+        // A letter the table has and no font has is not drawn at all, so it
+        // takes no room either. The two cases have to agree, or the text is
+        // measured with one width and drawn with another.
+        if (!glyphs_[index].hasGlyph) continue;
+        width += glyphs_[index].advance;
     }
     return width;
 }
 
 void TextAtlas::appendQuads(std::vector<float>& batch, float x, float topY,
                             const char* utf8, float r, float g, float b, float scale) const {
-    if (!ready_) return;
+    if (!ready_) {
+        // A silent "no text" is how a whole editor loses its letters and nobody
+        // notices until someone looks at the picture. Warn once so the failure
+        // cannot be missed.
+        static bool warned = false;
+        if (!warned) {
+            Log::warn("Text: the font atlas is not ready; no text will be drawn");
+            warned = true;
+        }
+        return;
+    }
 
     // Glyph metrics are baked at one size, so shrinking means scaling the box and
     // the pen advance by the same factor. Doing it here rather than in each caller
@@ -292,9 +256,22 @@ void TextAtlas::appendQuads(std::vector<float>& batch, float x, float topY,
     const float s = scale > 0.0f ? scale : 1.0f;
     float penX = x;
     const float baselineY = topY + baseline_ * s;
+    const int questionIndex = glyphIndex('?');
     for (const char* p = utf8; *p;) {
-        int index = glyphIndex(str::nextCodepoint(p));
-        if (index < 0) index = glyphIndex('?');
+        const unsigned cp = str::nextCodepoint(p);
+        int index = glyphIndex(cp);
+        if (index < 0) {
+            // A letter of a script the engine has no slot for. ONE question
+            // mark stands for it - one for the letter, not one for each of its
+            // bytes. The decoder used to turn a three-byte letter into three
+            // question marks, and a Bengali interface came out as a row of
+            // them; that cannot happen now, and it must not come back.
+            index = questionIndex;
+        } else if (!glyphs_[index].hasGlyph) {
+            // A letter the table has and no font has: it is not drawn. An empty
+            // box in the middle of a word is worse than no letter at all.
+            continue;
+        }
         const Glyph& glyph = glyphs_[index];
 
         const float x0 = penX + glyph.offsetX * s;

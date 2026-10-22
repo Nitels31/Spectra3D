@@ -4,7 +4,8 @@ A lightweight 3D engine with a **built-in editor** in the spirit of Godot, writt
 **C++17 + OpenGL 3.3 compatibility + GLFW + FreeType**. Runs on **Windows** and
 **Linux**. Startup
 goes through a **launcher**: you pick or create a project, and the editor opens. A
-project may carry **AngelScript** scripts that run when you press Play.
+project may carry **AngelScript** and **Spectra3D Script** scripts that run when
+you press Play.
 
 Licensed under the [Apache License 2.0](LICENSE).
 
@@ -20,22 +21,28 @@ build_windows.bat     a CMake wrapper
 build_linux.sh        a CMake wrapper
 
 src/                 implementation (.cpp), split by layer
-  core/              Log, Str, Math, Project (Settings, ProjectLibrary, ProjectInfo)
+  core/              Log, CrashLog, Str, Math, Project (Settings, ProjectLibrary,
+                     ProjectInfo)
   platform/          Window (GLFW + keyboard/mouse state + frame waiting),
                      Filesystem (removeTree and the system folder picker),
                      GlFunctions (the OpenGL the 1.1 headers do not have)
   physics/           RigidBody, Material, PhysicsWorld (broadphase, solver, sleeping)
   assets/            MeshRegistry, MeshImport, loaders/{glb,obj,ply,fbx}
   render/            SceneRenderer, UiRenderer, TextAtlas, PrimitiveCache, Camera,
-                     ShaderProgram, ShadowMap
+                     ShaderProgram, ShadowMap, ParticleSystem
   ui/                Theme (palettes), UiContext
-  scene/             BodyFactory, SceneSerializer
+  gui/               GuiCanvas (the interface of a game, as numbers),
+                     GuiRenderer (the canvas, drawn)
+  scene/             BodyFactory, SceneSerializer, Landform, Cloud, Noise
   i18n/              Localizer
   editor/            Editor, panels/, PanelLayout, Picking, Gizmo, AssetBrowser
   script/            ScriptHost, Bindings, BindEngine, BindScene, BindCamera,
-                     BindInput, BindString
-  app/               Application, Launcher, FixedClock, main
-  shaders/           the GLSL the world is drawn with: scene.*, and
+                     BindInput, BindSound, BindParticles, BindGui, BindString;
+                     SpsHost, BindSpsScene, BindSpsRuntime - the second
+                     script language
+  app/               Application, GameHost, Launcher, FixedClock, main
+  player/            Player: the program that plays a game, and its main
+  shaders/           the GLSL the world is drawn with: scene.*, particles.*, and
                      shadows/ for the shadow map's own pass and its debug view
 
 
@@ -45,24 +52,29 @@ include/             every engine header, same layer split + json/
   json/json.hpp      header-only nlohmann/json, target spectra_json
 
 third_party/         glfw, freetype, angelscript, miniaudio,
+                    spectra3dscripts/ (the SDK of the second script language),
                     models_lib/ (cgltf, rapidobj, miniply, ufbx),
                     stb/ (stb_image, stb_vorbis), json/
 assets/              lang/*.lang, image/{icons,textures}/*, models/*.{glb,obj,ply,fbx},
                      sky.jpg, sounds/*.wav, fonts/JetBrainsMono-Regular.ttf
-tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp, editortest.cpp, skygen.cpp,
+tools/               glbinfo.cpp, fbxtest.cpp, scripttest.cpp, spstest.cpp,
+                     editortest.cpp, particletest.cpp, skygen.cpp,
                      soundgen.cpp - standalone
                      utilities for reading assets, checking the scripting
-                     layer (46 checks), making the sky and making the test
+                     layer (46 checks), checking the particles, making the sky
+                     and making the test
                      sounds; ui_language_test.ps1 drives the real
                      window to check that a dropdown does not act on its own
                      opening click
-build/               all output: spectra3d.exe, SpectraPlayer.dll, glfw3.dll,
-                     engine.log, settings.ini, project/, a copy of assets/
+build/               all output: spectra3d.exe, SpectraPlayer.exe,
+                     SpectraPlayer.dll, glfw3.dll,
+                     engine.log, crash-001.log (the report of a crash),
+                     settings.ini, project/, a copy of assets/
                      and of src/shaders/ (gitignored)
   lib/               the static libraries the executable links, and
-                     SpectraPlayer.dll - the shared library of every engine
-                     layer below app/ and editor/, which is the engine without
-                     an editor: the core of the engine, as the library it is
+                     SpectraPlayer.dll - the core of the engine as a file:
+                     the engine without an editor, which a project
+                     carries in its lib/ folder
 ```
 
 The repository root `include/` goes on the include path, so the same header is
@@ -71,8 +83,9 @@ spelled the same way from any layer, from an editor panel and from `tools/`, and
 
 `ARCHITECTURE.md` describes the layers and the dependency rule. In short,
 dependencies only point upward - `core` <- `platform` <- `physics` <- `assets` <-
-`render`/`ui` <- `scene` <- `script` <- `editor` <- `app`; `i18n` depends only on
-`core` + `platform`. There is no global state (apart from the log).
+`render`/`ui` <- `scene` <- `script` <- `editor` <- `app` <- `player`; `i18n`
+depends only on `core` + `platform`. There is no global state (apart from the log
+and the crash log).
 
 ## Building
 
@@ -117,18 +130,48 @@ CMake options:
 | Option | Default | Effect |
 |---|---|---|
 | `SPECTRA_SCRIPTING` | `ON` | builds `third_party/angelscript` and defines `SPECTRA_SCRIPTING=1`; `OFF` removes the scripting layer (the log then says `built without scripting`) |
+| `SPECTRA_SPSCRIPT` | `ON` | builds the Spectra3D Script layer and defines `SPECTRA_SPSCRIPT=1`; the build turns it off with a warning when the toolchain cannot link the prebuilt runtime |
 | `SPECTRA_BUILD_TOOLS` | `OFF` | builds `glbinfo` / `fbxtest` / `scripttest` / `editortest` / `skygen` / `soundgen`; off by default so a normal build produces exactly one `.exe`. Turn on with `-DSPECTRA_BUILD_TOOLS=ON` |
+| `SPECTRA_LTO` | `ON` | the link-time optimisation: the compiler sees across the libraries and the linker throws away what nobody uses. About a fifth smaller, and a slower link. `OFF` for a build that is stepped through |
+| `SPECTRA_NATIVE` | `OFF` | builds for the processor of the machine that builds it. Off by default: a build that only runs on the machine that made it is a build that does not travel |
 
 **The first build is slow**: `third_party/angelscript/source/*.cpp` compiles into a
 static library called `spectra_angelscript`. That is expected;
-`-DSPECTRA_SCRIPTING=OFF` removes that time.
+`-DSPECTRA_SCRIPTING=OFF` removes that time. The link is slow too, and that is
+the link-time optimisation: it reads every object of the program at once and
+writes one.
+
+**The build is optimised.** Release is `-O3`, and on top of that:
+
+| | What it does |
+|---|---|
+| the link-time optimisation | the compiler sees across the libraries instead of guessing at them, and the linker throws away what nobody uses |
+| the sections | a function in a section of its own is a function the linker can drop |
+| `-fno-math-errno` | the roots and the powers are not obliged to set errno, and the compiler may do to them what it can |
+| `--gc-sections` | the dead code goes at the link |
+
+About a fifth of the binary is that: `spectra3d.exe` is 6.2 MB with the
+optimisation and 7.6 MB without it. The link-time part is only in Release - a
+Debug build with it is a build that cannot be stepped through, and the step is
+the point of a Debug build.
 
 After the build, CMake copies `glfw3.dll` (Windows) and `assets/` into `build/`, so
-the exe runs from any directory. The core of the engine, `SpectraPlayer.dll`, is
-built next to it - it is a shared library, and Windows looks for a library beside
-the program. Mutable files (`engine.log`, `settings.ini`, `build/project/`) are
-written next to the binary: at startup `fs::adoptAssetWorkingDir()` locates the
-exe directory and makes it the working directory.
+the exe runs from any directory. The core of the engine is **inside** the program:
+the engine's own sources are compiled once into `spectra_engine` and are used twice -
+as the static library `spectra_runtime` that the program links, and as the shared
+library `SpectraPlayer.dll` that is the core as a file, which a project carries in
+its `lib/` folder and a built game has beside it. Mutable files (`engine.log`,
+`settings.ini`, `build/project/`) are written next to the binary: at startup
+`fs::adoptAssetWorkingDir()` locates the exe directory and makes it the working
+directory.
+
+**The build makes two programs.** `spectra3d.exe` is the editor, and
+`SpectraPlayer.exe` is the player: the engine, a window and a loop, with no
+launcher and no editor in it. Both are built from the same game - a
+`GameHost`, which owns the world, the picture of it, the sound and the scripts -
+so the game a player plays is the game the editor edits, and the two cannot drift
+apart. The player is what a build of a game is made of: the editor copies it into
+the build folder and renames it after the game.
 
 **A build is one folder**, named after the game:
 
@@ -149,8 +192,9 @@ exe directory and makes it the working directory.
 
 The program and the core are together because that is where Windows looks for a
 library, and the data is in a folder of its own because that is where the program
-looks for it: `<name>_Data` beside the program. A built game opens its boot file
-without asking - the launcher is not in the way of a game that knows what it is.
+looks for it: `<name>_Data` beside the program. The program is the player, and it
+opens its boot file without asking - the launcher is not in the way of a game that
+knows what it is.
 
 ## Launcher and projects
 
@@ -251,7 +295,7 @@ A project is a folder, and the folder is the architecture of the game:
     particles/       the effects
     physics/         the physical materials
   lib/               the core of the engine, as the library it is
-  scripts/           *.as - project scripts
+  scripts/           *.as - AngelScript scripts, *.sps - Spectra3D Script
   editorlayout.txt   saved editor workspace (written by the editor itself)
   icon.ico           the picture of the project: the icon of the window
 ```
@@ -644,8 +688,200 @@ both its hits and its misses when a module is replaced, the input bindings with 
 window, the event queue's ordering and cap, and a compile error as an ERROR
 diagnostic.
 
-### Making a landform
+## Scripting (Spectra3D Script)
 
+The second script language of the engine: **Spectra3D Script**, the SDK in
+`third_party/spectra3dscripts`, layer `src/script` (`SpsHost.cpp`,
+`BindSpsScene.cpp`, `BindSpsRuntime.cpp`).
+
+Project scripts live in `<project>/scripts/*.sps` and run **when Play is pressed**,
+beside the AngelScript ones: a project may have `.as` files and `.sps` files at the
+same time, and each language sees the same world through its own bindings.
+
+The language was written for this engine, so it is **class-first**: a script makes
+objects, and the objects are the engine's.
+
+```sps
+var player = Entity("player")
+player.position = vec3(0, 1, 0)
+player.size = vec3(2, 2, 2)
+player.tag = "hero"
+
+def on_start() {
+    log("the player is at", player.position)
+}
+
+def on_update(delta) {
+    if downKey("space") {
+        player.move(0, 1, 0)
+    }
+}
+```
+
+### The hooks
+
+The names are the language's own - `snake_case` - and the camelCase spellings of
+the other language are accepted as well, so a file written for AngelScript does not
+have to be rewritten to be read:
+
+| Hook | When it runs | `delta` means |
+|---|---|---|
+| `def on_start()` | once, when the file is loaded | - |
+| `def on_update(delta)` | **once per rendered frame**, before the physics | the real frame time |
+| `def on_fixed_update(delta)` | **once per physics step**, inside the accumulator | always the fixed step |
+| `def on_stop()` | once, when Play finishes | - |
+| `def on_destroy()` | once, when the host shuts down | - |
+
+The entry point is `on_start` (or `onStart`, `on_init`, `onInit`, `main`,
+`start`). A script without one is a valid script: it is a file of helpers.
+
+A hook that takes no argument is called with none - the runtime refuses a call
+with the wrong number of arguments, so the host asks with the argument first and
+without it second.
+
+### One file, one context
+
+**Every script file gets its own context**, and that is what makes a project of
+several scripts work: the runtime keeps the globals of the program that ran last
+and drops the rest, so two files in one context cannot both hold their own
+variables - the second file to run would take the first one's place. A context per
+file is also what makes a broken script isolable: a script that fails takes its
+own context down with it and the others keep running.
+
+**The runtime does not recover from a run-time error**: every later call in that
+context fails with the message of the first failure. So a script that fails is
+marked broken, its hooks stop being called, and the only way back is a reload.
+
+### The reload
+
+`File > Reload scripts` compiles the `.sps` files again and runs them, **without
+the game stopping**. The compiler is inside the runtime, so the engine does the
+work itself and the scripts are running again a moment after the file was saved.
+
+The bodies the scripts made go away first, so a script that builds a scene builds
+it once and not twice.
+
+### The classes
+
+| Class | What it is |
+|---|---|
+| `Entity` | a body of the world: `name`, `tag`, `position`, `rotation`, `size`, `velocity`, `shape`, `mesh`, `active`, `mass`; `move()`, `rotate()`, `lookAt()`, `destroy()`, `wake()` |
+| `Scene` | the world: `gravity`, `gravityAxis`; `find(name)`, `count()`, `clear()` |
+| `Rigidbody` | the physics of a body: `mass`, `velocity`, `force`, `gravity`, `sleeping`; `applyImpulse()`, `wake()` |
+| `Collider` | the shape of a body: `shape`, `size`, `radius`, `isTrigger` |
+| `Camera` | a camera body: `fov`, `active`; `lookAt()` |
+| `Light` | the sun of the scene - the engine has one sun and not a lamp on every object: `azimuth`, `elevation`, `color`, `ambient` |
+| `Material` | the material of a body: `friction`, `restitution`, `density`, `isStatic` |
+| `Trigger` | a volume something comes into and goes out of: `size`, `onEnter`, `onExit`, `enabled` |
+| `AudioSource` | a sound: `sound`, `volume`, `pitch`, `loop`; `play()`, `stop()`, `isPlaying()` |
+| `Label` | a line of letters on the interface: `text`, `position`, `color`, `size`, `visible` |
+| `Button` | a button of the interface: `text`, `position`, `color`, `size`, `visible`, `onClick`, `enabled` |
+| `Vector3` | a vector: `x`, `y`, `z`; `length()`, `normalized()`, `dot()`, `cross()` |
+| `Color` | a colour: `r`, `g`, `b`, `a` |
+
+### The functions
+
+`log`, `logWarning`, `logError`; `vec3`, `color`; `lerp`, `clamp`, `wrap`, `sign`,
+`moveTowards`; `deltaTime`, `frame`; `downKey`, `justPressed`, `mouseX`, `mouseY`,
+`mouseDown`; `playSound`, `stopSound`, `soundPlaying`, `setMasterVolume`;
+`spawnBox`, `spawnSphere`, `spawnShape`, `removeBody`, `bodyCount`, `clearScene`,
+`setGravity`, `getGravity`, `loadModel`, `raycast`; `on`, `off`, `emit`;
+`after`, `every`, `cancelTimer`; `loadData`, `saveData`; `callFunction`.
+
+The language has its own builtins as well (`print`, `len`, `str`, `map`, `filter`,
+`reduce`, `spl_parse`, `json_parse` and the rest) - see the SDK's own README.
+
+### The data files
+
+`.spl` is the format of Spectra3D: the keys are not quoted, the comments are
+allowed, the commas are optional.
+
+```
+{
+    // the name of the level
+    name = "level_01"
+    version = 3
+    player = { hp = 100, name = 'hero' }
+}
+```
+
+`loadData("level_01.spl")` reads one, and the file is looked for in the
+project's `assets/data`, then in its `assets`, then in its `data`. `.spl` is what
+a project carries instead of JSON, and the scripts of the engine read it with the
+parser of the language itself.
+
+### The build
+
+The runtime of the language ships as a **prebuilt archive** that was made with the
+C runtime of MSYS2 UCRT64, so the build asks the compiler whether it can have
+the language at all: a toolchain with another runtime cannot link that archive,
+and says so at configure time instead of failing at the end.
+
+| Option | Default | What it does |
+|---|---|---|
+| `SPECTRA_SPSCRIPT` | `ON` | builds the Spectra3D Script layer and defines `SPECTRA_SPSCRIPT=1`; the build turns it off with a warning when the toolchain cannot link the runtime |
+
+### Checking it
+
+```bat
+cmake -S . -B build -DSPECTRA_BUILD_TOOLS=ON
+cmake --build build --config Release
+build\spstest.exe
+```
+
+42 checks: the classes of the engine and their properties, the hooks and the
+arguments they are given, two scripts living side by side, a script that does not
+compile, a script that fails at run time and is left alone afterwards, the events
+and the timers, the data files and the reload.
+
+### The particles
+
+The world has particles: puffs of smoke, fire, sparks, dust, and whatever a
+project makes of its own. They are drawn as soft round quads that face the
+eye, and there are two kinds of them - one is drawn **over** what is behind
+it and one is **added** to it. Smoke hides the thing behind it; fire makes it
+brighter. The difference is one blend function.
+
+**Create > Particles** opens the panel. It says how one effect is made - how
+many particles, how fast they go, how big they are, how long they live, how
+wide a cone they come out in, how hard they fall and how fast the air takes
+the speed out of them - and it lists the emitters that are in the scene. The
+five effects the engine knows by name (fire, smoke, spark, dust, explosion)
+are the numbers that make them, so a person who wants fire does not have to
+know them.
+
+| Button | What it does |
+|---|---|
+| **Emit** | a burst right now, where the eye is and the way the eye is looking |
+| **Add** | an emitter in the scene: it keeps making the effect, once a second |
+| **Follow** | an emitter that rides on the body that is selected - a nozzle on the back of a thing, and it turns with the thing |
+| **Remove** | the emitter that is selected taken away |
+
+The emitters are **scene data**: they go into `scene.json` with the bodies
+and the interface, and they come back when the scene is opened again. An
+emitter that rides on a body says which body it is, and its place and its
+direction are in the body's own frame.
+
+A script asks for the same effects by name:
+
+```angelscript
+engine::emitParticles(0.0f, 1.0f, 0.0f, 40);              // a fire
+engine::emitParticles(0.0f, 1.0f, 0.0f, 40, "smoke");     // and a named one
+int nozzle = engine::addEmitter(0.0f, 2.0f, 0.0f, "spark"); // an exhaust
+engine::removeEmitter(nozzle);
+engine::clearParticles();
+```
+
+The simulation is checked with no window and no context - a particle is a
+point, a colour and a size - so all of it can be:
+
+```bat
+cmake -S . -B build -DSPECTRA_BUILD_TOOLS=ON
+cmake --build build --config Release
+build\particletest.exe
+```
+
+### Making a landform
 > ### ⚠ This is a test, and it may cause errors
 >
 > The landform generation is **an experiment**, not a finished feature. It is
@@ -682,6 +918,54 @@ The making is spread over as many threads as **Settings > Loader threads** says
 (one to six), and the models a scene names are read the same way - the parse
 touches no GL, so it runs in parallel and the textures are uploaded afterwards,
 on the thread that owns the context.
+
+### Making a cloud
+
+**Create > Cloud** opens the Cloud panel, and the panel is where the cloud is
+either **2D** or **3D** - which is not two settings of one thing, it is two
+different things:
+
+| Mode | What it is | What it costs |
+|---|---|---|
+| **2D (flat)** | a picture on a plane: a heap of discs that lie in it and are seen from the front - the cloud of a 2D game | two triangles per disc |
+| **3D (volume)** | a heap of puffs, each one a little ball of water, and the heap has a shape of its own | a ball of triangles per puff |
+
+The panel says which shape the cloud takes (cumulus, stratus, cirrus,
+cumulonimbus), how many puffs it is made of, how big they are, how wide and how
+tall the cloud is, how much of the sky it takes, how much the puffs differ from
+one another, how many octaves the noise under it is made of, how finely a puff
+is cut into triangles, and the seed. **Generate** makes it and puts it in the
+scene as an ordinary body - a mesh like any other, so the renderer and the
+physics do not know or care that this one was not read from a file.
+
+**THE CLOUD IS ONE MESH AND ONE DRAW CALL.** A hundred puffs are a hundred
+little balls, and they are made into one part: the picture of a cloud is one
+call and not a hundred. The physics does not know that a cloud is made of
+puffs: it is one body with one box around it, and the frustum is asked about
+that box and not about every ball in it.
+
+**THE COST OF THE CLOUD IS THE NUMBER OF THE PUFFS AND HOW FINELY THEY ARE
+MADE.** A puff of four pieces is a ball of eight triangles and cannot be told
+from a puff of twenty-four at any distance a cloud is ever seen from - and a
+cloud is hundreds of puffs, so the difference between the two is the whole
+cost of it. The **Resolution** field is that number, and it is there because a
+cloud is made of hundreds of things: a cloud that a machine can draw and one
+that it cannot are the same cloud with two different numbers in that field.
+
+**THE MAKING IS SPREAD OVER THE THREADS**, the same as the ground: the puffs
+are independent of one another, so each thread writes into a chunk of its own
+and nothing is locked. The puffs come out in the same order whatever order
+they were made in, so the same seed is the same cloud on a machine with one
+thread as on a machine with six.
+
+The colour of the cloud is in its vertices: the sun reaches the top of a cloud
+and hardly reaches the bottom of it, and a puff that is buried in the middle of
+the cloud sees no sun at all - which is why the middle of a cloud is grey and
+the top of it is white.
+
+The cloud is saved with the scene: the settings go into the scene file and the
+cloud is made again from them when the scene is opened, so the same seed is the
+same cloud on every machine.
 
 ### The shaders
 
@@ -877,8 +1161,10 @@ Three details that matter:
 
 The engine asks for **OpenGL 3.3 in the compatibility profile** (not core: the
 renderer is written against the fixed pipeline - `glOrtho`,
-`glEnableClientState`, `glTexCoord2f`, all of which core removes). If the driver
-cannot give 3.3 compatibility, it falls back to 2.1 and logs it.
+`glEnableClientState`, `glTexCoord2f`, all of which core removes). It
+**needs** 3.3: every shader in the engine is `#version 330 core`, so a driver
+that cannot give a 3.3 compatibility context gets no window and a clear
+message rather than a window with a black picture in it.
 
 **The version the interface shows is the requested one, not what the driver
 reports.** NVIDIA, and others, print the highest version supported for *any*
@@ -987,6 +1273,9 @@ during that same tick.
   read when the project opens and nobody writes it afterwards - see "Controls".
 - **Primitives**: Box, Sphere, Cylinder, Capsule, Cone, Pyramid, Prism. The
   **Create** menu, plus model import from the same place.
+- **A square in the XY plane** - the workhorse of a flat world - is in the
+  Create menu too, as "Quad". It is a box that is very thin, and it is
+  collided as one.
 - **Model import of `.glb` / `.gltf` / `.obj` / `.ply` / `.fbx`**:
   - `.glb/.gltf` via cgltf - POSITION/NORMAL, indices, baseColorFactor, node
     hierarchy, auto-normals
@@ -1071,6 +1360,84 @@ during that same tick.
 - **Logs**: levels INFO/WARN/ERROR, output to stderr, the file `build/engine.log`
   and the Console panel; startup diagnostics (OpenGL version, GPU, font status,
   script runtime version, project root, body count).
+- **Crash reports**: a crash writes `build/crash-001.log` next to the program -
+  the reason, the address of the fault, the stack, and the last lines of the log
+  before it died. The next crash takes the next free number, so several reports
+  can be kept side by side.
+
+### 2D mode and the interface of the game
+
+Two ways of looking at a project, and they are modes of the **editor** and not
+of the scene: nothing is thrown away and nothing is saved differently.
+
+#### 2D
+
+**View -> 2D Mode**, or the button at the right of the "Scene" strip.
+
+- The camera becomes **orthographic** and looks down the Z axis: the picture is
+  the XY plane with no vanishing point in it, and a thing at the back is the
+  same size as a thing at the front.
+- The **grid is in the XY plane** instead of the ground plane, and the sun casts
+  no shadow - a flat world has no sun in it.
+- The **gizmo has two handles** instead of three: a thing moves in X and Y and
+  turns about Z, and there is nothing else to move it along.
+- The **wheel zooms**. `Camera::orthoSize` is the half-height of the picture in
+  world units, and it is the only number that says how much of the world is on
+  the screen.
+- **Create -> Quad** puts a square in the XY plane into the scene. It is a box
+  that is very thin, and it is collided as one.
+
+#### The interface of the game
+
+**View -> Interface Mode**, or the button beside the 2D one.
+
+The interface of a game - the panels, the pictures, the labels and the buttons -
+is a **canvas**, and the canvas is **part of the scene**: it is written into
+`scenes/scene.json` next to the bodies, and a build of the game carries it with
+it. The editor edits the game's own canvas in place, so what is on the screen
+while editing is what the game shows.
+
+- **Create -> Panel / Image / Text / Button** puts a piece of the interface into
+  the canvas, in the middle of it, and selects it.
+- The **hierarchy** shows the tree of elements while the interface mode is on,
+  and the **inspector** shows their fields: the name, the rectangle, the
+  letters, the colour, the picture, the flags.
+- In the viewport, a click **picks** an element, a drag **moves** it, and the
+  **handles** around it make it bigger or smaller. The handles come first in
+  the hit test: a handle stands on the edge of an element, and an element
+  picked by its edge would take the press away from the handle every time.
+- The canvas is **fitted into the viewport with one scale**, so a layout made
+  for 1920x1080 is the same layout on a smaller screen.
+- **Ctrl+Z** takes back a change to the interface as well as a change to the
+  world: whichever was changed last is the one that goes back.
+
+While the game is **running** the buttons answer the pointer, and a script can
+ask about them:
+
+| Call | What it does |
+|---|---|
+| `void uiSetText(const string &in name, const string &in text)` | the letters of a text or of a button |
+| `void uiSetVisible(const string &in name, bool visible)` | whether an element is drawn |
+| `bool uiIsVisible(const string &in name)` | whether it is drawn |
+| `bool uiWasClicked(const string &in name)` | whether the button was pressed this frame |
+| `bool uiIsHovered(const string &in name)` | whether the pointer is on it |
+| `void uiSetColor(const string &in name, float r, float g, float b, float a)` | its colour |
+| `void uiSetPosition(const string &in name, float x, float y)` | where it is, in the canvas's own units |
+| `void uiSetSize(const string &in name, float width, float height)` | how big it is |
+| `int uiElementCount()`, `int uiVisibleCount()` | how many there are |
+
+```angelscript
+void onInit()
+{
+    engine::uiSetText("Score", "0");
+}
+
+void onUpdate(float dt)
+{
+    if (engine::uiWasClicked("Play"))
+        engine::uiSetText("Score", "Playing");
+}
+```
 
 ### Details worth noting
 
@@ -1189,12 +1556,62 @@ a scene is written in.
 ```
 
 A shape is one of `box`, `sphere`, `cylinder`, `capsule`, `cone`, `pyramid`,
-`prism`, `mesh`, `camera`. A `mesh` body carries a `mesh` object with the
+`prism`, `mesh`, `camera`, `quad`. A `mesh` body carries a `mesh` object with the
 model's name and its scale; a `camera` carries a `camera` object with its field
 of view and whether it is the one the game looks through. Meshes are looked up
 by name in `assets/models`, then in the working directory, so a scene survives a
 restart. A body that makes a sound carries a `sound` object with the name of
 the sound and how loud it is; a body without one has no `sound` object at all.
+
+**The interface of the game is in the same file.** The canvas is part of the
+scene, so a scene that has one carries a `gui` object with the canvas in it: the
+resolution it was laid out for and the list of elements. The elements are
+`panel`, `image`, `text` and `button`, and each one carries its name, its
+parent, its rectangle in the canvas's own units, its colours, its letters and
+its picture.
+
+```json
+"gui": {
+    "canvas": {
+        "width": 1920,
+        "height": 1080,
+        "elements": [
+            {
+                "kind": "button",
+                "name": "Play",
+                "parent": -1,
+                "rect": [800, 480, 180, 44],
+                "color": [0.22, 0.26, 0.34, 1],
+                "textColor": [1, 1, 1, 1],
+                "text": "Play",
+                "fontSize": 22,
+                "visible": true,
+                "interactable": true
+            }
+        ]
+    }
+}
+```
+
+A ground and a cloud are meshes the engine made rather than read, and they say
+how they were made: the body carries a `landform` object or a `cloud` object
+with the settings of it, and the ground or the cloud is made again from them
+when the scene is opened. Without that, a ground would come back as a box the
+size of the ground, and a cloud would come back as nothing at all.
+
+```json
+{
+    "shape": "mesh",
+    "position": [0, 0, 0],
+    "mesh": { "name": "cloud 4242", "scale": 1 },
+    "cloud": {
+        "mode": "puffy", "shape": "cumulus", "seed": 4242,
+        "puffs": 28, "puffSize": 3, "spread": 24, "height": 10,
+        "coverage": 0.55, "softness": 0.5, "detail": 4, "resolution": 10,
+        "color": [1, 1, 1], "shade": [0.62, 0.68, 0.78]
+    }
+}
+```
 
 The project manifest names the file its scene is in (`scene=scene.json`), so a
 project can keep its scene somewhere else.
@@ -1315,6 +1732,7 @@ header-only JSON parser.
 | stb_image | - | public domain **or** MIT | `third_party/stb/LICENSE` (one file for the whole family) |
 | stb_vorbis | 1.22 | public domain **or** MIT | `third_party/stb/LICENSE` (same) |
 | JetBrains Mono | 2.304 | SIL OFL 1.1 | `assets/fonts/OFL.txt`, `assets/fonts/AUTHORS.txt` |
+| Spectra3D Scripts | 0.0.1 | Blue Oak 1.0.0 | `third_party/spectra3dscripts/LICENSE`, `LICENSES/SPECTRA3DSCRIPT/LICENSE` |
 
 JetBrains Mono is the font the interface is drawn with, and it is the one the
 engine ships: it lives in `assets/fonts/` next to the sky and the sounds, and

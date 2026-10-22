@@ -74,11 +74,6 @@ struct ShadowSettings {
     // none should not grow one by accident.
     float specular = 0.0f;
     float shininess = 32.0f;
-
-    // The haze: the colour of the far things and how fast they lose it. The
-    // fixed pipeline had none, so it is off until somebody asks for it.
-    Vec3 fogColour{0.62f, 0.72f, 0.86f};
-    float fogDensity = 0.0f;
 };
 
 // The direction of the sun, from the settings: the point where the light is.

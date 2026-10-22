@@ -3,6 +3,7 @@
 #include "core/Log.hpp"
 #include "core/Project.hpp"
 #include "core/Str.hpp"
+#include "core/TextCoverage.hpp"
 #include "platform/Filesystem.hpp"
 #include "platform/GlFunctions.hpp"
 
@@ -259,20 +260,16 @@ void Window::onScroll(GLFWwindow* w, double, double yoff) {
 }
 
 bool Window::textCodepointSupported(unsigned cp) {
-    if (cp >= 32 && cp <= 126) return true;       // printable ASCII
-    if (cp == 0x401 || cp == 0x451) return true;    // Є and є
-    if (cp >= 0x410 && cp <= 0x44F) return true;    // the Cyrillic block
-    // The Cyrillic outside that block that the interface needs: Ё, І, Ї, Ґ and
-    // their lower case.
-    if (cp == 0x404 || cp == 0x454 || cp == 0x406 || cp == 0x456 || cp == 0x407 ||
-        cp == 0x457 || cp == 0x490 || cp == 0x491)
-        return true;
-    if (cp >= 0xC0 && cp <= 0xFF) return true;      // Latin-1
-    // And the few below it that a French or a Spanish interface sets.
-    if (cp == 0xAB || cp == 0xBB || cp == 0x152 || cp == 0x153 || cp == 0xA1 ||
-        cp == 0xBF)
-        return true;
-    return false;
+    // The table in core/TextCoverage.hpp is the one the atlas is baked with,
+    // so the window and the atlas always agree: a letter that can be typed is
+    // a letter that can be drawn, and a letter that can be drawn is a letter
+    // that can be typed.
+    //
+    // The table used to be written out a second time here, and the two copies
+    // were free to drift apart. A letter in one and not in the other is a
+    // letter that is invisible in a name, or a letter that cannot be typed
+    // into one.
+    return text::covers(cp);
 }
 
 void Window::onChar(GLFWwindow* w, unsigned int cp) {
@@ -317,27 +314,34 @@ bool Window::create(const char* title, int width, int height) {
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
     if (!window_) {
-        // A driver without a 3.3 compatibility profile still runs the 2.1 fixed
-        // pipeline the renderer is written against, so falling back is correct
-        // rather than fatal.
-        Log::warn("GL: no 3.3 compatibility context, falling back to 2.1");
-        glfwDefaultWindowHints();
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-        window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
-    }
-    if (!window_) {
+        // There is nothing to fall back to. Every shader in the engine is
+        // #version 330 core - the world, the particles, the shadows, the
+        // clouds and the water - and a context that cannot compile them
+        // draws nothing at all: a window with a black picture in it is
+        // worse than a window that never opened. The engine needs 3.3, and
+        // it says so and stops.
+        Log::error("GL: no %d.%d compatibility context - the engine needs OpenGL %d.%d",
+                   kGlVersionMajor, kGlVersionMinor, kGlVersionMajor, kGlVersionMinor);
         glfwTerminate();
         return false;
     }
-    // Instance recovery through the window handle removes the need for a
-    // file-scope "current window" pointer.
     glfwSetWindowUserPointer(window_, this);
     bindCallbacks();
     glfwMakeContextCurrent(window_);
     glfwSwapInterval(1);
     glfwGetFramebufferSize(window_, &fbW_, &fbH_);
+
+    // The driver's own words about itself, in the log.
+    //
+    // The version it reports is the highest it supports for any profile, and
+    // the renderer is written against the 3.3 that was asked for - so the
+    // string is what the log says and the request is what the interface
+    // shows.
+    const char* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+    const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+    Log::info("GL: %s on %s", version ? version : "an unknown driver",
+              renderer ? renderer : "an unknown card");
+
     // The functions that the 1.1 headers do not have, loaded now while the
     // context is current: the shaders, the framebuffers the shadow map is
     // drawn into and the three-dimensional textures all live in the driver's

@@ -65,6 +65,17 @@ public:
     // capture reads these; every other reader wants the guarded version.
     bool rawPointerPressed() const { return pointerPressed_; }
     bool rawPointerReleased() const { return pointerReleased_; }
+    // The press, asked on behalf of a surface.
+    //
+    // The same edge as pointerPressed(), but the surface the asker is inside
+    // does not take the press from it. A floating window is a surface, and the
+    // drag of its title bar is a press of that window: asked as anybody else,
+    // the window takes the press away from itself, and no floating window can
+    // be moved at all.
+    bool pointerPressedBy(int owner) const {
+        return pointerPressed_ && captureId_ == 0 &&
+               !overlays_.pressTaken(pointerX_, pointerY_, owner);
+    }
     double scrollDelta() const { return scrollDelta_; }
     bool ctrlHeld() const { return ctrlHeld_; }
     bool cameraCaptured() const { return cameraCaptured_; }
@@ -143,6 +154,17 @@ public:
     void sectionHeader(UiRenderer& ui, float x, float y, float w, const char* label);
     bool checkbox(UiRenderer& ui, int id, float x, float y, float w, const char* label,
                   bool& value);
+
+    // A pressable area that the caller draws itself.
+    //
+    // The press is resolved here so that a chip behaves like every other
+    // widget: it takes the press, holds it while the pointer is over it, and
+    // answers when the pointer is let go. A chip that took the press of
+    // something else would steal it from the widget under it.
+    //
+    // `hovered` says whether the pointer is over the chip, so the caller can
+    // draw it as it should look.
+    bool chip(UiRenderer& ui, int id, const Rect& rect, bool& hovered);
 
     // Draggable + typeable numeric property. Returns true when `value` changed.
     bool propertyFloat(UiRenderer& ui, int id, float x, float y, float w, const char* label,

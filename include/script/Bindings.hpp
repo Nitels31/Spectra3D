@@ -23,6 +23,10 @@ struct Camera;
 struct RigidBody;
 class Window;
 class SoundDevice;
+class ParticleSystem;
+namespace gui {
+struct Canvas;
+}
 
 namespace script {
 
@@ -41,6 +45,15 @@ struct ScriptState {
     // a machine with no sound card - and every sound binding then answers
     // "no" instead of touching a device that is not there.
     SoundDevice* sound = nullptr;
+    // The particles of the world, for the particle bindings. Null when there
+    // is no particle system, and every particle binding then answers
+    // quietly instead of making particles that are not there.
+    ParticleSystem* particles = nullptr;
+    // The interface of the game, for the interface bindings. Null when there
+    // is no canvas, and every binding then answers quietly: a script that
+    // asks a label to change in a game that has no labels is not a mistake
+    // worth a crash.
+    gui::Canvas* canvas = nullptr;
 
     // Script-authored groups. Members are body indices; removeBody() keeps them
     // in step with the erase it performs on the world, and clearScene() drops
@@ -93,6 +106,8 @@ int registerSceneBindings(asIScriptEngine* engine);
 int registerCameraBindings(asIScriptEngine* engine);
 int registerInputBindings(asIScriptEngine* engine);
 int registerSoundBindings(asIScriptEngine* engine);
+int registerParticleBindings(asIScriptEngine* engine);
+int registerGuiBindings(asIScriptEngine* engine);
 #endif
 
 } // namespace script

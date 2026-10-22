@@ -4,8 +4,12 @@ cmake_minimum_required(VERSION 3.16)
 # launcher, the manifest and the title bar report, and the folder the application
 # icons live in. Reading them here means the build can never disagree with the
 # engine about either.
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/core/Project.hpp" SPECTRA_PROJECT_HEADER
-     LIMIT 4096)
+#
+# The whole file is read, and not the first few kilobytes of it: a LIMIT stops
+# being a shortcut and starts being a place where a constant can fall off the
+# end - the icon directory moved past it when the file grew, and the build
+# failed with "cannot find kAppIconsDir" in a header that plainly has it.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/core/Project.hpp" SPECTRA_PROJECT_HEADER)
 string(REGEX MATCH "kEngineVersion[ \t]*=[ \t]*\"([0-9]+\\.[0-9]+\\.[0-9]+)\""
        SPECTRA_VERSION_MATCH "${SPECTRA_PROJECT_HEADER}")
 set(Spectra3D_VERSION "${CMAKE_MATCH_1}")
@@ -66,11 +70,22 @@ endforeach()
 # SPECTRA_SCRIPTING     the AngelScript runtime. Off drops src/script/*.cpp entirely
 #                       and leaves the editor without scripting rather than half
 #                       wired to it.
+# SPECTRA_SPSCRIPT      the Spectra3D Script runtime - the second script language of
+#                       the engine. Off drops the same layer for that language and
+#                       leaves the project with AngelScript alone.
 # SPECTRA_WERROR        warnings become errors. Off by default so a new compiler
 #                       version does not break everyone's build on a warning.
+# SPECTRA_LTO           link-time optimisation. The compiler sees across the
+#                       libraries, and the linker throws away what nobody uses.
+# SPECTRA_NATIVE        build for the processor of the machine that builds it.
+#                       Off by default: a build that only runs on the machine
+#                       that made it is a build that does not travel.
 option(SPECTRA_BUILD_TOOLS "Build the standalone asset inspection tools" OFF)
 option(SPECTRA_SCRIPTING "Build the AngelScript runtime" ON)
+option(SPECTRA_SPSCRIPT "Build the Spectra3D Script runtime" ON)
 option(SPECTRA_WERROR "Treat compiler warnings as errors" OFF)
+option(SPECTRA_LTO "Link-time optimisation" ON)
+option(SPECTRA_NATIVE "Build for this machine's processor" OFF)
 
 set(SPECTRA_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set(SPECTRA_THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
@@ -89,6 +104,63 @@ function(spectra_warnings target)
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wno-unused-parameter)
         if(SPECTRA_WERROR)
             target_compile_options(${target} PRIVATE -Werror)
+        endif()
+    endif()
+endfunction()
+
+# The optimisation flags, in one place, so every target below gets the same
+# set. Applied by spectra_optimise() rather than copied into each target: a
+# new target that forgets them is a target that is built slowly.
+#
+# Release is already -O3. These are the flags that make that -O3 worth
+# having:
+#
+#  - **the link-time optimisation**, so the compiler sees across the
+#    libraries instead of guessing at them, and the linker throws away what
+#    nobody uses. It is the biggest single thing in this list: the engine is
+#    a hundred files and every one of them calls into the others.
+#  - **the sections**, so the linker has something to throw away. A function
+#    in a section of its own is a function the linker can drop; a function in
+#    the big one is a function everybody keeps.
+#  - **-fno-math-errno**, so the roots and the powers are not obliged to set
+#    errno, and the compiler may do to them what it can. Nothing in the
+#    engine reads errno after a root.
+#  - **the march**, when the build is for one machine and not for all of them.
+#
+# The link-time part is only in Release. A Debug build with it is a build
+# that cannot be stepped through, and the step is the point of a Debug build.
+function(spectra_optimise target)
+    if(MSVC)
+        # /GL is the link-time part and /LTCG asks the linker for it. Both are
+        # in Release and in both places: /GL without /LTCG is a build that
+        # warns about itself, and /LTCG without /GL does nothing.
+        target_compile_options(${target} PRIVATE $<$<CONFIG:Release>:/GL>)
+        target_compile_options(${target} PRIVATE $<$<CONFIG:Release>:/Gy>)
+    else()
+        target_compile_options(${target} PRIVATE -fno-math-errno)
+        target_compile_options(${target} PRIVATE -ffunction-sections -fdata-sections)
+        if(SPECTRA_NATIVE)
+            target_compile_options(${target} PRIVATE -march=native)
+        endif()
+    endif()
+    if(SPECTRA_LTO AND NOT MSVC)
+        target_compile_options(${target} PRIVATE $<$<CONFIG:Release>:-flto=auto>)
+    endif()
+endfunction()
+
+# The link flags, for the things that are actually linked: the core as a file
+# and the two programs. A static library is not linked, so the flags go on
+# the programs that link it.
+function(spectra_link_optimise target)
+    if(MSVC)
+        target_link_options(${target} PRIVATE $<$<CONFIG:Release>:/LTCG>)
+        target_link_options(${target} PRIVATE /OPT:ICF /OPT:REF)
+    else()
+        target_link_options(${target} PRIVATE -Wl,--gc-sections)
+        target_link_options(${target} PRIVATE -Wl,-O1)
+        target_link_options(${target} PRIVATE -Wl,--as-needed)
+        if(SPECTRA_LTO)
+            target_link_options(${target} PRIVATE $<$<CONFIG:Release>:-flto=auto>)
         endif()
     endif()
 endfunction()
@@ -136,11 +208,26 @@ add_library(spectra_freetype STATIC
     third_party/freetype/src/gzip/ftgzip.c
 )
 target_include_directories(spectra_freetype SYSTEM PUBLIC third_party/freetype/include)
-target_compile_definitions(spectra_freetype PRIVATE FT2_BUILD_LIBRARY)
+target_compile_definitions(spectra_freetype PRIVATE FT2_BUILD_LIBRARY FT_ERR_PREFIX=FT_Err_)
 # Not our code and not our warnings: -w rather than a level, so a real diagnostic
 # in FreeType itself is not buried in ours.
 if(NOT MSVC)
     target_compile_options(spectra_freetype PRIVATE -w)
+    # FreeType is compiled with the link-time optimisation as well, and that is
+    # not for the speed of it.
+    #
+    # A library that is compiled without it is a library whose members the
+    # linker has to guess about: it takes the member that holds a symbol and
+    # stops there, and it does not always come back for the member that holds
+    # a symbol another member of the same library asks for. The raster module
+    # of FreeType asks the debug module for the trace functions, and whether
+    # the debug module is in the link depends on the order the linker happens
+    # to meet the two in - which is not a thing to leave to chance. With the
+    # optimisation on, the whole of the library is one picture, and the linker
+    # cannot leave half of it out.
+    if(SPECTRA_LTO)
+        target_compile_options(spectra_freetype PRIVATE $<$<CONFIG:Release>:-flto=auto>)
+    endif()
 endif()
 
 # Model loaders, all four under models_lib: ufbx for FBX, miniply for PLY, cgltf
@@ -202,6 +289,58 @@ if(SPECTRA_SCRIPTING)
     endif()
 endif()
 
+# Spectra3D Script - the second script language of the engine.
+#
+# The SDK ships a prebuilt static library, and that library was built with the
+# C runtime of MSYS2 UCRT64. It is a MinGW archive, so a toolchain with a
+# different runtime cannot link it: the names of the C library it wants are
+# imported from the UCRT and nothing else has them.
+#
+# So the build asks the compiler instead of guessing. A link test with the
+# library and its headers says whether this toolchain can have the language at
+# all, and a toolchain that cannot is not a build that fails at the end - it
+# is a build that says what it cannot do and carries on without.
+if(SPECTRA_SPSCRIPT)
+    set(SPECTRA_SPS_ROOT "${SPECTRA_THIRD_PARTY}/spectra3dscripts")
+    set(SPECTRA_SPS_LIBRARY "${SPECTRA_SPS_ROOT}/lib/libsps.a")
+    if(NOT EXISTS "${SPECTRA_SPS_LIBRARY}")
+        message(WARNING
+            "Spectra3D Script: ${SPECTRA_SPS_LIBRARY} is missing; the language is off")
+        set(SPECTRA_SPSCRIPT OFF)
+    else()
+        include(CheckCXXSourceCompiles)
+        set(CMAKE_REQUIRED_QUIET ON)
+        set(CMAKE_REQUIRED_INCLUDES "${SPECTRA_SPS_ROOT}/include")
+        set(CMAKE_REQUIRED_LIBRARIES "${SPECTRA_SPS_LIBRARY}")
+        check_cxx_source_compiles("
+            #include <sps/sps.h>
+            int main() {
+                SpsContext* context = sps_context_new();
+                if (!context) return 1;
+                sps_context_free(context);
+                return 0;
+            }" SPECTRA_SPS_LINKABLE)
+        unset(CMAKE_REQUIRED_QUIET)
+        unset(CMAKE_REQUIRED_INCLUDES)
+        unset(CMAKE_REQUIRED_LIBRARIES)
+        if(NOT SPECTRA_SPS_LINKABLE)
+            message(WARNING
+                "Spectra3D Script: this toolchain cannot link ${SPECTRA_SPS_LIBRARY}; "
+                "the language is off. The library was built with the UCRT64 runtime of "
+                "MSYS2, and a toolchain with another runtime cannot have it.")
+            set(SPECTRA_SPSCRIPT OFF)
+        else()
+            # The archive is imported, not built: it was made with the runtime
+            # of the language and the build has nothing to do with it.
+            add_library(spectra_sps STATIC IMPORTED)
+            set_target_properties(spectra_sps PROPERTIES
+                IMPORTED_LOCATION "${SPECTRA_SPS_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${SPECTRA_SPS_ROOT}/include")
+            message(STATUS "Spectra3D Script: ${SPECTRA_SPS_LIBRARY}")
+        endif()
+    endif()
+endif()
+
 # ---------------------------------------------------------------------------
 # The engine
 # ---------------------------------------------------------------------------
@@ -250,12 +389,15 @@ set(SPECTRA_SRC_EDITOR
     src/editor/panels/TopBar.cpp
     src/editor/panels/TopBarOverlay.cpp
     src/editor/panels/LandformPanel.cpp
+    src/editor/panels/CloudPanel.cpp
+    src/editor/panels/ParticlesPanel.cpp
     src/editor/panels/LeftColumn.cpp
     src/editor/panels/FavoritesDock.cpp
     src/editor/panels/ScenePanel.cpp
     src/editor/panels/InspectorDock.cpp
     src/editor/panels/BottomBar.cpp
     src/editor/panels/SoundsDock.cpp
+    src/editor/panels/GuiEditor.cpp
 )
 set(SPECTRA_SRC_SCRIPT
     src/script/ScriptHost.cpp
@@ -265,20 +407,40 @@ set(SPECTRA_SRC_SCRIPT
     src/script/BindInput.cpp
     src/script/BindSound.cpp
     src/script/BindString.cpp
+    src/script/BindParticles.cpp
+    src/script/BindGui.cpp
+)
+# The second script language: the same layer, beside the first one.
+set(SPECTRA_SRC_SPSCRIPT
+    src/script/SpsHost.cpp
+    src/script/BindSpsScene.cpp
+    src/script/BindSpsRuntime.cpp
 )
 set(SPECTRA_SRC_SCENE
     src/scene/BodyFactory.cpp
     src/scene/CameraEntity.cpp
+    src/scene/Cloud.cpp
     src/scene/Landform.cpp
     src/scene/Noise.cpp
+    src/scene/Raycast.cpp
     src/scene/SceneSerializer.cpp
 )
 set(SPECTRA_SRC_UI
     src/ui/UiContext.cpp
     src/ui/Theme.cpp
 )
+# The interface of a game: the canvas and the thing that draws it. Between the
+# render layer and the ui layer: it needs colours, rectangles, letters and
+# pictures from the renderer, and the scene writes it down.
+set(SPECTRA_SRC_GUI
+    src/gui/GuiCanvas.cpp
+    src/gui/GuiRenderer.cpp
+)
 set(SPECTRA_SRC_RENDER
     src/render/Camera.cpp
+    src/render/FontFile.cpp
+    src/render/GlyphCache.cpp
+    src/render/ParticleSystem.cpp
     src/render/PrimitiveCache.cpp
     src/render/ShaderProgram.cpp
     src/render/ShadowMap.cpp
@@ -286,6 +448,7 @@ set(SPECTRA_SRC_RENDER
     src/render/TextAtlas.cpp
     src/render/UiRenderer.cpp
     src/render/SceneRenderer.cpp
+    src/render/WaterSystem.cpp
 )
 set(SPECTRA_SRC_ASSETS
     src/assets/MeshImport.cpp
@@ -301,6 +464,8 @@ set(SPECTRA_SRC_AUDIO
     src/audio/SoundDevice.cpp
 )
 set(SPECTRA_SRC_PHYSICS
+    src/physics/CustomParam.cpp
+    src/physics/MaterialLibrary.cpp
     src/physics/RigidBody.cpp
     src/physics/PhysicsWorld.cpp
 )
@@ -313,6 +478,7 @@ set(SPECTRA_SRC_PLATFORM
 
 set(SPECTRA_SRC_CORE
     src/core/Log.cpp
+    src/core/CrashLog.cpp
     src/core/Project.cpp
 )
 set(SPECTRA_SRC_I18N
@@ -320,7 +486,7 @@ set(SPECTRA_SRC_I18N
 )
 
 # ---------------------------------------------------------------------------
-# spectra_runtime - the engine without an editor
+# spectra_engine - the engine without an editor
 # ---------------------------------------------------------------------------
 #
 # Everything below app/ and editor/: the layers a game needs and nothing that
@@ -333,12 +499,23 @@ set(SPECTRA_SRC_I18N
 # engine. Nothing below them includes either (checked: only Application.hpp does,
 # and it is the one that owns both).
 #
-# The runtime is a shared library: the core of the engine, as the library it is.
-# It is one file next to the program - and the `lib/` folder of a project
-# carries a copy of it, so a project is a unit that says which core it runs on.
-add_library(spectra_runtime SHARED
+# The engine is compiled once, into an object library, and is then used twice:
+#
+#   spectra_runtime  static  - the core inside the program. The editor and
+#                               everything it starts is one file, with no core
+#                               beside it that can be lost, cannot be found or
+#                               be of the wrong version.
+#   spectra_player   shared  - the core as a file: SpectraPlayer.dll. This is
+#                               what a project carries in its `lib/` folder and
+#                               what a built game has beside it, so a project
+#                               says which core it was made with.
+#
+# One compilation, two shapes of the same code: the sources cannot drift apart,
+# because there is only one set of them.
+add_library(spectra_engine OBJECT
     ${SPECTRA_SRC_SCENE}
     ${SPECTRA_SRC_UI}
+    ${SPECTRA_SRC_GUI}
     ${SPECTRA_SRC_RENDER}
     ${SPECTRA_SRC_ASSETS}
     ${SPECTRA_SRC_AUDIO}
@@ -347,42 +524,44 @@ add_library(spectra_runtime SHARED
     ${SPECTRA_SRC_CORE}
     ${SPECTRA_SRC_I18N}
 )
-set_target_properties(spectra_runtime PROPERTIES
-    OUTPUT_NAME SpectraPlayer
-    # Everything the program uses is exported, so the layer headers need no
-    # decoration of their own: a class that is used across the boundary is
-    # exported, and one that is not is not.
-    WINDOWS_EXPORT_ALL_SYMBOLS ON)
-if(WIN32)
-    # No "lib" in front on Windows: the core is "spectra_core.dll", not
-    # "libspectra_core.dll". Everywhere else the prefix is the one the platform
-    # uses, and it stays.
-    set_target_properties(spectra_runtime PROPERTIES PREFIX "")
-endif()
-if(MINGW)
-    # The same thing for the GNU linker: without it a DLL exports nothing but
-    # what is marked, and the program that links it finds nothing to link.
-    target_link_options(spectra_runtime PRIVATE "LINKER:--export-all-symbols")
-endif()
 if(SPECTRA_SCRIPTING)
-    target_sources(spectra_runtime PRIVATE ${SPECTRA_SRC_SCRIPT})
+    target_sources(spectra_engine PRIVATE ${SPECTRA_SRC_SCRIPT})
 endif()
+if(SPECTRA_SPSCRIPT)
+    # The layer that talks to the runtime is compiled without the link-time
+    # optimisation.
+    #
+    # The runtime of the language is a prebuilt archive that was not compiled
+    # with it, and a library that was not cannot be pulled in by a link that
+    # is: the names the engine asks for live inside the optimisation, and by
+    # the time the optimisation has run the archive has been passed. So the
+    # layer that asks for them is compiled without it, and the archive is
+    # pulled in the ordinary way.
+    foreach(source IN LISTS SPECTRA_SRC_SPSCRIPT)
+        set_source_files_properties(${source} PROPERTIES COMPILE_OPTIONS "-fno-lto")
+    endforeach()
+    target_sources(spectra_engine PRIVATE ${SPECTRA_SRC_SPSCRIPT})
+endif()
+
+# The objects go into a shared library as well as into the program, so they are
+# compiled to be position independent.
+set_target_properties(spectra_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Own headers are found by layer name, never by a relative path: a file that moves
 # between directories then needs no edit, and there is no "../.." in the tree.
-target_include_directories(spectra_runtime PUBLIC ${SPECTRA_INCLUDE})
+target_include_directories(spectra_engine PUBLIC ${SPECTRA_INCLUDE})
 
 # Compile-time location of the shipped assets, so the engine also runs straight
 # out of the source tree. The staged copy next to the binary is what it prefers.
-target_compile_definitions(spectra_runtime PRIVATE SPECTRA_ASSET_DIR="${SPECTRA_ASSETS}")
+target_compile_definitions(spectra_engine PRIVATE SPECTRA_ASSET_DIR="${SPECTRA_ASSETS}")
 
 # Where the shaders are in the source tree, so that the engine runs out of the
 # tree without anything being staged. The staged copy next to the binary is what
 # it prefers.
-target_compile_definitions(spectra_runtime PRIVATE
+target_compile_definitions(spectra_engine PRIVATE
     SPECTRA_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src")
 
-target_link_libraries(spectra_runtime PUBLIC
+target_link_libraries(spectra_engine PUBLIC
     spectra_freetype
     spectra_ufbx
     spectra_miniply
@@ -393,10 +572,67 @@ target_link_libraries(spectra_runtime PUBLIC
     spectra_miniaudio
 )
 if(SPECTRA_SCRIPTING)
-    target_compile_definitions(spectra_runtime PUBLIC SPECTRA_SCRIPTING=1)
-    target_link_libraries(spectra_runtime PUBLIC spectra_angelscript)
+    target_compile_definitions(spectra_engine PUBLIC SPECTRA_SCRIPTING=1)
+    target_link_libraries(spectra_engine PUBLIC spectra_angelscript)
 endif()
-spectra_warnings(spectra_runtime)
+if(SPECTRA_SPSCRIPT)
+    target_compile_definitions(spectra_engine PUBLIC SPECTRA_SPSCRIPT=1)
+    # The whole archive: every member of the runtime is in the link, whatever
+    # the order of it is.
+    #
+    # The runtime was built without the link-time optimisation, so the names
+    # the engine asks for are not in the symbol table of the objects that ask
+    # for them - they are inside the optimisation, and the optimisation runs
+    # after the archives have been passed. The whole archive puts the names in
+    # the link whatever the order is, and the runtime is small enough for that
+    # to cost nothing.
+    target_link_libraries(spectra_engine PUBLIC
+        "$<LINK_LIBRARY:WHOLE_ARCHIVE,spectra_sps>")
+endif()
+spectra_warnings(spectra_engine)
+spectra_optimise(spectra_engine)
+
+# The core inside the program. The editor links this, and so does every tool
+# that needs the engine without a window.
+add_library(spectra_runtime STATIC)
+target_link_libraries(spectra_runtime PUBLIC spectra_engine)
+
+# The core as a file. Everything the program uses is exported, so the layer
+# headers need no decoration of their own: a class that is used across the
+# boundary is exported, and one that is not is not.
+add_library(spectra_core SHARED)
+target_link_libraries(spectra_core PUBLIC spectra_engine)
+spectra_optimise(spectra_core)
+spectra_link_optimise(spectra_core)
+set_target_properties(spectra_core PROPERTIES
+    OUTPUT_NAME SpectraPlayer
+    WINDOWS_EXPORT_ALL_SYMBOLS ON)
+if(WIN32)
+    # No "lib" in front on Windows: the core is "SpectraPlayer.dll", not
+    # "libSpectraPlayer.dll". Everywhere else the prefix is the one the platform
+    # uses, and it stays.
+    set_target_properties(spectra_core PROPERTIES PREFIX "")
+endif()
+if(MINGW)
+    # The same thing for the GNU linker: without it a DLL exports nothing but
+    # what is marked, and the program that links it finds nothing to link.
+    target_link_options(spectra_core PRIVATE "LINKER:--export-all-symbols")
+endif()
+
+# ---------------------------------------------------------------------------
+# spectra_game - the game, without a shell around it
+# ---------------------------------------------------------------------------
+#
+# The world, the picture of it, the sound, the scripts and the loop that runs
+# them. Both programs are built on it: the editor plays the game through it,
+# and the player program is it and nothing else - so the game a player plays
+# is the game the editor edits, and the two cannot drift apart.
+#
+# It is compiled once, into a static library, and linked into both.
+add_library(spectra_game STATIC src/app/GameHost.cpp)
+target_link_libraries(spectra_game PUBLIC spectra_runtime)
+spectra_warnings(spectra_game)
+spectra_optimise(spectra_game)
 
 # ---------------------------------------------------------------------------
 # spectra3d - the editor
@@ -407,15 +643,43 @@ add_executable(spectra3d
     ${SPECTRA_SRC_APP}
     ${SPECTRA_SRC_EDITOR}
 )
-target_link_libraries(spectra3d PRIVATE spectra_runtime)
+target_link_libraries(spectra3d PRIVATE spectra_game)
 spectra_warnings(spectra3d)
+spectra_optimise(spectra3d)
+spectra_link_optimise(spectra3d)
+
+# ---------------------------------------------------------------------------
+# spectra_player - the program that plays a game
+# ---------------------------------------------------------------------------
+#
+# The engine, a window and a loop, with no launcher and no editor in it. It
+# opens the boot file beside it and plays the game that file names, and it is
+# what a build of a game is made of: the editor copies this program into the
+# build folder and renames it after the game.
+#
+# The program carries the core inside it - it links the static library, not the
+# shared one - so a build cannot lose its core and cannot be of the wrong
+# version.
+add_executable(spectra_player
+    ${SPECTRA_ICON_RC}
+    src/player/Player.cpp
+    src/player/main.cpp
+)
+target_link_libraries(spectra_player PRIVATE spectra_game)
+spectra_warnings(spectra_player)
+spectra_optimise(spectra_player)
+spectra_link_optimise(spectra_player)
+set_target_properties(spectra_player PROPERTIES OUTPUT_NAME SpectraPlayer)
 
 # ---------------------------------------------------------------------------
 # Platform
 # ---------------------------------------------------------------------------
 #
-# On the runtime, not the executable: the window, the GL context and the shell
+# On the engine, not the executable: the window, the GL context and the shell
 # folder dialog all live in platform/ and Filesystem.cpp is what wants COM.
+#
+# On the engine and not on either of its two shapes, so that the program and the
+# core-as-a-file are linked the same way.
 
 if(WIN32)
     # windows.h is trimmed per file instead of from here: rapidobj.hpp redefines
@@ -428,8 +692,22 @@ if(WIN32)
     # shell folder dialog's window, ole32/shell32/uuid for that dialog's COM,
     # kernel32 for the waitable timer the frame cap uses, winmm for the 1 ms timer
     # resolution it needs.
-    target_link_libraries(spectra_runtime PUBLIC opengl32 gdi32 user32 kernel32)
-    target_link_libraries(spectra_runtime PUBLIC ole32 shell32 uuid winmm)
+    target_link_libraries(spectra_engine PUBLIC opengl32 gdi32 user32 kernel32)
+    target_link_libraries(spectra_engine PUBLIC ole32 shell32 uuid winmm)
+
+    # The names of the functions in a crash report.
+    #
+    # DbgHelp reads the symbols of the program and of the modules it loaded, so
+    # a report says "the picture was drawn here" instead of an address nobody
+    # can look up. It is optional: without it the report still has the stack,
+    # only the names are missing, and a toolchain without DbgHelp is not a
+    # reason for the report to be empty.
+    find_library(SPECTRA_DBGHELP_LIBRARY NAMES dbghelp)
+    if(SPECTRA_DBGHELP_LIBRARY)
+        target_link_libraries(spectra_engine PUBLIC ${SPECTRA_DBGHELP_LIBRARY})
+        target_compile_definitions(spectra_engine PUBLIC SPECTRA_CRASH_SYMBOLS=1)
+        message(STATUS "Crash report symbols: ${SPECTRA_DBGHELP_LIBRARY}")
+    endif()
 
     # GLFW is vendored as a prebuilt for a handful of toolchains. The newest one
     # that exists on disk is used, so a machine with only the 2026 drop still
@@ -454,8 +732,8 @@ if(WIN32)
         message(FATAL_ERROR
             "No prebuilt GLFW found in third_party/glfw (looked for: ${SPECTRA_GLFW_VENDORS})")
     endif()
-    target_link_libraries(spectra_runtime PUBLIC "${SPECTRA_GLFW_LIB}")
-    target_include_directories(spectra_runtime SYSTEM PUBLIC third_party/glfw/include)
+    target_link_libraries(spectra_engine PUBLIC "${SPECTRA_GLFW_LIB}")
+    target_include_directories(spectra_engine SYSTEM PUBLIC third_party/glfw/include)
     message(STATUS "GLFW: ${SPECTRA_GLFW_LIB}")
     # The DLL travels with the binary. A build that is copied to another machine
     # and cannot start is worse than no build. Staged on every build, for the
@@ -489,8 +767,8 @@ if(WIN32)
 elseif(APPLE)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GLFW REQUIRED glfw3)
-    target_include_directories(spectra_runtime PUBLIC ${GLFW_INCLUDE_DIRS})
-    target_link_libraries(spectra_runtime PUBLIC ${GLFW_LIBRARIES} ${CMAKE_DL_LIBS})
+    target_include_directories(spectra_engine PUBLIC ${GLFW_INCLUDE_DIRS})
+    target_link_libraries(spectra_engine PUBLIC ${GLFW_LIBRARIES} ${CMAKE_DL_LIBS})
 else()
     find_package(OpenGL REQUIRED)
     find_package(PkgConfig REQUIRED)
@@ -499,8 +777,8 @@ else()
     # <alsa/asoundlib.h> - so the sound is not optional on this platform
     # without giving the engine a sound that cannot be played at all.
     pkg_check_modules(ALSA REQUIRED alsa)
-    target_include_directories(spectra_runtime PUBLIC ${GLFW_INCLUDE_DIRS} ${ALSA_INCLUDE_DIRS})
-    target_link_libraries(spectra_runtime PUBLIC ${GLFW_LIBRARIES} ${ALSA_LIBRARIES} OpenGL::GL ${CMAKE_DL_LIBS})
+    target_include_directories(spectra_engine PUBLIC ${GLFW_INCLUDE_DIRS} ${ALSA_INCLUDE_DIRS})
+    target_link_libraries(spectra_engine PUBLIC ${GLFW_LIBRARIES} ${ALSA_LIBRARIES} OpenGL::GL ${CMAKE_DL_LIBS})
 endif()
 
 # Assets are copied next to the binary so a fresh checkout runs without extra
@@ -565,6 +843,40 @@ if(SPECTRA_BUILD_TOOLS)
     target_link_libraries(shadowtest PRIVATE spectra_runtime spectra_stb)
     spectra_warnings(shadowtest)
 
+    # A picture of the water, without an editor: a ground under a sheet of
+    # water and the settings the water is made with, written out as a PNG.
+    # The water is the other part of the picture that cannot be checked by
+    # reading the code.
+    add_executable(watertest tools/watertest.cpp)
+    target_link_libraries(watertest PRIVATE spectra_runtime spectra_stb)
+    spectra_warnings(watertest)
+
+    # A picture of the clouds, without an editor: the cloud's own shaders,
+    # drawn into a framebuffer and written out as a PNG. Whether a cloud
+    # looks like a cloud is a question about the picture and not about the
+    # arithmetic.
+    add_executable(cloudtest tools/cloudtest.cpp)
+    target_link_libraries(cloudtest PRIVATE spectra_runtime spectra_stb)
+    spectra_warnings(cloudtest)
+
+    # A picture of the letters, without an editor: a line of text drawn into a
+    # framebuffer and read back, so that "the letters are not drawn" is a
+    # number and not a thing somebody has to look at.
+    add_executable(texttest tools/texttest.cpp)
+    target_link_libraries(texttest PRIVATE spectra_runtime)
+    spectra_warnings(texttest)
+
+    # Headless check of the particle system: the pool, the step, the emitters
+    # and the names of the effects. The simulation touches no GL - a particle
+    # is a point, a colour and a size - so all of it can be checked with no
+    # window and no context. What is on the screen is a picture, and a
+    # picture is checked by looking at it.
+    add_executable(particletest tools/particletest.cpp)
+    target_link_libraries(particletest PRIVATE spectra_runtime)
+    spectra_warnings(particletest)
+
+    enable_testing()
+    add_test(NAME particletest COMMAND particletest)
 
     if(SPECTRA_SCRIPTING)
         # Headless check of the script host: the entry-point rule, the hooks and
@@ -578,6 +890,17 @@ if(SPECTRA_BUILD_TOOLS)
         target_link_libraries(scripttest PRIVATE spectra_runtime)
         spectra_warnings(scripttest)
 
+        # Headless check of the second script language: the classes of the
+        # engine, the hooks, the events, the timers and the reload. The same
+        # shape as the AngelScript one and the same reason: a script language
+        # that is only checked by opening the editor is a language nobody
+        # checks.
+        if(SPECTRA_SPSCRIPT)
+            add_executable(spstest tools/spstest.cpp)
+            target_link_libraries(spstest PRIVATE spectra_runtime)
+            spectra_warnings(spstest)
+        endif()
+
         # Headless check of the editor's panel geometry, of the picture and the
         # pointer agreeing about where a thing is, and of the font the engine
         # ships. The editor's own sources are compiled in, because the geometry
@@ -590,22 +913,41 @@ if(SPECTRA_BUILD_TOOLS)
         enable_testing()
         add_test(NAME scripttest COMMAND scripttest)
         add_test(NAME editortest COMMAND editortest)
+        if(SPECTRA_SPSCRIPT)
+            add_test(NAME spstest COMMAND spstest)
+        endif()
     endif()
-endif()
 
+    # The tools are built with the same flags as the engine: they link the
+    # engine, and the engine's objects are compiled with the link-time
+    # optimisation - a tool that links them without it is a tool that cannot
+    # be linked.
+    foreach(tool glbinfo fbxtest skygen soundgen shadowtest particletest
+                 scripttest editortest spstest)
+        if(TARGET ${tool})
+            spectra_optimise(${tool})
+            spectra_link_optimise(${tool})
+        endif()
+    endforeach()
+endif()
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
 
 install(TARGETS spectra3d RUNTIME DESTINATION bin)
-# The core of the engine is a library of its own, and it lives beside the
-# program that loads it: a DLL the program cannot find is a program that does
-# not start.
-install(TARGETS spectra_runtime RUNTIME DESTINATION bin)
+# The player: the program that plays a game. A build of a game is made of it,
+# and it is installed next to the editor so the editor can find it.
+install(TARGETS spectra_player RUNTIME DESTINATION bin)
+# The core as a file, next to the program that has it inside: a project carries
+# a copy of it, and a built game has it beside the program.
+install(TARGETS spectra_core RUNTIME DESTINATION bin)
 if(SPECTRA_BUILD_TOOLS)
-    install(TARGETS glbinfo fbxtest skygen soundgen shadowtest RUNTIME DESTINATION bin)
+    install(TARGETS glbinfo fbxtest skygen soundgen shadowtest particletest RUNTIME DESTINATION bin)
     if(SPECTRA_SCRIPTING)
         install(TARGETS scripttest editortest RUNTIME DESTINATION bin)
+    endif()
+    if(SPECTRA_SPSCRIPT)
+        install(TARGETS spstest RUNTIME DESTINATION bin)
     endif()
 endif()
 # The engine looks for assets relative to the binary first and share/spectra3d
